@@ -1,0 +1,61 @@
+; Architecture rules, checked by `just arch` and CI. See docs/architecture.md.
+; If a rule gets in your way, do not work around it: explain why and propose an ADR.
+[importlinter]
+root_package = fragancia_api
+include_external_packages = True
+
+[importlinter:contract:kernel-is-pure]
+name = The shared kernel uses only the standard library
+type = forbidden
+source_modules =
+    fragancia_api.shared.kernel
+forbidden_modules =
+    fastapi
+    starlette
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    alembic
+    psycopg
+    redis
+    arq
+    structlog
+    fragancia_api.config
+    fragancia_api.container
+    fragancia_api.main
+    fragancia_api.modules
+    fragancia_api.shared.application
+    fragancia_api.shared.http
+    fragancia_api.shared.infrastructure
+
+[importlinter:contract:application-is-framework-free]
+name = Application code does not depend on web, database or queue frameworks
+type = forbidden
+source_modules =
+    fragancia_api.shared.application
+forbidden_modules =
+    fastapi
+    starlette
+    sqlalchemy
+    alembic
+    psycopg
+    redis
+    arq
+
+[importlinter:contract:shared-layers]
+name = Shared layers point inwards (http | infrastructure -> application -> kernel)
+type = layers
+layers =
+    fragancia_api.shared.http | fragancia_api.shared.infrastructure
+    fragancia_api.shared.application
+    fragancia_api.shared.kernel
+
+[importlinter:contract:composition-root]
+name = Only the entrypoints know the composition root
+type = forbidden
+source_modules =
+    fragancia_api.shared
+    fragancia_api.modules
+forbidden_modules =
+    fragancia_api.container
+    fragancia_api.main
