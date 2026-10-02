@@ -25,5 +25,6 @@ async def container(settings: Settings) -> AsyncIterator[Container]:
 
 @pytest.fixture(autouse=True)
 async def clean_outbox(container: Container) -> None:
+    """Every test starts with an empty outbox (modules add their own cleanup fixtures)."""
     async with container.database.engine.begin() as connection:
         await connection.execute(text("TRUNCATE platform.outbox"))
