@@ -62,7 +62,7 @@ pyproject.toml   repo tooling project (not the API)
 
 | Task                                 | Command                                   |
 | ------------------------------------ | ----------------------------------------- |
-| Full local setup (idempotent)        | `just bootstrap`                          |
+| Full local setup (idempotent)        | `uv run just bootstrap`                   |
 | Start / stop services (keeps data)   | `just up` / `just down`                   |
 | Status / logs                        | `just ps` / `just logs [service]`         |
 | SQL shell                            | `just psql [-d fragancia_test]`           |
@@ -70,7 +70,9 @@ pyproject.toml   repo tooling project (not the API)
 | **Full verification (mandatory)**    | `just check`                              |
 | Check a range of commit messages     | `uv run scripts/commits.py --range a..b`  |
 
-Python dependencies: `uv add --dev <pkg>` (never `pip install`). Tooling runs with `uv run`.
+`just` comes from the uv environment (`rust-just` dev dependency): run recipes as
+`uv run just <recipe>` or with `.venv` activated. Python dependencies: `uv add --dev <pkg>`
+(never `pip install`). Tooling runs with `uv run`.
 
 ## Target architecture rules (from phase 2 on)
 

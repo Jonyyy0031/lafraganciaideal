@@ -1,4 +1,5 @@
-# Task runner for La Fragancia Ideal. Run `just` to list recipes.
+# Task runner for La Fragancia Ideal. Run `uv run just` to list recipes
+# (just is a dev dependency: `rust-just` in pyproject.toml).
 
 set dotenv-load
 set positional-arguments

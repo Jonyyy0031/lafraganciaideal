@@ -63,14 +63,12 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen
-      - name: Install just
-        run: uv tool install rust-just
       - name: Bootstrap (first run creates everything)
-        run: just bootstrap
+        run: uv run just bootstrap
       - name: Bootstrap again (must be idempotent and keep .env)
         run: |
           before=$(sha256sum .env)
-          just bootstrap | tee second-run.log
+          uv run just bootstrap | tee second-run.log
           [ "$before" = "$(sha256sum .env)" ]
           grep -q '= .env already exists' second-run.log
           grep -q '= fragancia_test already exists' second-run.log
@@ -88,4 +86,4 @@ jobs:
         run: docker compose -f infra/docker/compose.yaml --env-file .env logs --no-color
       - name: Stop services
         if: always()
-        run: just down
+        run: uv run just down

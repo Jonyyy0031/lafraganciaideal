@@ -33,6 +33,9 @@ work. No product code yet.
 8. (2026-10-02) Task runner: **`just`** (the repo is bilingual Python/Node).
 9. (2026-10-02) **Repository documentation is written in English** (README, AGENTS, docs, ADRs,
    plans, CI docs, code comments). Customer-facing UI copy is Spanish (decided in phase 3).
+10. (2026-10-02) **`just` is a dev dependency** (`rust-just` in `pyproject.toml`), run with
+    `uv run just …`: the only system requirements are Docker, uv and git, and local and CI use
+    the exact version locked in `uv.lock`.
 
 ## Delivered
 

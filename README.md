@@ -17,12 +17,16 @@ order. WhatsApp and parcel carrier integrations come later.
 
 ## Getting started
 
-Requirements: **Docker** (with Compose v2), **[uv](https://docs.astral.sh/uv/)**, **git** and
-**[just](https://just.systems)** (`sudo pacman -S just` or `uv tool install rust-just`).
+Requirements: **Docker** (with Compose v2), **[uv](https://docs.astral.sh/uv/)** and **git**.
+[just](https://just.systems) is a dev dependency (`rust-just` in `pyproject.toml`, locked in
+`uv.lock`), so nothing else is installed system-wide:
 
 ```bash
-just bootstrap   # .env, services, test database, S3 bucket and git hooks
+uv run just bootstrap   # .env, services, test database, S3 bucket and git hooks
 ```
+
+The commands below are written as `just …`. Run them as `uv run just …`, or activate the
+environment once per shell (`source .venv/bin/activate`, `.venv/bin/activate.fish` for fish).
 
 Bootstrap is idempotent: run it as often as you like. It never overwrites an existing `.env`
 and never deletes data.

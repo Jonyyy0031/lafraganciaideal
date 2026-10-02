@@ -1,4 +1,4 @@
-"""One-command local setup: `just bootstrap`.
+"""One-command local setup: `uv run just bootstrap`.
 
 Idempotent: safe to run any number of times. It never overwrites an existing .env and never
 deletes data, databases, buckets or volumes.
@@ -36,16 +36,16 @@ def fail(message: str) -> None:
 
 def main() -> None:
     step("Checking tools")
-    missing = missing_tools(["docker", "uv", "just", "git"])
+    missing = missing_tools(["docker", "uv", "git"])
     if missing:
         fail(
-            f"Missing tools: {', '.join(missing)}. "
-            "Install them (just: `sudo pacman -S just` or `uv tool install rust-just`)."
+            f"Missing tools: {', '.join(missing)}. Install them and run `uv run just bootstrap` "
+            "(just itself comes from the uv environment)."
         )
     daemon = subprocess.run(["docker", "info"], capture_output=True)  # noqa: S603, S607
     if daemon.returncode != 0:
         fail("Docker is installed but the daemon is not running.")
-    print("  docker, uv, just and git OK")
+    print("  docker, uv and git OK")
 
     step("Environment file (created only if missing)")
     env_path = ROOT / ".env"
