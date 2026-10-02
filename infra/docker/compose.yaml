@@ -1,0 +1,90 @@
+# Infrastructure services for LOCAL DEVELOPMENT.
+# The apps (api/web) run on the host for fast reloads; only their dependencies live here.
+#
+#   just up     → start everything
+#   just down   → stop (data is kept in the named volumes)
+#
+# ⚠️  `docker compose down -v` DELETES all data. Never run it without explicit intent.
+#
+# Ports bind to 127.0.0.1 only and default to values that do not clash with ~/codes/web-rh,
+# so both environments can run side by side. Override them in the root .env.
+# Images are pinned by digest; see README.md → "Updating infrastructure images".
+name: fragancia
+
+services:
+  postgres:
+    # Source verified on 2026-10-02: postgres:18-alpine
+    image: postgres@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fragancia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fragancia-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-fragancia}
+      POSTGRES_TEST_DB: ${POSTGRES_TEST_DB:-fragancia_test}
+      TZ: UTC
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5433}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./postgres/01-create-test-db.sh:/docker-entrypoint-initdb.d/01-create-test-db.sh:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Job queues (arq) and cache. Valkey is the open source fork of Redis, fully compatible.
+  valkey:
+    # Source verified on 2026-10-02: valkey/valkey:9.0-alpine
+    image: valkey/valkey@sha256:187679e3bd4036959631e3f03983ab2ba503ab21e6fd0454d508e909db2ee989
+    restart: unless-stopped
+    command: ['valkey-server', '--appendonly', 'yes']
+    ports:
+      - '127.0.0.1:${VALKEY_PORT:-6380}:6379'
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ['CMD', 'valkey-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # S3-compatible object storage for product photos. In production it is replaced by any
+  # S3-compatible provider through configuration only.
+  storage:
+    # Source verified on 2026-10-02: rustfs/rustfs:1.0.1-preview.16
+    image: rustfs/rustfs@sha256:0b3d45bbbc9eb73433ac48e4eb8374a460061ea1e4e952e25a3ef79796733617
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:-fragancia}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:-fragancia-dev}
+      RUSTFS_CONSOLE_ENABLE: 'true'
+    ports:
+      - '127.0.0.1:${S3_PORT:-9100}:9000' # S3 API
+      - '127.0.0.1:${S3_CONSOLE_PORT:-9101}:9001' # web console
+    volumes:
+      - storage-data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:9000/health']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Captures every outgoing email in development. UI: http://localhost:8026
+  mailpit:
+    # Source verified on 2026-10-02: axllent/mailpit:v1.31.3
+    image: axllent/mailpit@sha256:ed9b00c609e77e99c79b93f1178255ebc271868920f2c69a8d166bd5634ed10d
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${SMTP_PORT:-1026}:1025'
+      - '127.0.0.1:${MAILPIT_UI_PORT:-8026}:8025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+  valkey-data:
+  storage-data:
