@@ -5,12 +5,13 @@ and made to order), cart and checkout with Mercado Pago (cards, interest-free in
 OXXO, SPEI), and an admin area to manage products, prices, stock and the lifecycle of every
 order. WhatsApp and parcel carrier integrations come later.
 
-> **Status:** phase 1 — infrastructure. The API (phase 2) and the web app (phase 3) do not
-> exist yet. The target design is in [docs/architecture.md](docs/architecture.md).
+> **Status:** phase 2 — the API platform exists (health, errors, declared access, outbox,
+> worker); business modules are being added. The web app (phase 3) does not exist yet.
+> Design: [docs/architecture.md](docs/architecture.md) · API guide: [apps/api/README.md](apps/api/README.md).
 
 | Part                  | Stack                                                             | Status      |
 | --------------------- | ----------------------------------------------------------------- | ----------- |
-| `apps/api`            | Python · FastAPI · Pydantic v2 · SQLAlchemy 2 · Alembic · arq     | Phase 2     |
+| `apps/api`            | Python 3.14 · FastAPI · Pydantic v2 · SQLAlchemy 2 · Alembic · arq | ✔ Platform  |
 | `apps/web`            | Angular (SSR) — storefront + `/admin`                             | Phase 3     |
 | `packages/api-client` | TypeScript client generated from the API's OpenAPI document       | Phase 3     |
 | `infra/docker`        | PostgreSQL 18 · Valkey · RustFS (S3) · Mailpit                    | ✔ Available |
@@ -22,7 +23,9 @@ Requirements: **Docker** (with Compose v2), **[uv](https://docs.astral.sh/uv/)**
 `uv.lock`), so nothing else is installed system-wide:
 
 ```bash
-uv run just bootstrap   # .env, services, test database, S3 bucket and git hooks
+uv run just bootstrap   # .env files, services, migrations, S3 bucket and git hooks
+uv run just api         # API on http://127.0.0.1:8100/api/v1/docs
+uv run just worker      # background worker (outbox relay)
 ```
 
 The commands below are written as `just …`. Run them as `uv run just …`, or activate the
@@ -53,7 +56,11 @@ just ps                    # status and health
 just logs [service…]       # follow logs
 just psql [-d fragancia_test] [-c 'select 1']
 just db-reset [--test]     # drop and recreate a database (asks you to type its name)
-just lint / just test      # lint + every pre-commit hook / tooling tests
+just api / just worker     # run the API (port 8100) / the worker
+just db-migrate [--test]   # apply migrations
+just lint / just test      # lint + every pre-commit hook / unit tests
+just typecheck / just arch # mypy strict / import-linter boundaries
+just test-integration      # API tests against PostgreSQL and Valkey
 just check                 # everything CI's quality job checks
 ```
 

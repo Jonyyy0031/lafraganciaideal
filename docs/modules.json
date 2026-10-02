@@ -3,7 +3,7 @@
   "modules": [
     { "name": "platform", "status": "active", "description": "Cross-cutting infrastructure, tooling and CI" },
     { "name": "web", "status": "active", "description": "Angular storefront and admin panel (phase 3)" },
-    { "name": "catalog", "status": "planned", "description": "Perfumes, brands, sizes, prices, photos, in-stock vs made-to-order" },
+    { "name": "catalog", "status": "active", "reference": true, "description": "REFERENCE MODULE. Perfumes, brands, sizes, prices, photos, in-stock vs made-to-order" },
     { "name": "inventory", "status": "planned", "description": "Stock per size; reserve and release stock for orders" },
     { "name": "orders", "status": "planned", "description": "Cart and orders; the order state machine" },
     { "name": "payments", "status": "planned", "description": "Payment gateway port; Mercado Pago adapter; idempotent webhooks" },

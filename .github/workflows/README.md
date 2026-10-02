@@ -6,8 +6,10 @@ Every third-party action is pinned to a commit SHA with its version in a comment
 
 | Job       | What it proves                                                                  | Reproduce locally                                   |
 | --------- | ------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `quality` | Lint, formatting, every pre-commit hook and the tooling tests pass              | `uv run just check`                                 |
+| `quality` | Lint, formatting, pre-commit hooks, mypy, import-linter and all unit tests      | `uv run just check`                                 |
 | `commits` | Every commit in the PR follows the convention (PRs only)                        | `uv run scripts/commits.py --range origin/main..HEAD` |
+| `api-integration` | Migrations apply, match the table definitions and reverse; integration tests pass against ephemeral PostgreSQL + Valkey | `uv run just test-integration` |
+| `docker`  | The `runtime` and `migrator` images build (never pushed)                        | `docker build -f apps/api/Dockerfile --target runtime .` |
 | `infra`   | `just bootstrap` works on a clean machine, is idempotent, and services respond  | `uv run just bootstrap` twice, then the smoke commands |
 
 ## Updating pinned actions
