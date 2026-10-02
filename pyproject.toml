@@ -5,20 +5,30 @@ name = "fragancia-tooling"
 version = "0.0.0"
 description = "Repository tooling for La Fragancia Ideal"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = ["fragancia-api"]
 
 [dependency-groups]
 dev = [
     "boto3>=1.43.107",
+    "httpx>=0.28.1",
+    "import-linter>=2.15",
+    "mypy>=2.4.0",
     "pre-commit>=4.6.2",
     "psycopg[binary]>=3.3.6",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.16.10",
     "rust-just>=1.58.0",
 ]
 
 [tool.uv]
 package = false
+
+[tool.uv.workspace]
+members = ["apps/api"]
+
+[tool.uv.sources]
+fragancia-api = { workspace = true }
 
 [tool.ruff]
 line-length = 100
@@ -28,12 +38,26 @@ target-version = "py314"
 select = ["E", "F", "I", "B", "UP", "S"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["bootstrap", "commits", "infra"]
+known-first-party = ["bootstrap", "commits", "infra", "fragancia_api"]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/test_*.py" = ["S101"]
+"apps/api/tests/**" = ["S101", "S105", "S106"]
 
 [tool.pytest.ini_options]
-testpaths = ["scripts"]
-addopts = "-q"
-pythonpath = ["scripts"]
+testpaths = ["scripts", "apps/api/tests"]
+pythonpath = ["scripts", "apps/api"]
+# Integration tests need `just up`; they run with `just test-integration`.
+addopts = "-q --import-mode=importlib -m 'not integration'"
+markers = ["integration: needs PostgreSQL and Valkey from `just up`"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+filterwarnings = ["error::DeprecationWarning:fragancia_api.*"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["apps/api/src", "apps/api/tests", "apps/api/migrations"]
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
