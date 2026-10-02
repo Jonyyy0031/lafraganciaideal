@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from fastapi import APIRouter
 
 from fragancia_api.shared.application.actor import ActorResolver
+from fragancia_api.shared.application.clock import Clock
 from fragancia_api.shared.application.events import EventPublisher, EventSubscriptions
 from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.http.services import ServiceRegistry
@@ -21,6 +22,7 @@ class Platform:
     events: EventPublisher
     subscriptions: EventSubscriptions
     actors: ActorResolver
+    clock: Clock
 
 
 @dataclass(frozen=True)
