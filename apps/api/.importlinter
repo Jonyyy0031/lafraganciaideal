@@ -28,11 +28,32 @@ forbidden_modules =
     fragancia_api.shared.http
     fragancia_api.shared.infrastructure
 
+[importlinter:contract:domain-is-pure]
+name = Module domains are pure (no frameworks, no contracts, no IO)
+type = forbidden
+source_modules =
+    fragancia_api.modules.*.domain
+forbidden_modules =
+    fastapi
+    starlette
+    pydantic
+    sqlalchemy
+    alembic
+    psycopg
+    redis
+    arq
+    structlog
+    fragancia_api.shared.application
+    fragancia_api.shared.contracts
+    fragancia_api.shared.http
+    fragancia_api.shared.infrastructure
+
 [importlinter:contract:application-is-framework-free]
 name = Application code does not depend on web, database or queue frameworks
 type = forbidden
 source_modules =
     fragancia_api.shared.application
+    fragancia_api.modules.*.application
 forbidden_modules =
     fastapi
     starlette
@@ -48,7 +69,7 @@ type = layers
 layers =
     fragancia_api.shared.http | fragancia_api.shared.infrastructure
     fragancia_api.shared.application
-    fragancia_api.shared.kernel
+    fragancia_api.shared.kernel | fragancia_api.shared.contracts
 
 [importlinter:contract:composition-root]
 name = Only the entrypoints know the composition root
@@ -59,3 +80,20 @@ source_modules =
 forbidden_modules =
     fragancia_api.container
     fragancia_api.main
+
+[importlinter:contract:module-layers]
+name = Module layers point inwards (module -> http | infrastructure -> application -> contracts | domain)
+type = layers
+containers =
+    fragancia_api.modules.catalog
+layers =
+    module
+    http | infrastructure
+    application
+    contracts | domain
+
+[importlinter:contract:modules-independent]
+name = Modules do not import each other (cross-module calls go through ports + adapters)
+type = independence
+modules =
+    fragancia_api.modules.*
