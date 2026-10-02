@@ -29,7 +29,13 @@ jobs:
       - run: uv run ruff check
       - run: uv run ruff format --check
       - run: uv run pre-commit run --all-files --show-diff-on-failure
-      - run: uv run pytest
+      - name: Type check (mypy strict)
+        run: uv run mypy
+      - name: Architecture rules (import-linter)
+        working-directory: apps/api
+        run: uv run lint-imports
+      - name: Unit tests (tooling + API)
+        run: uv run pytest
 
   commits:
     name: Commit messages
@@ -50,6 +56,85 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: uv run scripts/commits.py --range "$BASE_SHA..$HEAD_SHA"
+
+  api-integration:
+    name: API integration (PostgreSQL + Valkey)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        # Same image as infra/docker/compose.yaml (postgres:18-alpine)
+        image: postgres@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-ephemeral
+          POSTGRES_DB: fragancia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d fragancia_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      valkey:
+        # Same image as infra/docker/compose.yaml (valkey/valkey:9.0-alpine)
+        image: valkey/valkey@sha256:187679e3bd4036959631e3f03983ab2ba503ab21e6fd0454d508e909db2ee989
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://ci:ci-ephemeral@localhost:5432/fragancia_test
+      DATABASE_URL_TEST: postgresql+psycopg://ci:ci-ephemeral@localhost:5432/fragancia_test
+      VALKEY_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Apply migrations
+        working-directory: apps/api
+        run: uv run alembic -x test=true upgrade head
+      - name: Table definitions match the migrations
+        working-directory: apps/api
+        run: uv run alembic -x test=true check
+      - name: Downgrade and upgrade again (migrations are reversible)
+        working-directory: apps/api
+        run: |
+          uv run alembic -x test=true downgrade base
+          uv run alembic -x test=true upgrade head
+      - name: Integration tests
+        run: uv run pytest apps/api/tests -m integration
+
+  docker:
+    name: Docker (${{ matrix.target }})
+    needs: [quality, api-integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [runtime, migrator]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=api-${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=api-${{ matrix.target }}
 
   infra:
     name: Local environment (bootstrap twice + smoke)
