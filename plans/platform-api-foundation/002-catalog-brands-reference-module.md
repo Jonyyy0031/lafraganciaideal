@@ -162,7 +162,7 @@ Run on 2026-10-02 with `just api` + `just worker` against the development databa
 | Outbox row published by the worker | ✔ | 3 × `catalog.brand.created \| published = t` |
 | Unique race and savepoint | ✔ | 5 concurrent creates → 1 Ok + 4 conflicts; forced violation keeps the transaction usable |
 | `just check`, `just test-integration` | ✔ | 95 unit, 15 integration, 7 import-linter contracts (module contracts proven with a temporary violation) |
-| CI green | **PENDING** | waiting for the user's choice: push to `main` or PR |
+| CI green on push | ✔ | PR #1, run [37066830411](https://github.com/Jonyyy0031/lafraganciaideal/actions/runs/37066830411): Quality, Commit messages, API integration, Docker (runtime), Docker (migrator), Local environment — all ✓ |
 
 The three brands created during verification (Armani, Chanel, Maison Margiela) were left in
 the development database as sample data.

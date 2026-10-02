@@ -245,4 +245,4 @@ Run on 2026-10-02 against the local services (web-rh running in parallel).
 | `just check` and `just test-integration` | ✔ | ruff, all hooks, mypy (77 files), import-linter 7 contracts, 95 unit; 15 integration |
 | import-linter catches violations | ✔ | temporary `import sqlalchemy` in the kernel → `kernel-is-pure BROKEN` |
 | Docker image builds and answers | ✔ | `runtime` and `migrator` built (330 MB); container live/ready 200, uid 10001; worker command starts with JSON logs; migrator ran |
-| CI green on push | **PENDING** | waiting for the user's choice: push to `main` or PR |
+| CI green on push | ✔ | PR #1, run [37066830411](https://github.com/Jonyyy0031/lafraganciaideal/actions/runs/37066830411): Quality, Commit messages, API integration, Docker (runtime), Docker (migrator), Local environment — all ✓ |
