@@ -11,3 +11,5 @@ supersedes the old one. Copy [0000-template.md](0000-template.md).
 | [0004](0004-mercado-pago.md)            | Mercado Pago as the first payment provider             |
 | [0005](0005-vps-with-docker.md)         | Host on a single VPS with Docker                       |
 | [0006](0006-outbox-from-day-one.md)     | Transactional outbox for domain events from day one    |
+| [0007](0007-sqlalchemy-core-and-mappers.md) | SQLAlchemy Core tables + explicit mappers (no ORM mapping) |
+| [0008](0008-result-type-and-manual-composition-root.md) | `Result` for expected errors; manual composition root |
