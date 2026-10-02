@@ -14,6 +14,7 @@ import psycopg
 from infra import ensure_bucket, ensure_database, ensure_env_file, missing_tools, read_env
 
 ROOT = Path(__file__).resolve().parent.parent
+API_DIR = ROOT / "apps/api"
 COMPOSE = ["docker", "compose", "-f", str(ROOT / "infra/docker/compose.yaml")]
 
 
@@ -25,8 +26,8 @@ def report(created: bool, what: str) -> None:
     print(f"  + {what} created" if created else f"  = {what} already exists")
 
 
-def run(command: list[str]) -> None:
-    subprocess.run(command, cwd=ROOT, check=True)  # noqa: S603 (fixed, trusted commands)
+def run(command: list[str], cwd: Path = ROOT) -> None:
+    subprocess.run(command, cwd=cwd, check=True)  # noqa: S603 (fixed, trusted commands)
 
 
 def fail(message: str) -> None:
@@ -47,9 +48,10 @@ def main() -> None:
         fail("Docker is installed but the daemon is not running.")
     print("  docker, uv and git OK")
 
-    step("Environment file (created only if missing)")
+    step("Environment files (created only if missing)")
     env_path = ROOT / ".env"
     report(ensure_env_file(ROOT / ".env.example", env_path), ".env")
+    report(ensure_env_file(API_DIR / ".env.example", API_DIR / ".env"), "apps/api/.env")
     env = read_env(env_path)
 
     step("Infrastructure (PostgreSQL, Valkey, S3 storage, Mailpit)")
@@ -68,6 +70,10 @@ def main() -> None:
             ensure_database(conn, env["POSTGRES_TEST_DB"], owner=env["POSTGRES_USER"]),
             env["POSTGRES_TEST_DB"],
         )
+
+    step("Database migrations (development and test)")
+    run(["uv", "run", "alembic", "upgrade", "head"], cwd=API_DIR)
+    run(["uv", "run", "alembic", "-x", "test=true", "upgrade", "head"], cwd=API_DIR)
 
     step("S3 bucket for product media")
     s3 = boto3.client(
@@ -92,6 +98,9 @@ def main() -> None:
   S3 API      → http://127.0.0.1:{env["S3_PORT"]}  (bucket {env["S3_BUCKET"]})
   S3 console  → http://localhost:{env["S3_CONSOLE_PORT"]}
   Mailpit     → http://localhost:{env["MAILPIT_UI_PORT"]}  (SMTP 127.0.0.1:{env["SMTP_PORT"]})
+
+  API         → uv run just api     (http://127.0.0.1:8100/api/v1/docs)
+  Worker      → uv run just worker
 """  # noqa: E501
     )
 
