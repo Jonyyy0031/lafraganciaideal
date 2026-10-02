@@ -208,9 +208,8 @@ None
 1. **Python 3.14 instead of 3.13** — the plan said `.python-version = 3.13`; 3.14 is the
    current stable release and the one installed locally. `.python-version`, `requires-python`
    and ruff's `target-version` use 3.14.
-2. **`just` installed with `uv tool install rust-just`** — the plan suggested `pacman`, which
-   needs sudo. Same binary (1.58.0); CI installs it the same way instead of adding an action.
-   Both options are documented.
+2. **`just` in CI** — CI installs it with `uv tool install rust-just` (same 1.58.0 binary)
+   instead of adding a third-party action. Locally it was already installed with `pacman`.
 3. **Image tags** — Valkey `9.0-alpine`, RustFS `1.0.1-preview.16` (a fixed tag rather than
    `latest`), Mailpit `v1.31.3`. `docker buildx` is not installed locally, so digests were
    read with `docker pull` + `docker image inspect` (multi-arch index digests); the README
