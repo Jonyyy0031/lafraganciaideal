@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 module: catalog
 depends_on: [platform-api-foundation/001]
 ---
@@ -131,4 +131,38 @@ case- and accent-insensitively, a URL slug derived from the name (unique), and a
 
 ## Deviations
 
+1. **Uniqueness by slug only** — the plan had a `name_key` unique column plus a unique slug;
+   the slug already folds case, accents and punctuation ("Maison Margiela" = "maison
+   margiéla"), so one unique constraint (`uq_brands_slug`) is the rule. No `name_key` column.
+2. **Event field `brand_name`** — `name` is the event's class-level identifier
+   (`catalog.brand.created`), so the brand's name travels as `brand_name`.
+3. **`Page[T]` lives in `fragancia_api.shared.contracts`** (plan suggested `shared/http`) so
+   application ports can return it without importing the HTTP layer.
+4. **One in-memory adapter** (`InMemoryBrands`) implements both `BrandRepository` and
+   `BrandQueries` over a shared store.
+5. **Extra integration test** forcing the unique violation inside a savepoint (the concurrent
+   test can resolve through the `exists` check alone).
+6. **Migration** generated with `just db-revision "catalog brands"`, then edited by hand to
+   create/drop the `catalog` schema (autogenerate does not), as `docs/recipes/db-change.md`
+   now documents.
+7. **`Clock` port** (added to the platform, see 001 deviation 3) gives `created_at`.
+
 ## Verification
+
+Run on 2026-10-02 with `just api` + `just worker` against the development database.
+
+| Criterion | Result | Evidence |
+| --- | --- | --- |
+| Create `"  Maison   Margiela "` → 201, normalized row | ✔ | 201 `{"id":"01a0fe48-…"}`; row `Maison Margiela \| maison-margiela \| t` |
+| No token / wrong token → 401 | ✔ | both `{"code":"AUTHENTICATION_REQUIRED",...}` 401 |
+| `"maison margiéla"` → 409 | ✔ | `CATALOG_BRAND_ALREADY_EXISTS` 409 |
+| `"x"` → 422 domain code; `{}` → 422 `VALIDATION_ERROR` | ✔ | `CATALOG_BRAND_NAME_INVALID` with `{"min":2,"max":80}`; `VALIDATION_ERROR` |
+| Public list: active, `{id,name,slug}`, by name | ✔ | `Armani, Chanel, Maison Margiela` with only those fields |
+| Admin list paginated | ✔ | `page=1&size=2` → 2 items, `total: 3` |
+| Outbox row published by the worker | ✔ | 3 × `catalog.brand.created \| published = t` |
+| Unique race and savepoint | ✔ | 5 concurrent creates → 1 Ok + 4 conflicts; forced violation keeps the transaction usable |
+| `just check`, `just test-integration` | ✔ | 95 unit, 15 integration, 7 import-linter contracts (module contracts proven with a temporary violation) |
+| CI green | **PENDING** | waiting for the user's choice: push to `main` or PR |
+
+The three brands created during verification (Armani, Chanel, Maison Margiela) were left in
+the development database as sample data.

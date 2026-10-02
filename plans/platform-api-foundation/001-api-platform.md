@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 module: platform
 depends_on: [platform-infraestructura/001]
 ---
@@ -206,4 +206,43 @@ The shape imitates `~/codes/web-rh/apps/api` translated to Python:
 
 ## Deviations
 
+1. **`TransactionRunner.run(work)` instead of `async with tx.transaction()`** — the plan's step 4
+   described a context manager; `run` takes the work and commits on `Ok`, rolls back on `Err`
+   or exceptions, so an `Err` can never commit half a change. Nested runs join the outer one.
+2. **`DatabaseSettings` split from `Settings`** — the `migrator` image only has the database
+   URL; Alembic's `env.py` reads `DatabaseSettings`, which `Settings` extends.
+3. **Additions needed by plan 002**: `Clock` port (`shared/application/clock.py`) +
+   `SystemClock`; in-memory platform fakes (`shared/infrastructure/in_memory.py`);
+   `shared/contracts` with the generic `Page[T]`, placed next to the kernel in the shared
+   layers contract. `Platform` gained `clock`.
+4. **Declared-access check uses the OpenAPI document** — FastAPI 0.142 stores included routers
+   as private `_IncludedRouter` objects; `tests/support.py::assert_admin_routes_are_protected`
+   checks that every `/api/v1/admin` operation requires the `HTTPBearer` scheme instead.
+5. **Dockerfile without BuildKit cache mounts** — the dev machine's Docker has no `buildx`
+   plugin; plain layers keep dependency caching and the image builds everywhere.
+6. **Worker logs** — arq's handler duplicated lines through the root logger and logged every
+   2-second cron run; propagation is off for `arq` and a filter hides only the outbox cron
+   start/finish lines (failures still show).
+7. **mypy also checks `apps/api/migrations`**; `apps/api/README.md` is the package readme.
+8. **`scripts/infra.py` / `scripts/test_bootstrap.py` were not modified** — `ensure_env_file`
+   already covered `apps/api/.env`.
+9. **Branch history** — a pre-staged index made the first commits lump files together; the
+   unpublished branch was re-committed with `git reset --soft` (no change lost).
+
 ## Verification
+
+Run on 2026-10-02 against the local services (web-rh running in parallel).
+
+| Criterion | Result | Evidence |
+| --- | --- | --- |
+| Bootstrap creates `apps/api/.env` and migrates both databases | ✔ | `= apps/api/.env already exists` on rerun; `Running upgrade -> 0001` on dev and test |
+| `/health/live` 200, `/ready` 200 with both checks, 503 naming `valkey` when stopped | ✔ | live `{"status":"ok"}`; ready `{"database":"ok","valkey":"ok"}`; Valkey stopped → 503 `{"valkey":"error"}`; restarted → 200 |
+| Docs in development, 404 in production | ✔ | `/api/v1/docs` 200 with `just api`; 404 in the `runtime` image and in `test_production_app_hides_the_docs` |
+| 404 / 500 shapes and `X-Request-ID` | ✔ | `/api/v1/nope` → `{"code":"NOT_FOUND",...}`; unit test: 500 `INTERNAL_ERROR` without the exception text, header present |
+| Production + `ADMIN_DEV_TOKEN` refuses to start | ✔ | `APP_ENV=production` → `ADMIN_DEV_TOKEN is for development only; unset it in production` |
+| Outbox: committed delivered, rolled back not, failures retried | ✔ | integration tests (9) incl. backoff and `attempts`; live: event inserted in dev DB → worker marked it published |
+| `just worker` starts and relays | ✔ | `Starting worker for 1 functions: cron:relay_outbox`, `worker.started`; outbox row published |
+| `just check` and `just test-integration` | ✔ | ruff, all hooks, mypy (77 files), import-linter 7 contracts, 95 unit; 15 integration |
+| import-linter catches violations | ✔ | temporary `import sqlalchemy` in the kernel → `kernel-is-pure BROKEN` |
+| Docker image builds and answers | ✔ | `runtime` and `migrator` built (330 MB); container live/ready 200, uid 10001; worker command starts with JSON logs; migrator ran |
+| CI green on push | **PENDING** | waiting for the user's choice: push to `main` or PR |

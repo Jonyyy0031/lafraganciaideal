@@ -40,6 +40,13 @@ mapping that 001 delivers.
 
 ## Delivered
 
+- **001** (2026-10-02): FastAPI platform — settings, kernel (`Result`, errors, events, Money),
+  async SQLAlchemy + `TransactionRunner`, transactional outbox + arq relay, error shape,
+  declared access with the dev-token resolver, health, request ids, logs, import-linter
+  contracts, Docker `runtime`/`migrator`, CI jobs. Guide: `apps/api/README.md`; ADRs 0007–0008.
+- **002** (2026-10-02): `catalog` brands — create (admin), public and admin lists; reference
+  module + recipes in `docs/recipes/`.
+
 ## Considered and discarded
 
 - **Platform only, no business slice**: patterns (Result, repositories, queries) would be
