@@ -125,7 +125,8 @@ def main(argv: list[str] | None = None) -> int:
         errors = validate(message, scopes)
         if errors:
             failed = True
-            print(f"✘ {label}: {strip_git_comments(message).splitlines()[0:1]}", file=sys.stderr)
+            header = next(iter(strip_git_comments(message).splitlines()), "")
+            print(f"✘ {label}: {header!r}", file=sys.stderr)
             for error in errors:
                 print(f"    - {error}", file=sys.stderr)
     if failed:
