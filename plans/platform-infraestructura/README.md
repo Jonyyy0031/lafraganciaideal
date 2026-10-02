@@ -36,6 +36,11 @@ work. No product code yet.
 
 ## Delivered
 
+- **001** (2026-10-02): repo foundation, local services (`infra/docker/compose.yaml`),
+  idempotent `just bootstrap`, commit convention (`scripts/commits.py` + hooks), CI
+  (`.github/workflows/ci.yml`), README/AGENTS/CONTRIBUTING, `docs/architecture.md` and
+  ADRs 0001–0006. Pushed to `github.com/Jonyyy0031/lafraganciaideal`; CI green.
+
 ## Considered and discarded
 
 - **Express + Next.js (same as web-rh)**: the user wants a different stack; the architecture

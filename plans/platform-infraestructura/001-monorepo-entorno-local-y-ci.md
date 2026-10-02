@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: done
 module: platform
 min_implementer: mid
 depends_on: []
@@ -248,4 +248,4 @@ Run on 2026-10-02 with web-rh's environment running in parallel (`rrhh-*` contai
 | Commit messages | ✔ | real `git commit`: `changes` rejected; `Co-Authored-By:` rejected; 7 conventional commits accepted; `commits.py --range` → `✔ 3 commit message(s)` |
 | `just check` | ✔ | ruff, every pre-commit hook (incl. actionlint) Passed; `28 passed` |
 | Documentation in English | ✔ | README, AGENTS, CLAUDE, CONTRIBUTING, architecture, 7 ADR files, templates, CI docs |
-| CI jobs pass on a PR | **NOT VERIFIED** | the repo has no GitHub remote yet. `actionlint` passes and every CI command was run locally, but the workflow itself has not run on GitHub |
+| CI jobs pass | ✔ | push to `main`, run [37055491475](https://github.com/Jonyyy0031/lafraganciaideal/actions/runs/37055491475): `Quality` ✓ 19s, `Local environment (bootstrap twice + smoke)` ✓ 26s. `Commit messages` is PR-only, so it was skipped on this push; its command (`commits.py --range`) was verified locally |
