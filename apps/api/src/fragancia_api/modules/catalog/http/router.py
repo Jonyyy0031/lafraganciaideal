@@ -8,12 +8,12 @@ from fragancia_api.modules.catalog.application.queries.list_brands import (
     ListPublicBrands,
 )
 from fragancia_api.modules.catalog.contracts import (
-    AdminBrand,
+    AdminBrandPage,
     CreateBrandRequest,
     CreatedResponse,
     PublicBrand,
 )
-from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page
+from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from fragancia_api.shared.http import ErrorResponse, admin_router, provide, public_router, unwrap
 
 public = public_router(prefix="/brands", tags=["catalog"])
@@ -47,7 +47,7 @@ async def list_all_brands(
     use_case: Annotated[ListAdminBrands, Depends(provide(ListAdminBrands))],
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-) -> Page[AdminBrand]:
+) -> AdminBrandPage:
     """Every brand (active or not), ordered by name."""
     return await use_case.execute(page=page, size=size)
 

@@ -1,8 +1,7 @@
 from sqlalchemy import func, select
 
-from fragancia_api.modules.catalog.contracts import AdminBrand, PublicBrand
+from fragancia_api.modules.catalog.contracts import AdminBrand, AdminBrandPage, PublicBrand
 from fragancia_api.modules.catalog.infrastructure.tables import brands
-from fragancia_api.shared.contracts import Page
 from fragancia_api.shared.infrastructure.database import Database
 
 _BY_NAME = (func.lower(brands.c.name), brands.c.id)
@@ -22,7 +21,7 @@ class SqlBrandQueries:
             rows = (await session.execute(statement)).mappings()
             return [PublicBrand.model_validate(dict(row)) for row in rows]
 
-    async def list_all(self, *, page: int, size: int) -> Page[AdminBrand]:
+    async def list_all(self, *, page: int, size: int) -> AdminBrandPage:
         statement = (
             select(
                 brands.c.id, brands.c.name, brands.c.slug, brands.c.is_active, brands.c.created_at
@@ -35,4 +34,4 @@ class SqlBrandQueries:
             total = await session.scalar(select(func.count()).select_from(brands)) or 0
             rows = (await session.execute(statement)).mappings()
             items = [AdminBrand.model_validate(dict(row)) for row in rows]
-        return Page[AdminBrand](items=items, total=total, page=page, size=size)
+        return AdminBrandPage(items=items, total=total, page=page, size=size)

@@ -1,7 +1,6 @@
 from typing import Protocol
 
-from fragancia_api.modules.catalog.contracts import AdminBrand, PublicBrand
-from fragancia_api.shared.contracts import Page
+from fragancia_api.modules.catalog.contracts import AdminBrandPage, PublicBrand
 
 
 class BrandQueries(Protocol):
@@ -11,6 +10,6 @@ class BrandQueries(Protocol):
         """Active brands ordered by name (case-insensitive)."""
         ...
 
-    async def list_all(self, *, page: int, size: int) -> Page[AdminBrand]:
+    async def list_all(self, *, page: int, size: int) -> AdminBrandPage:
         """Every brand ordered by name (case-insensitive), one page at a time."""
         ...

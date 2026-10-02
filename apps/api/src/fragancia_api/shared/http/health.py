@@ -28,13 +28,13 @@ router = public_router(prefix="/health", tags=["health"])
 
 
 @router.get("/live")
-async def live() -> Liveness:
+async def liveness() -> Liveness:
     """The process is up."""
     return Liveness()
 
 
 @router.get("/ready", responses={503: {"model": Readiness}})
-async def ready(
+async def readiness(
     response: Response, checks: Annotated[HealthChecks, Depends(provide(HealthChecks))]
 ) -> Readiness:
     """The process can serve traffic: its dependencies answer."""

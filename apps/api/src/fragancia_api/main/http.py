@@ -9,12 +9,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fragancia_api.config import Settings
 from fragancia_api.container import Container, build_container
 from fragancia_api.shared.http import health
-from fragancia_api.shared.http.errors import ErrorResponse, install_error_handlers
+from fragancia_api.shared.http.errors import install_error_handlers
 from fragancia_api.shared.http.middleware import RequestContextMiddleware
+from fragancia_api.shared.http.openapi import install_openapi, operation_id
+from fragancia_api.shared.http.reference import reference_router
 from fragancia_api.shared.http.services import ServiceRegistry
 from fragancia_api.shared.infrastructure.logging import configure_logging
 
 API_PREFIX = "/api/v1"
+TITLE = "La Fragancia Ideal API"
+DESCRIPTION = (
+    "Online perfume store and back office. Admin routes (`/api/v1/admin/*`) need "
+    "`Authorization: Bearer <token>`. Errors always have the shape `{code, message, details?}`."
+)
 
 
 def create_app(container: Container | None = None) -> FastAPI:
@@ -47,19 +54,17 @@ def build_app(
     lifespan: object = None,
 ) -> FastAPI:
     """Assemble the FastAPI app from a service registry; tests call it with in-memory adapters."""
+    openapi_url = f"{API_PREFIX}/openapi.json"
     app = FastAPI(
-        title="La Fragancia Ideal API",
+        title=TITLE,
         version="1.0.0",
-        docs_url=f"{API_PREFIX}/docs" if docs else None,
+        docs_url=None,  # Scalar replaces Swagger UI (reference_router below)
         redoc_url=None,
-        openapi_url=f"{API_PREFIX}/openapi.json" if docs else None,
+        openapi_url=openapi_url if docs else None,
+        generate_unique_id_function=operation_id,
         lifespan=lifespan,  # type: ignore[arg-type]
-        responses={
-            401: {"model": ErrorResponse},
-            403: {"model": ErrorResponse},
-            422: {"model": ErrorResponse},
-        },
     )
+    install_openapi(app, description=DESCRIPTION)
     app.state.services = services
     install_error_handlers(app)
     app.add_middleware(RequestContextMiddleware)
@@ -70,6 +75,10 @@ def build_app(
             allow_methods=["*"],
             allow_headers=["*"],
             expose_headers=["X-Request-ID"],
+        )
+    if docs:
+        app.include_router(
+            reference_router(openapi_url=openapi_url, title=TITLE), prefix=API_PREFIX
         )
     app.include_router(health.router, prefix=API_PREFIX)
     for router in routers:
