@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run pre-commit run --all-files --show-diff-on-failure
+      - run: uv run pytest
+
+  commits:
+    name: Commit messages
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Check every commit in the PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: uv run scripts/commits.py --range "$BASE_SHA..$HEAD_SHA"
+
+  infra:
+    name: Local environment (bootstrap twice + smoke)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Install just
+        run: uv tool install rust-just
+      - name: Bootstrap (first run creates everything)
+        run: just bootstrap
+      - name: Bootstrap again (must be idempotent and keep .env)
+        run: |
+          before=$(sha256sum .env)
+          just bootstrap | tee second-run.log
+          [ "$before" = "$(sha256sum .env)" ]
+          grep -q '= .env already exists' second-run.log
+          grep -q '= fragancia_test already exists' second-run.log
+          grep -q '= bucket fragancia-media already exists' second-run.log
+      - name: Smoke test services
+        run: |
+          compose="docker compose -f infra/docker/compose.yaml --env-file .env"
+          $compose exec -T postgres psql -U fragancia -d fragancia -tAc 'select 1' | grep -qx 1
+          $compose exec -T postgres psql -U fragancia -d fragancia_test -tAc 'select 1' | grep -qx 1
+          $compose exec -T valkey valkey-cli ping | grep -qx PONG
+          uv run python -c "import boto3; boto3.client('s3', endpoint_url='http://127.0.0.1:9100', aws_access_key_id='fragancia', aws_secret_access_key='fragancia-dev', region_name='us-east-1').head_bucket(Bucket='fragancia-media')"
+          curl -fsS http://127.0.0.1:8026/api/v1/info > /dev/null
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f infra/docker/compose.yaml --env-file .env logs --no-color
+      - name: Stop services
+        if: always()
+        run: just down
