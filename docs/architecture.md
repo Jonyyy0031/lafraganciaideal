@@ -48,11 +48,11 @@ Each module:
     implemented by an adapter that calls the other module's facade (anti-corruption layer).
   - **Asynchronously**: domain events published through the **outbox**.
 
-Modules _(to be built; `catalog` first — plan platform-api-foundation/002)_:
+Modules (✔ = built; `catalog` is the **reference module** — see [recipes/new-module.md](recipes/new-module.md)):
 
 | Module          | Responsibility                                                                        |
 | --------------- | ------------------------------------------------------------------------------------- |
-| `catalog`       | Perfumes, brands, sizes (ml), prices, photos, availability mode: in stock / made to order |
+| `catalog`       | ✔ Brands. Next: perfumes, sizes (ml), prices, photos, availability: in stock / made to order |
 | `inventory`     | Stock per size; reserve on checkout, release on cancellation, commit on payment       |
 | `orders`        | Cart → order; the `Order` aggregate and its state machine                             |
 | `payments`      | `PaymentGateway` port → Mercado Pago adapter (Checkout Pro); idempotent webhooks      |

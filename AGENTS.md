@@ -41,10 +41,11 @@ Do not start work belonging to a later phase unless a plan for it is approved.
 - **Your training data may be outdated** for this stack (Python 3.14, FastAPI, Pydantic v2,
   SQLAlchemy 2, Angular, PostgreSQL 18, Valkey 9, uv, just). Read the documentation of the
   installed version before using an API you are not sure about.
-- **Imitate existing patterns.** Once a reference module exists, new code copies its shape.
-  Until then, `~/codes/web-rh` (same author, TypeScript) shows the intended architecture.
-  The API's conventions are in [apps/api/README.md](apps/api/README.md) — read it before
-  touching `apps/api`.
+- **Imitate the reference module.** `catalog` (`apps/api/src/fragancia_api/modules/catalog`)
+  is the canonical pattern: new modules and use cases copy its shape by name. Recipes:
+  [new module](docs/recipes/new-module.md), [new use case](docs/recipes/new-use-case.md),
+  [database change](docs/recipes/db-change.md). The API's conventions are in
+  [apps/api/README.md](apps/api/README.md) — read it before touching `apps/api`.
 - **Run `uv run just check` before declaring anything done** (plus `test-integration` when
   persistence changes), and say plainly what was not verified.
 
@@ -56,7 +57,7 @@ apps/web/        Angular (phase 3) — not created yet
 packages/        api-client generated from OpenAPI (phase 3) — empty for now
 infra/docker/    compose.yaml for local development (PostgreSQL, Valkey, RustFS S3, Mailpit)
 scripts/         bootstrap.py, infra.py, commits.py + their tests (repo tooling, Python)
-docs/            architecture.md, adr/, modules.json (module registry = valid commit scopes)
+docs/            architecture.md, adr/, recipes/, modules.json (module registry = commit scopes)
 plans/           plans and initiatives; _TEMPLATE.md, _INITIATIVE.md, findings/
 justfile         every command; run `just` to list them
 pyproject.toml   uv workspace root: repo tooling + dev tools; apps/api is a member

@@ -30,13 +30,17 @@ src/fragancia_api/
 │   │                  dev token resolver, Valkey health, logging, shared MetaData
 │   ├── http/          Error mapping, declared access, health, request id, ServiceRegistry/provide
 │   └── module.py      AppModule + Platform: what a module receives and hands back
-└── modules/           Business modules (one PostgreSQL schema each)
+├── shared/contracts/ Shared response shapes (Page)
+└── modules/           Business modules (one PostgreSQL schema each); catalog = reference
 migrations/            Alembic (one history; version table in schema `platform`)
 tests/unit/            No services needed (`uv run just test`)
 tests/integration/     Against fragancia_test (`uv run just test-integration`)
 ```
 
 ## Rules of thumb
+
+New module or use case? Follow [docs/recipes/](../../docs/recipes/) and copy `modules/catalog`.
+
 
 - **Expected failures are values**: use cases return `Ok(...)` / `Err(DomainError)`; routers
   call `unwrap(result)`. Raise only for the unexpected (ADR 0008).
