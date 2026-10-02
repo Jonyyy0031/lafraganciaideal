@@ -1,0 +1,38 @@
+# Repository tooling (bootstrap, commit checks). This is NOT the API project:
+# the API will live in apps/api with its own pyproject.toml (phase 2).
+[project]
+name = "fragancia-tooling"
+version = "0.0.0"
+description = "Repository tooling for La Fragancia Ideal"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "boto3>=1.43.107",
+    "pre-commit>=4.6.2",
+    "psycopg[binary]>=3.3.6",
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bootstrap", "commits", "infra"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/test_*.py" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["scripts"]
+addopts = "-q"
+pythonpath = ["scripts"]
