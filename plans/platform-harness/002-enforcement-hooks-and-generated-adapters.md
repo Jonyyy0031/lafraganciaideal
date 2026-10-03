@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: platform
 min_implementer: high
 depends_on: ["001"]
@@ -317,9 +317,42 @@ with `ast` at `feature_version=(3, 10)` and ruff's py310 target).
 
 Round 1 (superseded by the repair): baseline `uv run just check` green (348 harness tests); 8 strict-xfail GAPs.
 
-Round 3 (after the round-2 review repair, Deviation 9): pending the tester; the Round 2
-numbers below do not cover that code. Implementer run: `uv run just check` green (API 238
-passed, 3 skipped; harness 655 passed).
+Round 3 (after the round-2 review repair, Deviation 9; tester, 2026-10-03). Baseline
+`uv run just check` green: API 238 passed, 3 skipped; harness 655 passed, 0 xfail;
+`harness-check` 24 adapters up to date. The tester added no tests: every round-2 finding
+(High 1-3, Medium 4-8, Low 9-11) already has a regression in `scripts/harness/test_hooks.py`
+(`ROUND2_BLOCKS` -> `test_guard_bash_blocks_round2_bypasses`, round-2 allows
+`test_guard_bash_allows_after_round2_repairs`, `test_guard_bash_round2_messages_name_the_construct`,
+and the symlink fixture tests `test_guard_bash_cd_is_logical_like_bash`,
+`test_guard_paths_resolve_symlinks_before_dot_dot`,
+`test_guard_bash_rm_resolves_the_parent_physically`,
+`test_guard_bash_pushd_cannot_desynchronise_the_cwd`), written by the implementer because each
+reproduces the reported bypass. Tester probe (scratchpad script, 52 commands against the live
+`guard_bash.py`) confirmed independently: reserved words (`if`, `!`, `case`, `{`), `trap`,
+`eval`, `exec`, `time`, `X=/a/echo`, `Y=1`, `pushd`/`popd`, `export GIT_CONFIG_COUNT`,
+`/usr/lib/git-core/git-stash`, `--pathspec-f=`, `git add ':!x'`, `switch -C`, `branch -f`,
+`push --mirror|--prune`, `git config include.path|clean.requireForce|--file|-e|--system`, and
+docker `exec … sh -c 'psql … drop'` all exit 2; reads and must-pass cases (`git config
+user.name x`, `git config --get alias.x`, `export -p`, `git stash list`, `git status`,
+`uv run just check`) exit 0. No new bypass found, no GAP. Closing run = baseline (no file
+touched): same result. Layer: tooling for every row.
+
+| Behavior (round-2 repair) | Source | Test | State |
+| --- | --- | --- | --- |
+| Shell reserved words and string-running builtins rejected | `guard_bash.py` | H `test_guard_bash_blocks_round2_bypasses` | CONFIRMED (High 1) |
+| Any `=` in the first word is an assignment, rejected | `guard_bash.py` | same | CONFIRMED (High 2) |
+| `pushd`/`popd` rejected | `guard_bash.py` | same, `test_guard_bash_pushd_cannot_desynchronise_the_cwd` | CONFIRMED (High 3) |
+| `cd` logical; paths realpath-checked incl. `hooks/../config` | `guard_bash.py`, `guard_paths.py` | `test_guard_bash_cd_is_logical_like_bash`, `test_guard_paths_resolve_symlinks_before_dot_dot`, `test_guard_bash_rm_resolves_the_parent_physically` | CONFIRMED (Medium 4) |
+| `export/declare/typeset/readonly/local` with arguments rejected; `-p` allowed | `guard_bash.py` | blocks + allows tests | CONFIRMED (Medium 5) |
+| `git-*` programs rejected | `guard_bash.py` | blocks | CONFIRMED (Medium 6) |
+| `--pathspec-from-file` in checkout/add | `guard_bash.py` | blocks | CONFIRMED (Medium 7) |
+| docker/compose `sh -c` inner command checked recursively | `guard_bash.py` | blocks, allows | CONFIRMED (Medium 8) |
+| `git config` write allowlist, reads allowed | `guard_bash.py` | blocks, allows | CONFIRMED (Low 9) |
+| `switch -C`, `branch -f`, `push --mirror|--prune` | `guard_bash.py` | blocks | CONFIRMED (Low 10) |
+| `git add` magic pathspec `:` is broad | `guard_bash.py` | blocks | CONFIRMED (Low 11) |
+| Residual: `CDPATH`, `git -C` / `uv run --directory` joined lexically | n/a | none | NOT CONFIRMED (documented residual, not testable without the user's environment) |
+| Hooks on an interpreter older than 3.14 | n/a | `test_hooks_parse_as_python_3_10` (ast only) | NOT CONFIRMED on a real interpreter |
+| Live Claude Code session, Codex profiles | n/a | none | NOT CONFIRMED (manual e2e) |
 
 Round 2 (after the review repair, 2026-10-03; superseded by the round-2 repair): baseline `uv run just check` green (API 238 passed, 3 skipped; harness 545 passed, 0 xfail, `harness-check` 24 adapters up to date). The regression tests the implementer added for each reviewer finding are listed below; the tester added none (each already reproduces the reported bypass).
 
