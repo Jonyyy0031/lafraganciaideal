@@ -11,8 +11,10 @@ uv run just api              # http://127.0.0.1:8100/api/v1/docs (Scalar, auto-r
 uv run just worker           # background jobs: relays the outbox every 2 seconds
 ```
 
-Admin endpoints (`/api/v1/admin/*`) need `Authorization: Bearer <ADMIN_DEV_TOKEN>` from
-`apps/api/.env` — a development-only stand-in until the identity module exists.
+Admin endpoints (`/api/v1/admin/*`) need a session cookie. Create an owner once with
+`uv run just create-owner --email <email> --name <name>` (it asks for a 12+ character
+password), then sign in with `POST /api/v1/auth/login`; the response sets the httpOnly
+`fragancia_session` cookie that later admin calls send.
 
 ## Layout
 
@@ -53,7 +55,7 @@ New module or use case? Follow [docs/recipes/](../../docs/recipes/) and copy `mo
 - **Declared access**: put routes in `public_router()` or `admin_router()` — never a bare
   `APIRouter`. A test checks that every `/api/v1/admin` operation requires the bearer scheme.
 - **Errors** always have the shape `{code, message, details?}`; categories map to
-  404/409/422; invalid input is 422 `VALIDATION_ERROR`; unexpected is 500 `INTERNAL_ERROR`.
+  401 (unauthenticated)/404/409/422/429 (rate limited); invalid input is 422 `VALIDATION_ERROR`; unexpected is 500 `INTERNAL_ERROR`.
 - **Boundaries** are checked by `uv run just arch` (`.importlinter`). Do not work around a
   broken contract: explain why and propose an ADR.
 
@@ -65,8 +67,8 @@ New module or use case? Follow [docs/recipes/](../../docs/recipes/) and copy `mo
 - Operation ids are the route function names (`list_brands`) — keep them unique and readable.
   List responses use a concrete page class (`AdminBrandPage(Page[AdminBrand])`).
 - `/api/v1/docs` serves **Scalar** outside production (script pinned in
-  `shared/http/reference.py`). Click *Authorize*, choose *HTTPBearer* and paste
-  `ADMIN_DEV_TOKEN` to call admin routes; the token is remembered in the browser.
+  `shared/http/reference.py`). To call admin routes, call `log_in` first: the browser stores
+  the session cookie and sends it with the admin calls (no manual auth setup).
 
 ## Settings
 

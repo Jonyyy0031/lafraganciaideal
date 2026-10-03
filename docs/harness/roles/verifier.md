@@ -17,9 +17,12 @@ The plan (`status: verify`, review passed), its acceptance criteria, and the loc
    dev DB and that `uv run just db-migrate --test` / `uv run just test-integration` pass.
 3. **Drive the changed flow** against the plan's acceptance criteria:
    - API: `uv run just api` (port 8100), then `curl` the exact endpoints — status codes, JSON
-     shapes, error `code`s (admin routes need `Authorization: Bearer <ADMIN_DEV_TOKEN>`: take
-     the value from the user or an already-exported variable — never read `apps/api/.env` —
-     and never paste it into the plan), and the rows that landed
+     shapes, error `code`s (admin routes need a session cookie: create a synthetic owner once
+     with `printf '%s\n' '<12+ char password>' | uv run just create-owner --email verifier@example.test --name Verifier --password-stdin`
+     — an existing one exits 1 with `IDENTITY_EMAIL_TAKEN`, which is fine — then log in with
+     `curl -c <scratchpad>/cookies.txt` on `POST /api/v1/auth/login` and pass
+     `-b <scratchpad>/cookies.txt` to admin calls; never paste the cookie into the plan), and
+     the rows that landed
      (`uv run just psql -c "SELECT …"`, including `platform.outbox` when events are expected).
    - Worker: `uv run just worker` when the flow depends on the outbox relay or a job.
    - Email: Mailpit UI when the flow sends mail; otherwise NOT VERIFIED.

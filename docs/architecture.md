@@ -56,7 +56,7 @@ Modules (✔ = built; `catalog` is the **reference module** — see [recipes/new
 | `inventory`     | Stock per size; reserve on checkout, release on cancellation, commit on payment       |
 | `orders`        | Cart → order; the `Order` aggregate and its state machine                             |
 | `payments`      | `PaymentGateway` port → Mercado Pago adapter (Checkout Pro); idempotent webhooks      |
-| `identity`      | Admin login with opaque sessions; customers check out as guests in the first release  |
+| `identity`      | ✔ Back-office users (owner, staff), opaque sessions in a cookie, login throttle        |
 | `notifications` | Order emails first; WhatsApp (Cloud API) later; driven by events                      |
 | `shipping`      | `CarrierGateway` port (quotes, labels, tracking) — later                              |
 
@@ -124,7 +124,7 @@ pending_payment ───────────────────▶ pai
 ```
 POST /api/v1/admin/brands
  → RequestContextMiddleware: request id (X-Request-ID), bound to every log line
- → admin_router dependency require_admin: Bearer token → ActorResolver → 401 / 403
+ → admin_router dependency require_admin: session cookie → ActorResolver → 401 / 403
  → FastAPI validates the body with the Pydantic contract (422 VALIDATION_ERROR)
  → router: use_case = provide(CreateBrand) from the ServiceRegistry; no logic here
  → CreateBrand.execute() → TransactionRunner.run(work):
@@ -155,7 +155,7 @@ POST /api/v1/admin/brands
   has a stable `code`. HTTP maps the category: not found → 404, conflict → 409, invalid value
   or broken rule → 422, unauthenticated → 401, forbidden → 403.
 - **Invalid HTTP input** → 422 `VALIDATION_ERROR` with `details.issues` per field.
-- **No or unknown token** → 401 `AUTHENTICATION_REQUIRED`; **not allowed** → 403 `FORBIDDEN`.
+- **No or unknown session** → 401 `AUTHENTICATION_REQUIRED`; **not allowed** → 403 `FORBIDDEN`.
 - **Unknown route / method** → 404 `NOT_FOUND` / 405 `METHOD_NOT_ALLOWED`.
 - **Unexpected** → logged in full; the client gets 500 `INTERNAL_ERROR` with no details.
 - Clients always receive `{ code, message, details? }` and use `code` for translations.

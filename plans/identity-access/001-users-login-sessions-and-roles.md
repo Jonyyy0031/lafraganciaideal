@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: identity
 min_implementer: high
 depends_on: []
@@ -649,6 +649,77 @@ with `uv run just create-owner --email owner@example.test --name "Dueña Prueba"
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+- **Step 7, migration — blocked, then resolved (2026-10-03).** `uv run just db-revision "identity users and sessions"` generated
+  `apps/api/migrations/versions/0003_identity_users_and_sessions.py`. As the recipe predicts,
+  autogenerate did not add `CREATE SCHEMA "identity"`. The `guard_files` hook then refused the
+  hand edit ("Existing migration…", `.claude/hooks/guard_paths.py:77-78`), and `guard_bash`
+  refused deleting it. The implementer did not work around the guard; it set
+  `status: blocked` and stopped. While blocked:
+  - `uv run just db-migrate` failed on `0003` and rolled back. The development database
+    stayed at `0002`.
+  - `uv run just check` was red only on `ruff check` (two E501 lines in the generated file).
+  - Test database incident: the implementer ran `alembic -x test=true downgrade -1` while
+    `fragancia_test` was still at `0002` (`0003` had failed). That took it to `0001`. It was
+    restored with `alembic -x test=true upgrade 0002`. The development database was never
+    downgraded.
+  - Root cause: finding `plans/findings/platform-migration-guard-blocks-new-migration-review.md`.
+  - **Resolution.** Commit `310fe2b` (`fix(harness)`, made by the main session) lets the guard
+    edit a migration that git has never seen. The finding is resolved.
+    - The main session installed the implementer's hand-reviewed `0003`. It is formatted like
+      `0002`, starts with `CREATE SCHEMA IF NOT EXISTS "identity"` and ends its downgrade with
+      `DROP SCHEMA`.
+    - The main session then ran `db-migrate` on dev and test (both at `0003`), `alembic check`
+      (no new operations), downgrade -1 / upgrade head on the test database, and ruff.
+    - The implementer resumed the plan (`implementing`) and finished the step's checks; see
+      the evidence below.
+    - `plans-scope` also lists `.claude/hooks/guard_paths.py` and
+      `scripts/harness/test_hooks.py`. They come from that harness commit on this branch, not
+      from this plan's work.
+- **Out of the file list (cosmetic, fixed forward):** `apps/api/src/fragancia_api/main/http.py`
+  `DESCRIPTION`. Step 11 makes `test_openapi.py` assert that the description mentions the
+  session cookie. The description lives in `main/http.py`, which no step lists, and it still
+  said `Authorization: Bearer <token>`. It now names the `fragancia_session` cookie set by
+  `POST /api/v1/auth/login`. `plans-scope` reports this one file.
+- **Small choices the plan left open (no design impact):**
+  - `CreateUser` runs `get_by_email` in its own `run`, hashes outside any transaction, then
+    `add`s in a second `run`. The unique constraint still covers the race.
+  - `ChangePassword` raises `LookupError` (an unexpected error, so 500) if the session's user
+    does not exist. That cannot happen with `ResolveSessionActor`.
+  - The router has a `current_user` dependency next to `current_session`. It raises
+    `Forbidden` when `actor.id` is not a UUID (only test resolvers, e.g.
+    `TestActorResolver`'s `"test-admin"`).
+  - `GET /admin/auth/me` and login answer 401 if `GetMyAccount` returns `None`. This is
+    defensive.
+  - `access.py`'s 401 description now says "Missing or unknown session".
+  - `PlainTextPasswordHasher` records `verified_hashes`, so tests can assert that the dummy
+    hash was used.
+  - `test_brand_http.py`'s wrong-credential case sends `Cookie: fragancia_session=nope`
+    instead of a Bearer header.
+- **Noticed, not changed:** `docs/harness/HARNESS.md` → "Module registry" still lists
+  `identity` under **Planned**. Only HARNESS.md line 106 is in this plan's scope. Filed as
+  finding `plans/findings/platform-harness-module-registry-stale.md`.
+
+Evidence (2026-10-03):
+
+- `alembic current` → `0003 (head)` on both databases.
+- `printf '%s\n' '<synthetic>' | uv run just create-owner --email implementer@example.test --name "Implementer Prueba" --password-stdin`:
+  - The first run prints "✔ owner implementer@example.test created". The row has role
+    `owner`, `is_active` true and a `$argon2id$` hash.
+  - The second run exits 1 with "✘ IDENTITY_EMAIL_TAKEN: A user with this email already
+    exists". No password appears in either output.
+  - The seeded row was removed afterwards: `SELECT COUNT(*)` gave 1, then
+    `DELETE … WHERE email = 'implementer@example.test'` reported `DELETE 1`.
+- `uv run just check` → green:
+  - lint, typecheck, arch (7 kept) and plans-lint.
+  - "24 adapters up to date".
+  - "236 passed, 3 skipped, 15 deselected".
+  - Harness tests: "684 passed".
+  - compose config.
+- `uv run just test-integration` → "15 passed".
+- The step 10 grep finds only ADR 0009.
+- `plans-scope`: the only file out of scope from this plan's own work is `main/http.py`
+  (above).
 
 ## Test coverage
 
