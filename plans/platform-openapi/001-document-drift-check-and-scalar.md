@@ -1,5 +1,6 @@
 ---
 status: done
+min_implementer: mid
 module: platform
 depends_on: [platform-api-foundation/002]
 ---
@@ -107,6 +108,14 @@ that fails when it is stale (so `just check` and CI fail), and Scalar served by
    for scripts. No separate CI step.
 3. **Scalar in a browser not driven** — the Chrome extension was not connected. Verified the
    served page instead (see below).
+
+## Test coverage
+
+Not applicable: completed before the harness existed (2026-10-02); tests and review evidence are recorded in Verification.
+
+## Review findings
+
+Not applicable: completed before the harness existed (2026-10-02); tests and review evidence are recorded in Verification.
 
 ## Verification
 

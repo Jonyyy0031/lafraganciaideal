@@ -34,8 +34,14 @@ jobs:
       - name: Architecture rules (import-linter)
         working-directory: apps/api
         run: uv run lint-imports
-      - name: Unit tests (tooling + API)
-        run: uv run pytest
+      - name: Plans are well formed (plans-lint)
+        run: uv run just plans-lint
+      - name: Generated agent/skill adapters match their source (harness-check)
+        run: uv run just harness-check
+      - name: Unit tests (tooling, plan tooling, API)
+        run: uv run pytest --ignore=scripts/harness
+      - name: Guard hooks and adapter generator (test-harness)
+        run: uv run just test-harness
 
   commits:
     name: Commit messages
@@ -150,17 +156,17 @@ jobs:
       - run: uv sync --frozen
       - name: Bootstrap (first run creates everything)
         run: uv run just bootstrap
-      - name: Bootstrap again (must be idempotent and keep .env)
+      - name: Bootstrap again (must be idempotent and keep apps/api/.env)
         run: |
-          before=$(sha256sum .env)
+          before=$(sha256sum apps/api/.env)
           uv run just bootstrap | tee second-run.log
-          [ "$before" = "$(sha256sum .env)" ]
-          grep -q '= .env already exists' second-run.log
+          [ "$before" = "$(sha256sum apps/api/.env)" ]
+          grep -q '= apps/api/.env already exists' second-run.log
           grep -q '= fragancia_test already exists' second-run.log
           grep -q '= bucket fragancia-media already exists' second-run.log
       - name: Smoke test services
         run: |
-          compose="docker compose -f infra/docker/compose.yaml --env-file .env"
+          compose="docker compose -f infra/docker/compose.yaml"
           $compose exec -T postgres psql -U fragancia -d fragancia -tAc 'select 1' | grep -qx 1
           $compose exec -T postgres psql -U fragancia -d fragancia_test -tAc 'select 1' | grep -qx 1
           $compose exec -T valkey valkey-cli ping | grep -qx PONG
@@ -168,7 +174,7 @@ jobs:
           curl -fsS http://127.0.0.1:8026/api/v1/info > /dev/null
       - name: Logs on failure
         if: failure()
-        run: docker compose -f infra/docker/compose.yaml --env-file .env logs --no-color
+        run: docker compose -f infra/docker/compose.yaml logs --no-color
       - name: Stop services
         if: always()
         run: uv run just down

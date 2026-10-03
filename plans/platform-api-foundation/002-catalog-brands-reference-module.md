@@ -1,6 +1,7 @@
 ---
 status: done
-module: catalog
+min_implementer: mid
+module: platform
 depends_on: [platform-api-foundation/001]
 ---
 
@@ -146,6 +147,14 @@ case- and accent-insensitively, a URL slug derived from the name (unique), and a
    create/drop the `catalog` schema (autogenerate does not), as `docs/recipes/db-change.md`
    now documents.
 7. **`Clock` port** (added to the platform, see 001 deviation 3) gives `created_at`.
+
+## Test coverage
+
+Not applicable: completed before the harness existed (2026-10-02); tests and review evidence are recorded in Verification.
+
+## Review findings
+
+Not applicable: completed before the harness existed (2026-10-02); tests and review evidence are recorded in Verification.
 
 ## Verification
 

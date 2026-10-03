@@ -4,18 +4,29 @@ Idempotent: safe to run any number of times. It never overwrites an existing .en
 deletes data, databases, buckets or volumes.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import boto3
-import psycopg
 
-from infra import ensure_bucket, ensure_database, ensure_env_file, missing_tools, read_env
+from infra import (
+    ensure_bucket,
+    ensure_database_in_container,
+    ensure_env_file,
+    ensure_env_keys,
+    missing_tools,
+    read_env,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 API_DIR = ROOT / "apps/api"
 COMPOSE = ["docker", "compose", "-f", str(ROOT / "infra/docker/compose.yaml")]
+TEST_DATABASE = "fragancia_test"
+# Compose defaults (infra/docker/compose.yaml); exported variables override them.
+PORTS = {"POSTGRES_PORT": "5433", "VALKEY_PORT": "6380", "S3_CONSOLE_PORT": "9101",
+         "SMTP_PORT": "1026", "MAILPIT_UI_PORT": "8026"}  # fmt: skip
 
 
 def step(message: str) -> None:
@@ -48,28 +59,24 @@ def main() -> None:
         fail("Docker is installed but the daemon is not running.")
     print("  docker, uv and git OK")
 
-    step("Environment files (created only if missing)")
-    env_path = ROOT / ".env"
-    report(ensure_env_file(ROOT / ".env.example", env_path), ".env")
-    report(ensure_env_file(API_DIR / ".env.example", API_DIR / ".env"), "apps/api/.env")
-    env = read_env(env_path)
+    step("Environment file (created only if missing)")
+    api_env = API_DIR / ".env"
+    report(ensure_env_file(API_DIR / ".env.example", api_env), "apps/api/.env")
+    added = ensure_env_keys(API_DIR / ".env.example", api_env)
+    if added:
+        print(f"  + apps/api/.env gained new settings: {', '.join(added)}")
+    if (ROOT / ".env").exists():
+        print(
+            "  ! the root .env is no longer used (compose has inline defaults); you can delete it"
+        )
+    env = read_env(api_env)
+    ports = {name: os.environ.get(name, default) for name, default in PORTS.items()}
 
     step("Infrastructure (PostgreSQL, Valkey, S3 storage, Mailpit)")
-    run([*COMPOSE, "--env-file", str(env_path), "up", "-d", "--wait", "--wait-timeout", "180"])
+    run([*COMPOSE, "up", "-d", "--wait", "--wait-timeout", "180"])
 
     step("Integration test database")
-    with psycopg.connect(
-        host="127.0.0.1",
-        port=int(env["POSTGRES_PORT"]),
-        user=env["POSTGRES_USER"],
-        password=env["POSTGRES_PASSWORD"],
-        dbname=env["POSTGRES_DB"],
-        autocommit=True,
-    ) as conn:
-        report(
-            ensure_database(conn, env["POSTGRES_TEST_DB"], owner=env["POSTGRES_USER"]),
-            env["POSTGRES_TEST_DB"],
-        )
+    report(ensure_database_in_container(COMPOSE, TEST_DATABASE), TEST_DATABASE)
 
     step("Database migrations (development and test)")
     run(["uv", "run", "alembic", "upgrade", "head"], cwd=API_DIR)
@@ -78,7 +85,7 @@ def main() -> None:
     step("S3 bucket for product media")
     s3 = boto3.client(
         "s3",
-        endpoint_url=f"http://127.0.0.1:{env['S3_PORT']}",
+        endpoint_url=env["S3_ENDPOINT_URL"],
         aws_access_key_id=env["S3_ACCESS_KEY"],
         aws_secret_access_key=env["S3_SECRET_KEY"],
         region_name="us-east-1",
@@ -93,11 +100,11 @@ def main() -> None:
     print(
         f"""
 ✔ Ready.
-  PostgreSQL  → 127.0.0.1:{env["POSTGRES_PORT"]}  (db {env["POSTGRES_DB"]}, tests {env["POSTGRES_TEST_DB"]})
-  Valkey      → 127.0.0.1:{env["VALKEY_PORT"]}
-  S3 API      → http://127.0.0.1:{env["S3_PORT"]}  (bucket {env["S3_BUCKET"]})
-  S3 console  → http://localhost:{env["S3_CONSOLE_PORT"]}
-  Mailpit     → http://localhost:{env["MAILPIT_UI_PORT"]}  (SMTP 127.0.0.1:{env["SMTP_PORT"]})
+  PostgreSQL  → 127.0.0.1:{ports["POSTGRES_PORT"]}  (db fragancia, tests {TEST_DATABASE})
+  Valkey      → 127.0.0.1:{ports["VALKEY_PORT"]}
+  S3 API      → {env["S3_ENDPOINT_URL"]}  (bucket {env["S3_BUCKET"]})
+  S3 console  → http://localhost:{ports["S3_CONSOLE_PORT"]}
+  Mailpit     → http://localhost:{ports["MAILPIT_UI_PORT"]}  (SMTP 127.0.0.1:{ports["SMTP_PORT"]})
 
   API         → uv run just api     (http://127.0.0.1:8100/api/v1/docs)
   Worker      → uv run just worker

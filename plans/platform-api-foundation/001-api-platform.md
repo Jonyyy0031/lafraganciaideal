@@ -1,5 +1,6 @@
 ---
 status: done
+min_implementer: mid
 module: platform
 depends_on: [platform-infraestructura/001]
 ---
@@ -228,6 +229,14 @@ The shape imitates `~/codes/web-rh/apps/api` translated to Python:
    already covered `apps/api/.env`.
 9. **Branch history** — a pre-staged index made the first commits lump files together; the
    unpublished branch was re-committed with `git reset --soft` (no change lost).
+
+## Test coverage
+
+Not applicable: completed before the harness existed (2026-10-02); tests and review evidence are recorded in Verification.
+
+## Review findings
+
+Not applicable: completed before the harness existed (2026-10-02); tests and review evidence are recorded in Verification.
 
 ## Verification
 
