@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: platform
 min_implementer: mid
 depends_on: []
