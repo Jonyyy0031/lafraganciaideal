@@ -665,3 +665,41 @@ and git plumbing that discards work (`checkout-index -f -a`, `read-tree -u --res
 Result: all round-2 items resolved, no regression → `status: verify`.
 
 ## Verification
+
+Verifier, 2026-10-03, branch `feat/platform-harness`. Live session with the
+`.claude/settings.json` hooks loaded. No `apps/api` change, so no migration or integration run
+applies.
+
+- `uv run just check`: exit 0. `Contracts: 7 kept, 0 broken.`, `plans OK (6 plans, 1 findings)`,
+  `harness-check - 24 adapters up to date`, API `238 passed, 3 skipped`, harness `655 passed`.
+- Live guard probes (each refused before running):
+  - `git stash` -> `Command blocked: git stash changes shared work. Commit on a branch instead.`
+  - `docker compose -f infra/docker/compose.yaml down -v` -> `Command blocked: never delete
+    volumes/data. Use uv run just down (keeps data).`
+  - `rm -rf apps` -> `Command blocked: recursive delete outside disposable directories (...).
+    Ask the user.`
+  - Read and Edit of `apps/api/.env` -> refused by the permission deny rules ("denied by your
+    permission settings" / "covered by a Read deny rule"). The deny rule fired first, so the
+    `guard_read` hook was not observed as a separate layer.
+  - Edit `uv.lock` -> `Edit blocked: uv.lock is maintained by uv. Use uv add, uv remove or uv lock.`
+  - Edit `.claude/agents/tester.md` -> `Edit blocked: Generated adapter. Edit docs/harness/roles
+    or scripts/harness/adapters.py and run uv run just harness-sync.`
+  - Also refused: `$VAR` expansion (`dynamic expansion is not supported`), `python -c`
+    (`inline code is not inspectable`), heredoc (`heredoc/background is not supported`).
+- Formatter: Write of `scripts/harness/zz_fmt_probe.py` (`import os,sys`, a badly spaced dict) was
+  rewritten by the live PostToolUse hook to `x = {"a": 1, "b": 2}` (unused import removed). The
+  probe file (mine) was then removed; `git status --short` was empty.
+- Drift: on a scratchpad copy of the generated trees, `harness.sync --check` returned 0; after
+  appending a line to the copy of `.claude/agents/tester.md` it returned 1 with
+  `~ .claude/agents/tester.md`. (The real file cannot be hand-edited: the guard blocks it.)
+- TOML: `pytest scripts/harness -k toml` passes (9 tests). Files present: 8 `.codex/agents/*.toml`,
+  9 `.claude/skills/*`, 4 `.claude/agents/*`.
+- `justfile` has `harness-sync`, `harness-check`, `test-harness`; `ci.yml` runs `harness-check`,
+  `pytest --ignore=scripts/harness` and `test-harness`.
+
+Acceptance criteria: 1, 2, 3, 5 pass; 4 and 6 only partly (below).
+
+NOT VERIFIED: a fresh session's skill listing as shown by Claude Code (files exist; this run is
+itself a registered subagent, but the slash-command list was not enumerated); Codex listing its
+profiles; CI green (nothing pushed); hooks on an interpreter older than 3.14 beyond the recorded
+`ast` and CPython 3.12 checks; `guard_read` as a layer separate from the permission deny rule.
