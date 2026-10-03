@@ -399,6 +399,41 @@ async def test_closing_the_other_sessions_keeps_the_current_one(client: AsyncCli
     assert len((await client.get(SESSIONS, headers=current)).json()) == 1
 
 
+# --- repair round 1: over-long email (L1) and the password-change throttle (L2) ---------------
+
+
+async def test_an_email_that_lowercases_past_254_characters_is_401_not_500(
+    client: AsyncClient,
+) -> None:
+    response = await _login(client, email="İ" * 320)  # 640 characters once lowercased
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "IDENTITY_INVALID_CREDENTIALS"
+
+
+async def test_the_password_attempt_above_the_limit_is_429_even_with_the_right_password(
+    client: AsyncClient,
+) -> None:
+    headers = await _signed_in(client)
+    for _ in range(POLICY.email_max_attempts):
+        wrong = await client.put(
+            PASSWORD_URL,
+            json={"current_password": "not it at all", "new_password": NEW_PASSWORD},
+            headers=headers,
+        )
+        assert wrong.json()["code"] == "IDENTITY_CURRENT_PASSWORD_WRONG"
+
+    response = await client.put(
+        PASSWORD_URL,
+        json={"current_password": PASSWORD, "new_password": NEW_PASSWORD},
+        headers=headers,
+    )
+
+    assert response.status_code == 429
+    assert response.json()["code"] == "IDENTITY_TOO_MANY_ATTEMPTS"
+    assert (await _login(client, password=PASSWORD)).status_code == 200  # still the old one
+
+
 # --- actors the identity resolver did not produce --------------------------------------------
 
 

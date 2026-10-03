@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: identity
 min_implementer: high
 depends_on: []
@@ -814,7 +814,38 @@ fakes; `test_user_domain.py`, `test_session_domain.py`, `test_create_user.py`, `
 | Real stack (argon2 + SQL): sign in stores an argon2id hash and a 64-hex digest different from the token; the token resolves to the user; same failure for wrong password and unknown email; 6th attempt blocked; parallel wrong guesses cannot exceed the limit | `log_in.py`, `module.py` | integration | `test_sql_identity.py::test_a_created_user_signs_in_...`, `::test_a_wrong_password_and_an_unknown_email_...`, `::test_the_sixth_attempt_...`, `::test_parallel_wrong_guesses_...` | CONFIRMED |
 | Migration round trip (downgrade -1 / upgrade head) | `migrations/versions/0003_identity_users_and_sessions.py` | integration | `test_sql_identity.py::test_migration_0003_downgrades_and_upgrades_cleanly` | NOT CONFIRMED (skipped: downgrading `fragancia_test` inside the suite would race the other tests; the main session ran it by hand, see Deviations) |
 | `just create-owner` CLI (`main/cli.py`) | `main/cli.py` | none | not in this plan's required layers; exercised by hand by the implementer (Evidence) | NOT CONFIRMED by automated test |
-| `Settings` bounds for the five new variables | `config.py` | none | not covered by a new test (`test_settings.py` was only adjusted in step 11) | NOT CONFIRMED by automated test |
+| `Settings` bounds for the five new variables | `config.py` | none | superseded by repair round 1 below (now covered) | see below |
+
+### Repair round 1 (2026-10-03): regression tests
+
+The numbers and rows above describe the code before repair round 1; the section below covers the
+repaired code. Baseline: `uv run just check` green, 370 unit passed (the previous closing).
+Closing: `uv run just check` green (404 passed, 3 skipped, 47 deselected; harness 684) and
+`uv run just test-integration` 46 passed, 1 skipped (the same migration skip). New: 34 unit and
+5 integration tests. No GAP found. The earlier tests keep passing unchanged.
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| M1: `hash` runs in a worker thread (not the loop's thread) | `argon2_password_hasher.py` `hash` | application (adapter, library call stubbed) | `unit/identity/test_argon2_off_the_loop.py::test_hash_runs_in_a_worker_thread` | CONFIRMED |
+| M1: `verify` runs in a worker thread | `argon2_password_hasher.py` `verify` | application (adapter) | `test_argon2_off_the_loop.py::test_verify_runs_in_a_worker_thread` | CONFIRMED |
+| M1: the dummy hash is still computed once, synchronously, at construction | `argon2_password_hasher.py` `__init__` | application (adapter) | `test_argon2_off_the_loop.py::test_the_dummy_hash_is_computed_once_when_the_hasher_is_built` | CONFIRMED |
+| M1: the loop keeps ticking during a blocking verify (a blocked loop would allow at most one tick; the test needs 5) | `argon2_password_hasher.py` | application (adapter) | `test_argon2_off_the_loop.py::test_the_event_loop_keeps_running_while_a_slow_verify_is_in_progress` | CONFIRMED (timing-based, 0.3 s block, wide margin) |
+| M1: the async port is awaited by the use cases | `log_in.py`, `change_password.py`, `create_user.py` | application | the existing `LogIn`, `ChangePassword` and `CreateUser` tests (they run over the async fake) and the real-stack integration tests | CONFIRMED |
+| L1: an over-long normalized email is keyed `email-sha256:<hex>`, counted, 401 not 500, dummy hash checked | `log_in.py` `_email_key` | application | `unit/identity/test_log_in_long_email.py::test_an_email_longer_than_254_after_lowercasing_is_counted_under_a_hashed_key`, `::test_an_over_long_email_checks_the_dummy_hash` | CONFIRMED |
+| L1: the hashed key is throttled (6th attempt 429), ignores casing and padding, and exactly 254 characters keeps the plain `email:` key | `log_in.py` | application | `test_log_in_long_email.py::test_an_over_long_email_is_throttled_like_any_other`, `::test_the_hashed_key_ignores_casing_and_padding`, `::test_an_email_of_exactly_254_characters_keeps_the_plain_key` | CONFIRMED |
+| L1: `POST /auth/login` with `"İ" * 320` answers 401 `IDENTITY_INVALID_CREDENTIALS` | `router.py` `log_in` | http | `test_auth_http.py::test_an_email_that_lowercases_past_254_characters_is_401_not_500` | CONFIRMED |
+| L1: the real table accepts the key (no truncation error) and holds one `email-sha256:` row with attempts 1; the 6th attempt is 429 | `log_in.py`, `tables.py` `key String(330)` | integration | `integration/identity/test_sql_identity.py::test_an_email_that_lowercases_past_254_characters_is_counted_and_not_a_500`, `::test_the_sixth_over_long_email_attempt_is_blocked_by_the_real_throttle` | CONFIRMED |
+| L2: a wrong current password is counted under `password:<user_id>`, per user | `change_password.py` | application | `unit/identity/test_change_password_throttle.py::test_a_wrong_current_password_is_counted_under_the_users_key`, `::test_the_count_belongs_to_the_user_who_changes_the_password` | CONFIRMED |
+| L2: above `email_max_attempts` is `IDENTITY_TOO_MANY_ATTEMPTS` with no verify, even with the right password; the last allowed attempt works; the window resets it | `change_password.py` | application | `test_change_password_throttle.py::test_the_attempt_above_the_limit_is_rejected_without_verifying_the_password`, `::test_the_last_attempt_within_the_limit_still_works`, `::test_the_counter_starts_over_after_the_window` | CONFIRMED |
+| L2: a correct password clears the key; a weak new password is rejected before counting | `change_password.py` | application | `test_change_password_throttle.py::test_a_correct_password_clears_the_count`, `::test_a_weak_new_password_is_not_counted` | CONFIRMED |
+| L2: `PUT /admin/auth/password` is 429 `IDENTITY_TOO_MANY_ATTEMPTS` above the limit, and the password stays the old one | `router.py` `change_my_password` | http | `test_auth_http.py::test_the_password_attempt_above_the_limit_is_429_even_with_the_right_password` | CONFIRMED |
+| L2: with the real throttle: wrong attempts counted (limit + 1 after the block), blocked attempt changes nothing, correct password changes it and deletes the row, weak new password leaves no row | `change_password.py`, `sql_login_throttle.py` | integration | `test_sql_identity.py::test_wrong_current_passwords_are_counted_and_the_next_attempt_is_blocked`, `::test_a_correct_current_password_changes_it_and_clears_the_count`, `::test_a_weak_new_password_is_not_counted_by_the_real_throttle` | CONFIRMED |
+| `Settings` bounds: each of the five variables refuses 0 and -1, accepts 1, and the defaults are 120 / 12 / 5 / 50 / 15 | `config.py:57-61` | unit (settings) | `unit/test_settings_bounds.py::*` | CONFIRMED |
+| `just create-owner` CLI | `main/cli.py` | none | unchanged: not in this plan's required layers; exercised by hand (Evidence) | NOT CONFIRMED by automated test |
+| Migration round trip | `0003_*.py` | integration | unchanged: still skipped in-suite; done by hand by the main session | NOT CONFIRMED (skipped) |
+
+Note: the L2 429 reuses `TooManyAttempts`, whose message says "sign-in attempts" (the
+implementer's documented choice); the tests assert the code, not the message.
 
 ## Review findings
 

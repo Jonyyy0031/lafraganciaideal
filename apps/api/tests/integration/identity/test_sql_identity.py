@@ -1,10 +1,12 @@
 import asyncio
 from datetime import datetime, timedelta
+from uuid import UUID
 
 import pytest
 from sqlalchemy import select, text
 
 from fragancia_api.container import Container
+from fragancia_api.modules.identity.application.commands.change_password import ChangePassword
 from fragancia_api.modules.identity.application.commands.create_user import CreateUser
 from fragancia_api.modules.identity.application.commands.log_in import LogIn
 from fragancia_api.modules.identity.application.commands.resolve_session_actor import (
@@ -421,6 +423,7 @@ async def test_a_session_idle_exactly_for_the_timeout_is_not_listed(container: C
 # --- the real stack (argon2, SQL, real clock) --------------------------------------------------
 
 PASSWORD = "a long enough password"
+NEW_PASSWORD = "another long enough password"
 
 
 async def test_a_created_user_signs_in_and_the_token_resolves_to_them(container: Container) -> None:
@@ -516,6 +519,117 @@ async def test_parallel_wrong_guesses_cannot_slip_past_the_email_limit(
     assert codes == sorted(
         ["IDENTITY_INVALID_CREDENTIALS"] * limit + ["IDENTITY_TOO_MANY_ATTEMPTS"] * 5
     )
+
+
+# --- repair round 1: L1 (over-long email) and L2 (password-change throttle) -------------------
+
+
+async def test_an_email_that_lowercases_past_254_characters_is_counted_and_not_a_500(
+    container: Container,
+) -> None:
+    log_in = container.services.get(LogIn)
+    long_email = "İ" * 320  # 640 characters once lowercased; the key column holds 330
+
+    result = await log_in.execute(long_email, PASSWORD, ip=None, user_agent=None)
+
+    assert isinstance(result, Err) and result.error.code == "IDENTITY_INVALID_CREDENTIALS"
+    async with container.database.reader() as session:
+        rows = (
+            await session.execute(text("SELECT key, attempts FROM identity.login_throttle"))
+        ).all()
+    by_key = {key: attempts for key, attempts in rows}
+    [hashed_key] = [key for key in by_key if key.startswith("email-sha256:")]
+    assert len(hashed_key) == len("email-sha256:") + 64
+    assert by_key[hashed_key] == 1
+
+
+async def test_the_sixth_over_long_email_attempt_is_blocked_by_the_real_throttle(
+    container: Container,
+) -> None:
+    log_in = container.services.get(LogIn)
+    limit = container.settings.login_email_max_attempts
+
+    results = [
+        await log_in.execute("İ" * 320, PASSWORD, ip=None, user_agent=None)
+        for _ in range(limit + 1)
+    ]
+
+    codes = [r.error.code for r in results if isinstance(r, Err)]
+    assert codes == ["IDENTITY_INVALID_CREDENTIALS"] * limit + ["IDENTITY_TOO_MANY_ATTEMPTS"]
+
+
+async def _owner(container: Container) -> UUID:
+    created = await container.services.get(CreateUser).execute(
+        "owner@example.test", "Dueña Prueba", PASSWORD, Role.OWNER
+    )
+    assert isinstance(created, Ok)
+    return created.value
+
+
+async def _password_attempts(container: Container, user_id: UUID) -> int | None:
+    async with container.database.reader() as session:
+        row = (
+            await session.execute(
+                text("SELECT attempts FROM identity.login_throttle WHERE key = :key"),
+                {"key": f"password:{user_id}"},
+            )
+        ).first()
+    return None if row is None else row[0]
+
+
+async def test_wrong_current_passwords_are_counted_and_the_next_attempt_is_blocked(
+    container: Container,
+) -> None:
+    user_id = await _owner(container)
+    change = container.services.get(ChangePassword)
+    limit = container.settings.login_email_max_attempts
+
+    wrong = [
+        await change.execute(user_id, new_id(), "not it at all", NEW_PASSWORD) for _ in range(limit)
+    ]
+    blocked = await change.execute(user_id, new_id(), PASSWORD, NEW_PASSWORD)
+
+    assert [r.error.code for r in wrong if isinstance(r, Err)] == [
+        "IDENTITY_CURRENT_PASSWORD_WRONG"
+    ] * limit
+    assert isinstance(blocked, Err) and blocked.error.code == "IDENTITY_TOO_MANY_ATTEMPTS"
+    assert await _password_attempts(container, user_id) == limit + 1
+    # the blocked attempt had the right password and still changed nothing
+    signed_in = await container.services.get(LogIn).execute(
+        "owner@example.test", PASSWORD, ip=None, user_agent=None
+    )
+    assert isinstance(signed_in, Ok)
+
+
+async def test_a_correct_current_password_changes_it_and_clears_the_count(
+    container: Container,
+) -> None:
+    user_id = await _owner(container)
+    change = container.services.get(ChangePassword)
+    await change.execute(user_id, new_id(), "not it at all", NEW_PASSWORD)
+    assert await _password_attempts(container, user_id) == 1
+
+    changed = await change.execute(user_id, new_id(), PASSWORD, NEW_PASSWORD)
+
+    assert isinstance(changed, Ok)
+    assert await _password_attempts(container, user_id) is None
+    log_in = container.services.get(LogIn)
+    assert isinstance(
+        await log_in.execute("owner@example.test", NEW_PASSWORD, ip=None, user_agent=None), Ok
+    )
+    assert isinstance(
+        await log_in.execute("owner@example.test", PASSWORD, ip=None, user_agent=None), Err
+    )
+
+
+async def test_a_weak_new_password_is_not_counted_by_the_real_throttle(
+    container: Container,
+) -> None:
+    user_id = await _owner(container)
+
+    await container.services.get(ChangePassword).execute(user_id, new_id(), "not it", "short")
+
+    assert await _password_attempts(container, user_id) is None
 
 
 @pytest.mark.skip(
