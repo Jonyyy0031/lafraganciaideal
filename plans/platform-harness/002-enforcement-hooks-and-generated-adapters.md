@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: platform
 min_implementer: high
 depends_on: ["001"]
@@ -271,7 +271,11 @@ with `ast` at `feature_version=(3, 10)` and ruff's py310 target).
 
 ## Test coverage
 
-Baseline `uv run just check`: green (348 harness tests). Tests live in
+Round 1 (superseded by the repair): baseline `uv run just check` green (348 harness tests); 8 strict-xfail GAPs.
+
+Round 2 (after the review repair, 2026-10-03): baseline `uv run just check` green (API 238 passed, 3 skipped; harness 545 passed, 0 xfail, `harness-check` 24 adapters up to date). The regression tests the implementer added for each reviewer finding are listed below; the tester added none (each already reproduces the reported bypass).
+
+The Round 1 table follows; its GAP states are superseded by the Round 2 table. Tests live in
 `scripts/harness/test_hooks.py` (H) and `scripts/harness/test_sync.py` (S). Tester additions are
 at the end of each file; GAPs are strict `xfail`. Layer is `tooling` for every row (e2e below).
 
@@ -313,7 +317,20 @@ at the end of each file; GAPs are strict `xfail`. Layer is `tooling` for every r
 | Recipes `test-harness`, `harness-sync`, `harness-check` in `check` | `justfile:104-130` | closing `uv run just check` runs both | CONFIRMED (execution) |
 | Live Claude Code session blocks/lists skills and subagents; Codex lists profiles | n/a | none | NOT CONFIRMED (manual e2e; not runnable here) |
 
-GAP summary (product code not touched, strict xfail, 8 xfail cases): combined python flags
+### Round 2 (repair) matrix
+
+| Behavior | Source | Test | State |
+| --- | --- | --- | --- |
+| `>&word` write redirect inspected; `>&N`, `N>&M`, `>&-` allowed | `guard_bash.py` | H `test_guard_bash_blocks_review_bypasses` (`REVIEW_BLOCKS`), `test_guard_bash_allows_after_review_repairs` | CONFIRMED (finding 1) |
+| `cd` in a pipeline does not move the tracked cwd | `guard_bash.py` | H `test_guard_bash_cd_inside_a_pipeline_does_not_move_the_cwd` | CONFIRMED (finding 2) |
+| git abbreviated/clustered options, `switch -f`, `commit -n`, `checkout <path>`, `add ./`, `clean --force` | `guard_bash.py` | H `test_guard_bash_blocks_review_bypasses`; former GAP tests now regular (`clean --force`, `add -Av`, `./`, `dir/.`) | CONFIRMED (finding 3, 2 former GAPs) |
+| Interpreter / psql fed by pipe or `<` blocked; propagates into `sh -c` | `guard_bash.py` | H `test_guard_bash_blocks_review_bypasses` | CONFIRMED (finding 4) |
+| Hooks parse on Python 3.10; missing `guard_paths` fails closed (exit 2) | `.claude/hooks/*.py` | H `test_hooks_parse_as_python_3_10`, `test_hooks_fail_closed` | CONFIRMED for syntax (`ast`); NOT CONFIRMED on a real interpreter older than 3.14 |
+| Extra wrappers/shells, `uvx`, inline-code clusters (`-Sc`), docker `volume remove`, `--volumes`, `docker-compose` | `guard_bash.py` | H `test_guard_bash_blocks_review_bypasses`; former GAPs now regular (`-Sc`, `docker-compose down -v`) | CONFIRMED (findings 6, 7, 2 former GAPs) |
+| Recursive `rm` outside the project; `git config alias.*`/`core.hooksPath` blocked (reads allowed) | `guard_bash.py` | H `test_guard_bash_blocks_review_bypasses`, `test_guard_bash_allows_after_review_repairs` | CONFIRMED (findings 8, 9) |
+| Sync deletes only files with the notice in the first 15 lines; refuses to write through a symlink | `sync.py` | S `test_every_output_is_recognized_as_generated_by_its_header`, `test_a_hand_written_file_quoting_the_marker_is_never_deleted`, `test_sync_refuses_to_write_through_a_symlink` | CONFIRMED (finding 10) |
+
+GAP summary, Round 1 (superseded: all 8 xfail cases are regular passing tests after the repair; no GAP remains; originally strict xfail, 8 xfail cases): combined python flags
 (`-Sc`), `git clean --force`, `git add -Av|./|dir/.`, `docker-compose down -v`.
 
 ## Review findings
