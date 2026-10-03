@@ -1,5 +1,5 @@
 ---
-status: draft
+status: testing
 module: platform
 min_implementer: mid
 depends_on: []
@@ -278,6 +278,30 @@ None
 | http        | no      |                                                                     |
 
 ## Deviations
+
+1. **`ensure_env_keys` added (step 3)** — said: bootstrap creates only `apps/api/.env`.
+   Reality: an existing `apps/api/.env` lacked the new `S3_*` keys and bootstrap crashed
+   (`KeyError: 'S3_ENDPOINT_URL'`). Done: `scripts/infra.py::ensure_env_keys` appends missing
+   keys from `.env.example` without changing existing values; tested and idempotent.
+2. **`declared_files` reads wrapped `Files:` lines and change-marked tokens (step 10)** — said:
+   tokens on `Files:` lines containing `/` or `.` (web-rh's rule). Reality: our plans wrap
+   long `Files:` lines and declare `justfile`; both were reported out of scope. Done: an entry
+   continues until the next bullet/step/blank line, and a backticked token followed by
+   `(create|modify|delete)` counts as a path.
+3. **Plan recipes set `PYTHONPATH` inside `just`** — the guard hook (plan 002, already active)
+   blocks `VAR=… cmd` in agent shells; recipes are the interface (`uv run just plans-lint`).
+4. **Existing plan module fixed** — `platform-api-foundation/002` had `module: catalog`, but the
+   initiative is owned by `platform` (lint rule 12); now `module: platform`.
+5. **`platform-harness/002` moved back to `approved`** — it was set to `implementing` while 001
+   was not done (lint rule 18). Its hooks part (independent of 001) was implemented in
+   parallel by a subagent; see 002's Deviations.
+6. **Docs written by a subagent from web-rh's sources** — judgment calls: web-rh's legal/payroll
+   sensitive areas map to money math, payments/webhooks, stock reservation and order
+   transitions; lowercase subjects/trailing periods are convention only (not checked by
+   `scripts/commits.py`); the verifier gets `ADMIN_DEV_TOKEN` from the user, never by reading
+   `apps/api/.env`. One example in `pull-requests.md` corrected (savepoint backs the pre-check).
+7. **Also touched**: `pyproject.toml` ruff ignores now cover `scripts/**/test_*.py`; CI quality
+   job runs `plans-lint`; `CLAUDE.md` lists skills/subagents/hooks (adapters arrive with 002).
 
 ## Test coverage
 

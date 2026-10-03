@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 module: platform
 min_implementer: high
 depends_on: ["001"]
