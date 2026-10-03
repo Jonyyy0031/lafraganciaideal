@@ -120,6 +120,25 @@ def commit(root: Path, message: str) -> None:
     git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", message)
 
 
+def test_editing_a_migration_from_the_base_fails_but_a_new_one_passes(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    old = "apps/api/migrations/versions/0001_old.py"
+    git(repo, "switch", "-q", "main")
+    write(repo, old, "one\n")
+    git(repo, "add", "-A")
+    commit(repo, "existing migration")
+    git(repo, "switch", "-q", "-c", "feat/y")
+
+    write(repo, "apps/api/migrations/versions/0002_new.py")
+    assert run(repo) == 0
+
+    write(repo, old, "two\n")
+    assert run(repo) == 1
+    err = capsys.readouterr().err
+    assert old in err and "0002_new.py" not in err
+
+
 def test_a_committed_change_outside_the_plan_fails(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

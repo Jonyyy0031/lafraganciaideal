@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: platform
 min_implementer: mid
 depends_on: []
@@ -344,7 +344,12 @@ the only unit-level layer this plan requires; the CI `infra` job is the integrat
 | Plans/initiatives/findings listing excludes templates, README, findings dir | `lib.py:155-195` | tooling | `test_plans_exclude_templates_readmes_findings_and_non_markdown` | CONFIRMED |
 | Owner module (longest prefix), `resolve_ref` zero-pad/cross-initiative | `lib.py:149,198` | tooling | `tp/test_lint.py::test_owner_module_*`, `test_resolve_ref` | CONFIRMED |
 | `declared_files`: wrapped lines, change marker, only inside Steps | `lib.py:210` | tooling | `test_declared_files_*` (3) | CONFIRMED |
-| `declared_files` reads only `Files:` lines | `lib.py:221` (any line containing `files:` counts) | tooling | `tp/test_lib.py::test_a_do_line_mentioning_files_does_not_declare_paths` | GAP (strict xfail) |
+| `declared_files` reads only `Files:` lines | `lib.py:221` (any line containing `files:` counts) | tooling | `tp/test_lib.py::test_a_do_line_mentioning_files_does_not_declare_paths` | GAP (strict xfail) — SUPERSEDED by repair (commit 1f0cce5): now a regular test, CONFIRMED |
+| `- Do:` lines never declare paths, even containing `files:` | `lib._FILES_ENTRY` | tooling | `test_do_lines_never_declare_paths_even_with_a_files_colon` | CONFIRMED (repair) |
+| Wrapped `Files:` continuation starting with a digit keeps its paths | `lib.declared_files` | tooling | `test_a_wrapped_files_continuation_starting_with_a_digit_keeps_its_paths` | CONFIRMED (repair) |
+| A `## ` line inside a code fence does not split sections | `lib.parse_document` | tooling | `test_a_heading_inside_a_code_fence_does_not_split_sections` | CONFIRMED (repair) |
+| List-valued `module`/`status`/`min_implementer` (plans) and `status`/`module` (findings) are reported, not crashes (review finding 5) | `lint.py` | tooling | `test_list_valued_plan_fields_are_reported_not_crashed` (3), `test_list_valued_finding_fields_are_reported_not_crashed` | CONFIRMED (repair) |
+| Scope rejects editing a migration existing at the merge-base even with `tables.py` declared; allows a new one (review finding 6) | `scope.py:76-98` | tooling (temp git repo) | `test_editing_a_migration_from_the_base_fails_but_a_new_one_passes` | CONFIRMED (repair) |
 | `reached` follows the pipeline | `lib.py:240` | tooling | `test_reached_follows_the_pipeline_order` | CONFIRMED |
 | Lint structural rules (names, loose/nested plans, numbers, README, frontmatter, YAML) | `lint.py:43-106` | tooling | `test_each_rule_reports_a_precise_problem`, `test_missing_readme_and_frontmatter`, `test_invalid_yaml_is_reported`, `test_a_frontmatter_that_is_not_a_mapping_is_reported` | CONFIRMED |
 | Lint field rules (status, module/owner, tier, depends_on list, superseded_by, deps exist/self/cycle/done) incl. positive cases | `lint.py:108-131,145` | tooling | parametrized rules + `test_dependencies_*`, `test_cycles_*`, `test_superseded_by_is_allowed_*` | CONFIRMED |
@@ -367,7 +372,8 @@ product code belongs to the implementer. Not tested: pull-request template and d
 (prose, no behavior). Closing run: see the line below.
 
 Closing `uv run just check`: green, `564 passed, 3 skipped, 15 deselected, 1 xfailed`
-(baseline 487 passed).
+(baseline 487 passed). That run is superseded by the repair closing run: `573 passed, 3 skipped, 15 deselected`
+(0 xfailed; the former GAP is now a regular test).
 
 ## Review findings
 

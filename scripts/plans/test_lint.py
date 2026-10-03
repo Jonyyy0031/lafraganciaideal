@@ -203,6 +203,39 @@ def test_a_frontmatter_that_is_not_a_mapping_is_reported(make_repo: MakeRepo) ->
     assert "frontmatter must be a YAML mapping" in found
 
 
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ("module: [x]", "is not in docs/modules.json"),
+        ("status: [draft]", "status must be one of"),
+        ("min_implementer: [mid]", "min_implementer must be one of"),
+    ],
+)
+def test_list_valued_plan_fields_are_reported_not_crashed(
+    make_repo: MakeRepo, field: str, expected: str
+) -> None:
+    key = field.split(":")[0]
+    text = plan_text().replace(
+        next(line for line in plan_text().splitlines() if line.startswith(f"{key}:")), field
+    )
+
+    found = problems(make_repo, {"catalog-brands/001-x.md": text})
+
+    assert any(expected in p for p in found), found
+
+
+def test_list_valued_finding_fields_are_reported_not_crashed(make_repo: MakeRepo) -> None:
+    findings = {
+        "catalog-a.md": "---\nstatus: [open]\nmodule: catalog\nfound: 2026-10-02\n---\n# x\n",
+        "catalog-b.md": "---\nstatus: open\nmodule: [catalog]\nfound: 2026-10-02\n---\n# x\n",
+    }
+
+    found = problems(make_repo, {"catalog-brands/001-x.md": plan_text()}, findings)
+
+    assert any("status must be one of" in p for p in found)
+    assert any("is not in docs/modules.json" in p for p in found)
+
+
 FINDING = "---\nstatus: {s}\nmodule: catalog\nfound: 2026-10-02\n{extra}---\n# x\n"
 
 

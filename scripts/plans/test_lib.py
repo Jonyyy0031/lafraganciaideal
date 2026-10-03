@@ -121,6 +121,35 @@ def test_a_do_line_mentioning_files_does_not_declare_paths(tmp_path: Path) -> No
     assert steps(text, tmp_path) == ["a/b.py"]
 
 
+def test_do_lines_never_declare_paths_even_with_a_files_colon(tmp_path: Path) -> None:
+    text = "1. **A**\n   - Do: copy files: `x/y.py` and `z.py` (modify)\n"
+
+    assert steps(text, tmp_path) == []
+
+
+def test_a_wrapped_files_continuation_starting_with_a_digit_keeps_its_paths(
+    tmp_path: Path,
+) -> None:
+    text = (
+        "1. **A**\n   - Files: `a/b.py` (create),\n"
+        "     `0001_init.sql` (create), `c/d.py` (modify)\n"
+    )
+
+    assert steps(text, tmp_path) == ["a/b.py", "0001_init.sql", "c/d.py"]
+
+
+def test_a_heading_inside_a_code_fence_does_not_split_sections(tmp_path: Path) -> None:
+    body = "Text.\n\n```md\n## Not a section\n```\n\nMore."
+    path = tmp_path / "001-x.md"
+    path.write_text(plan_text(sections={"Context": body}))
+
+    doc = parse_document(path)
+
+    assert "Not a section" not in doc.section_order
+    assert "## Not a section" in doc.sections["Context"] and "More." in doc.sections["Context"]
+    assert doc.section_order[:2] == ["Context", "Out of scope"]
+
+
 @pytest.mark.parametrize(
     ("status", "target", "expected"),
     [
