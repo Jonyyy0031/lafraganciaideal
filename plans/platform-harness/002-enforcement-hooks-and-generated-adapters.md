@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: platform
 min_implementer: high
 depends_on: ["001"]
@@ -601,5 +601,67 @@ They still defeat rules the plan lists as enforced, so the status stays `review`
 
 Documented residuals unchanged (arbitrary programs: `cp`, `sed -i`, `unlink`, `ln`, `dropdb`,
 scripts written to a file then run).
+
+### Round 3 — re-review after the second repair (2026-10-03, diff `9aeef1e..b94975e`, base `ee162d3`)
+
+Rounds 1 and 2 above are historical. Scope of this round (main session, under the user's batch
+mandate): confirm every round-2 finding is resolved and nothing regressed; this is the last
+repair round for the guard denylist (`docs/harness/security.md` declares it best-effort), so new
+bypasses go to `plans/findings/` unless they are regressions or break a must-pass allow. Probed
+with a scratchpad script (payload on stdin, `CLAUDE_PROJECT_DIR` = repo or a scratchpad fixture
+repo); bash semantics confirmed in that fixture with harmless commands only.
+
+#### Checklist — PASSED (applicable items)
+
+- [x] `uv run just plans-scope … --base ee162d3`: "Every change is inside the plan" (34
+      declared, 50 changed). No hot files touched.
+- [x] `uv run just check`: exit 0 (ruff clean; import-linter 7 kept; plans OK; `harness-check`
+      24 adapters up to date; API 238 passed, 3 skipped; harness 655 passed).
+- [x] Integration / domain / CQRS / contracts / Money / migrations / routes / wiring: N/A (no
+      `apps/api` change).
+- [x] No secrets in the diff.
+- [x] Deviations honest: Deviation 9 spot-checked item by item against
+      `.claude/hooks/guard_bash.py` (`RESERVED_WORDS`, `HIDDEN_RUNNERS`, `ENV_SETTERS`,
+      `_check_git_config`, `_physical`, docker `sh -c` recursion at `guard_bash.py:815-819`) and
+      `guard_paths.py` (physical `realpath` candidate). Residuals (`CDPATH`, `git -C`) documented.
+- [x] Docs updated: `docs/harness/security.md` states the best-effort stance and lists the
+      rejected constructs.
+- [x] PR body: N/A (no PR yet).
+
+#### Round 2 findings — all 11 resolved
+
+Each original example now exits 2 from the live hook: `if …; then …; fi`, `! git stash`,
+`while`, `for`, `true; then git stash`, `coproc`, `builtin eval`, `trap` (High 1);
+`X=/a/echo git stash` (High 2); `pushd apps; …`, `pushd .git; …`, `popd` (High 3);
+`export GIT_CONFIG_COUNT=…`, `declare -x A=1` (Medium 5); `/usr/lib/git-core/git-stash`,
+`…/git-reset --hard` (Medium 6); `checkout --pathspec-from-file=f`, `--pathspec-f=f`
+(Medium 7); `docker compose … exec postgres sh -c 'psql … "drop database x"'`, also with
+`bash -c` and `env sh -c` (Medium 8); `git config include.path …`,
+`clean.requireForce false`, `--file=`/`--fil=`, `set alias.x` (Low 9); `switch -C`,
+`branch -f`, `push --mirror`, `push --prune` (Low 10); `git add ':!x'`, `':(exclude)x'`
+(Low 11). Medium 4 in the fixture: `cd link; cd ..; echo x > uv.lock` exits 2, and
+`cd link; cd ..; echo x > notes2.txt` exits 0 (logical cd, no false block).
+
+#### Regressions — none
+
+36 must-pass/everyday commands exit 0, including `git status|diff|log`, `git stash list`,
+`git add <path>`, `git commit -m`, `git push origin feat/x`, `--force-with-lease`, `push -u`,
+`git switch -c|main`, `git branch -d`, `git config user.name x`, `--get alias.x`, `--list`,
+`export -p`, `uv run just check|test|up|db-migrate --test|db-reset --test|plans-scope`,
+`uv run just psql -c 'select 1'`, `cd apps/api && uv run pytest`, `echo hi > /tmp/x.txt`,
+`docker compose … ps`, docker `exec postgres psql … 'select 1'` and `sh -c 'psql … select 1'`,
+`rm -rf .pytest_cache`, `python3 scripts/bootstrap.py`, `just check 2>&1 | tail -5`.
+Behavior change noted, not a regression: `docker compose … exec <svc> bash` (bare interactive
+shell) is now blocked; no plan allow depends on it.
+
+#### New findings — recorded outside the plan, not blocking
+
+New bypasses (none a regression, none breaks an allow) are in
+`plans/findings/platform-guard-bash-round3-bypasses.md` (status open): `set -k` turns later
+`NAME=value` arguments into environment (confirmed in bash: `git x GIT_CONFIG_*` ran an alias),
+and git plumbing that discards work (`checkout-index -f -a`, `read-tree -u --reset`, confirmed;
+`rm -f`, `worktree remove --force`, `update-ref -d`, `reflog expire`, not executed).
+
+Result: all round-2 items resolved, no regression → `status: verify`.
 
 ## Verification
