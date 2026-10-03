@@ -567,3 +567,264 @@ def test_settings_register_every_hook() -> None:
         assert hook in commands
         assert (HOOKS / hook).exists()
     assert shutil.which("python3"), "hooks run with python3"
+
+
+# --- tester additions (plan 002): adversarial payloads and settings shape -----------------
+
+EXTRA_BLOCKS = [
+    "git push --force-with-lease origin main",  # lease is fine, main is not
+    "git push origin :main",
+    "git push origin --delete main",
+    "git checkout -B x",
+    "git -C . reset --hard",
+    "git --git-dir=x stash",
+    "git commit -qam x",
+    "git stash -u",
+    "echo x >| uv.lock",
+    "echo x &> uv.lock",
+    "tee -a uv.lock",
+    "echo x > ./uv.lock",
+    "echo x > apps/api/../../uv.lock",
+    "cat -- .env",
+    "cat ./.env",
+    "cat apps/../.env",
+    "sh -c 'cat .env'",
+    "sh -c",
+    "sh -c ''",
+    "/bin/sh -c 'git stash'",
+    "python3 scripts/x.py; python -",
+    "uv run python -",
+    "uv run python -m pip install x",
+    "python3 -m pip install x",
+    "pip install -U x",
+    "uv run --with x python -c 1",
+    "uv run --no-sync git stash",
+    "just db-reset --test --force",
+    "rm -r apps",
+    "rm --recursive apps",
+    "rm -rf build/../apps",
+    "chmod -R 0777 x",
+    "env -i ls",
+    "psql -c 'DELETE FROM x WHERE 1=1; DELETE FROM y'",
+    "docker exec pg psql -c 'drop table x'",
+]
+
+
+@pytest.mark.parametrize("command", EXTRA_BLOCKS)
+def test_guard_bash_blocks_adversarial_variants(command: str) -> None:
+    assert bash(command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git clean -n",
+        "rm -rf ./dist",
+        "rm -rf apps/web/dist/",
+        "alembic -x test=true -x a=b downgrade base",
+        "uv run alembic -xtest=true downgrade base",
+        "uv run just db-reset  --test",
+        "echo x > .env.example",
+    ],
+)
+def test_guard_bash_allows_safe_variants(command: str) -> None:
+    assert bash(command) == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 -Sc 'import os'",
+        "python3 -ic 'x'",
+        "python3 -Bc 'x'",
+    ],
+)
+@pytest.mark.xfail(
+    strict=True,
+    reason="GAP: plan 002 Context 'no inline code for python (-c, -e, -)': INLINE_FLAG "
+    "(guard_bash.py:35) only matches a flag that starts with -c/-e/-p, so combined short "
+    "flags such as -Sc run inline code",
+)
+def test_guard_bash_blocks_inline_python_in_combined_flags(command: str) -> None:
+    assert bash(command) == 2
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="GAP: plan 002 Context 'clean -f': _check_git (guard_bash.py:292) regex "
+    "^-[^-]*f misses the long option --force",
+)
+def test_guard_bash_blocks_git_clean_long_force() -> None:
+    assert bash("git clean --force") == 2
+
+
+@pytest.mark.parametrize("command", ["git add -Av", "git add ./", "git add apps/."])
+@pytest.mark.xfail(
+    strict=True,
+    reason="GAP: plan 002 Context 'add -A/./-u': _check_git (guard_bash.py:304) compares exact "
+    "tokens, so combined short flags and ./ or dir/. pathspecs stage everything",
+)
+def test_guard_bash_blocks_broad_git_add_variants(command: str) -> None:
+    assert bash(command) == 2
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="GAP: plan 002 Context 'docker … down -v': the rule only matches program == 'docker' "
+    "(guard_bash.py:457), so the legacy docker-compose binary is not inspected",
+)
+def test_guard_bash_blocks_legacy_docker_compose_down_volumes() -> None:
+    assert bash("docker-compose down -v") == 2
+
+
+def test_guard_bash_nesting_beyond_eight_levels_is_blocked() -> None:
+    command = "git status"
+    for _ in range(10):
+        command = "sh -c '" + command.replace("'", '"') + "'"
+    assert bash(command) == 2
+
+
+def test_guard_bash_nested_shell_checks_inner_command() -> None:
+    assert bash("sh -c \"bash -c 'git status'\"") == 0
+    assert bash("sh -c \"bash -c 'git stash'\"") == 2
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("./.env", 2),
+        ("apps/../.env", 2),
+        (".env/", 2),
+        (".claude/agents/nested/x.md", 2),
+        ("apps/api/openapi.json/", 2),
+        (".claude/skills/plan/SKILL.md/", 2),
+        (".claude/skills/plan/../implement/SKILL.md", 2),
+        (".github/.git/x", 2),
+        (".codex/config.toml", 0),  # hand-written
+        (".claude/skills/db-change/SKILL.md", 0),  # recipe skill, hand-written
+        (".claude/skills/new-use-case/SKILL.md", 0),
+        (".agents/skills/new-module/SKILL.md", 0),
+        ("docs/uv.lock", 0),  # only the root lock is protected
+        ("apps/api/uv.lock", 0),
+        ("x.git/y", 0),
+        (".gitignore", 0),
+        (".github/workflows/ci.yml", 0),
+    ],
+)
+def test_guard_files_path_edge_cases(path: str, expected: int) -> None:
+    assert edit({"file_path": path}) == expected
+
+
+def test_guard_files_checks_every_edit_of_a_multiedit_not_only_the_first() -> None:
+    edits = [
+        {"file_path": "README.md"},
+        {"file_path": "docs/architecture.md"},
+        {"file_path": "uv.lock"},
+    ]
+    assert edit({"edits": edits}) == 2
+    assert edit({"edits": edits[:2]}) == 0
+
+
+def test_guard_files_blocks_a_secret_in_edits_even_when_the_parent_path_is_fine() -> None:
+    assert edit({"file_path": "README.md", "edits": [{"file_path": ".env"}]}) == 2
+    assert edit({"notebook_path": "n.ipynb", "edits": [{"notebook_path": "uv.lock"}]}) == 2
+
+
+def test_guard_files_blocks_a_symlinked_new_migration(fixture_repo: Path) -> None:
+    link = fixture_repo / "apps" / "api" / "migrations" / "versions" / "0003_link.py"
+    link.symlink_to(fixture_repo / ".env")
+    try:
+        assert edit({"file_path": str(link)}, fixture_repo) == 2
+    finally:
+        link.unlink()
+
+
+def test_guard_read_blocks_every_secret_shape_but_not_other_paths() -> None:
+    for secret in ("./.env", "apps/../.env", "dir.key", "A.PEM", "a/.env.local"):
+        assert read(secret) == 2, secret
+    for fine in (".claude/agents/tester.md", "a.pem/b", "key", ".envrc"):
+        assert read(fine) == 0, fine
+
+
+def test_guard_read_without_file_path_fails_closed() -> None:
+    payload = {"tool_input": {"notebook_path": "n.ipynb"}, "cwd": str(REPO)}
+    assert run_hook("guard_read.py", payload).returncode == 2
+
+
+def test_format_file_ignores_non_python_and_non_string_paths() -> None:
+    for tool_input in ({"file_path": 3}, {"file_path": None}, {}, {"file_path": "a.txt"}):
+        assert run_hook("format_file.py", {"tool_input": tool_input}).returncode == 0
+
+
+@pytest.mark.skipif(not (REPO / ".venv" / "bin" / "ruff").exists(), reason="ruff not installed")
+def test_format_file_does_not_touch_files_that_escape_the_project(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    (project / ".venv" / "bin").mkdir(parents=True)
+    (project / ".venv" / "bin" / "ruff").symlink_to(REPO / ".venv" / "bin" / "ruff")
+    outside = tmp_path / "outside.py"
+    outside.write_text("x = {  'a':1 }\n")
+    payload = {"tool_input": {"file_path": "../outside.py"}}
+    assert run_hook("format_file.py", payload, project).returncode == 0
+    assert outside.read_text() == "x = {  'a':1 }\n"
+
+
+def _hook_entries(event: str) -> dict[str, tuple[str, int]]:
+    settings = json.loads((REPO / ".claude" / "settings.json").read_text())
+    entries: dict[str, tuple[str, int]] = {}
+    for group in settings["hooks"][event]:
+        assert len(group["hooks"]) == 1
+        hook = group["hooks"][0]
+        assert hook["type"] == "command"
+        entries[group["matcher"]] = (hook["command"], hook["timeout"])
+    return entries
+
+
+def test_settings_register_each_hook_on_its_event_matcher_and_timeout() -> None:
+    def cmd(name: str) -> str:
+        return f'python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/{name}'
+
+    assert _hook_entries("PreToolUse") == {
+        "Bash": (cmd("guard_bash.py"), 10),
+        "Edit|Write|MultiEdit|NotebookEdit": (cmd("guard_files.py"), 10),
+        "Read": (cmd("guard_read.py"), 10),
+    }
+    assert _hook_entries("PostToolUse") == {"Edit|Write|MultiEdit": (cmd("format_file.py"), 20)}
+
+
+def test_settings_permissions_allow_ask_deny_shape() -> None:
+    permissions = json.loads((REPO / ".claude" / "settings.json").read_text())["permissions"]
+    allow, ask, deny = permissions["allow"], permissions["ask"], permissions["deny"]
+    for rule in (
+        "Bash(uv run just check)",
+        "Bash(git status *)",
+        "Bash(git diff *)",
+        "Bash(git log *)",
+        "Bash(git show *)",
+        "Bash(git switch -c *)",
+        "Bash(git add *)",
+    ):
+        assert rule in allow
+    for rule in (
+        "Bash(git commit *)",
+        "Bash(git push *)",
+        "Bash(git merge *)",
+        "Bash(git rebase *)",
+        "Bash(uv add *)",
+        "Bash(uv remove *)",
+        "Bash(uv run just db-migrate *)",
+        "Bash(docker *)",
+        "Bash(gh *)",
+    ):
+        assert rule in ask
+    for rule in (
+        "Read(./**/.env)",
+        "Read(./**/*.pem)",
+        "Read(./**/*.key)",
+        "Bash(git push --force *)",
+        "Bash(git reset --hard *)",
+    ):
+        assert rule in deny
+    destructive = ("push", "commit", "reset", "stash", "clean", "down", "prune", "gh ")
+    for rule in allow:
+        assert not any(word in rule for word in destructive), rule
+    assert not set(allow) & set(ask) & set(deny)

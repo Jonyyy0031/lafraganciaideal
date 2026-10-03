@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: platform
 min_implementer: high
 depends_on: ["001"]
@@ -230,6 +230,51 @@ Not verified here (manual, e2e layer): a fresh Claude Code session listing the s
 subagents; Codex listing the profiles.
 
 ## Test coverage
+
+Baseline `uv run just check`: green (348 harness tests). Tests live in
+`scripts/harness/test_hooks.py` (H) and `scripts/harness/test_sync.py` (S). Tester additions are
+at the end of each file; GAPs are strict `xfail`. Layer is `tooling` for every row (e2e below).
+
+| Behavior | Source | Test | State |
+| --- | --- | --- | --- |
+| Lexer: rejects `$`/backtick, `( ) { }`, heredoc, `&`, unclosed quote, trailing `\`, NUL, empty | `guard_bash.py:127-220,483` | H `test_guard_bash_blocks` (lexer group), `test_hooks_fail_closed` | CONFIRMED |
+| Splits on `; \| \|\| && < > >> \n`; `>\|`, `&>` blocked; `2>&1`, `>&2` allowed | `guard_bash.py:189-211,504-515` | H `blocks`/`allows`, `test_guard_bash_blocks_adversarial_variants` | CONFIRMED |
+| Redirect targets literal and checked as writes | `guard_bash.py:504-512` | H `blocks` (uv.lock, .git, adapters, migration), `allows` (`/tmp`, 9999 migration, `.env.example`) | CONFIRMED |
+| Nesting <= 8, recursive `sh -c` | `guard_bash.py:388,412,481` | H `test_guard_bash_nesting_beyond_eight_levels_is_blocked`, `test_guard_bash_nested_shell_checks_inner_command` | CONFIRMED |
+| Wrappers, `VAR=`, sudo, curl\|sh, bare shells | `guard_bash.py:402-411` | H `blocks` (shells group) | CONFIRMED |
+| No inline code python/node/perl/ruby/php (`-c`, `-e`, `-`) | `guard_bash.py:34-35,413-419` | H `blocks` (`-c`, `-e`, `-`); `test_guard_bash_blocks_inline_python_in_combined_flags` | CONFIRMED for plain flags; GAP: `python3 -Sc/-ic/-Bc` run inline code |
+| `cd` literal, existing, tracked | `guard_bash.py:420-426` | H `blocks` (cd), `test_guard_bash_tracks_cd` | CONFIRMED |
+| `rm`: literal, recursive only disposable, no symlinks, non-recursive only tracked | `guard_bash.py:236-272` | H `test_guard_bash_rm_in_fixture`, `blocks`, `allows` | CONFIRMED |
+| `find` without delete/exec/ok | `guard_bash.py:429-432` | H `blocks` (find) | CONFIRMED |
+| git: stash, reset --hard, clean -f, restore, checkout, switch, branch -D, commit -a, --no-verify, force/main push | `guard_bash.py:275-317` | H `blocks`/`allows` (git groups), adversarial variants | CONFIRMED |
+| git clean `--force` | `guard_bash.py:292` | H `test_guard_bash_blocks_git_clean_long_force` | GAP (regex misses the long option) |
+| git add `-A/./-u` | `guard_bash.py:304` | H `test_guard_bash_blocks_broad_git_add_variants` | CONFIRMED for exact tokens; GAP: `-Av`, `./`, `apps/.` |
+| `db-reset` only `--test`; alembic downgrade needs `-x test=true`; psql DROP/TRUNCATE/DELETE w/o WHERE | `guard_bash.py:358-383,444-455` | H `blocks`/`allows` (database group) | CONFIRMED |
+| docker `down -v`, `volume rm/prune`, `system prune` | `guard_bash.py:457-461` | H `blocks` (docker group) | CONFIRMED for `docker`; GAP: `docker-compose down -v` (`test_guard_bash_blocks_legacy_docker_compose_down_volumes`) |
+| pip install, npm/yarn/npx/bun, chmod 777 | `guard_bash.py:442,462-465` | H `blocks` (package managers, chmod), `allows` (`pnpm`, `chmod 755`) | CONFIRMED |
+| cat/head/tail/tee literal, inspected paths | `guard_bash.py:466-474` | H `blocks`/`allows` (`.env.example`), symlink test | CONFIRMED |
+| guard_paths: `.env*` except `.env.example`, `*.pem`, `*.key` (read and write, via symlinks) | `guard_paths.py:30-36,57-58` | H `test_guard_files_blocks`, `test_guard_read`, `test_guard_read_blocks_every_secret_shape_but_not_other_paths`, `test_symlinks_into_secrets_and_git`, `test_symlink_loop_fails_closed` | CONFIRMED |
+| guard_paths write-only: `.git/`, `uv.lock`, `apps/api/openapi.json` | `guard_paths.py:61-67` | H `test_guard_files_blocks`/`allows`, `test_guard_files_path_edge_cases`, `test_guard_read` (reads allowed) | CONFIRMED |
+| guard_paths write-only: generated adapters; recipe skills and `.codex/config.toml` allowed | `guard_paths.py:11-13,68-72` | H `test_guard_files_blocks`/`allows`, `test_guard_files_path_edge_cases` | CONFIRMED |
+| guard_paths write-only: existing migrations blocked, new allowed, symlinked new blocked | `guard_paths.py:73-74` | H `test_guard_files_blocks`/`allows`, `test_symlinks_into_secrets_and_git`, `test_guard_files_blocks_a_symlinked_new_migration` | CONFIRMED |
+| guard_files: Edit/Write/NotebookEdit path and every `edits[]` member, malformed shapes fail closed | `guard_files.py:22-39,51-54` | H `test_guard_files_notebook_and_multiedit`, `..._checks_every_edit_of_a_multiedit...`, `..._secret_in_edits...`, `test_hooks_fail_closed` | CONFIRMED |
+| Messages `Command/Edit/Read blocked: <reason + alternative>`; block = stderr + exit 2 | `guard_bash.py:530`, `guard_files.py:56`, `guard_read.py` | H `test_guard_*_message_format` | CONFIRMED |
+| guard_read: secrets only, fails closed without `file_path` | `guard_read.py` | H `test_guard_read`, `test_guard_read_without_file_path_fails_closed` | CONFIRMED |
+| format_file: `ruff check --fix` + `format` inside project only, always exit 0, no ruff = no-op | `format_file.py:16-47` | H `test_format_file_*` (5 tests incl. escaping path, non-string path) | CONFIRMED |
+| settings.json: events, matchers, commands, timeouts 10/20 | `.claude/settings.json` | H `test_settings_register_each_hook_on_its_event_matcher_and_timeout`, `test_settings_register_every_hook` | CONFIRMED |
+| settings.json permissions allow/ask/deny | `.claude/settings.json` | H `test_settings_permissions_allow_ask_deny_shape` | CONFIRMED (static shape; Claude Code applying them is e2e) |
+| Sync deterministic; outputs cover all agents, profiles, skills; marker everywhere | `sync.py:73-82` | S `test_generation_is_deterministic`, `test_outputs_cover_...`, `test_every_output_carries_the_marker` | CONFIRMED |
+| Skills byte-identical in `.claude` and `.agents` | `sync.py:80-81` | S `test_skills_are_identical_in_both_trees`, drift in `.agents` tree | CONFIRMED |
+| Codex TOML valid (generated and committed), `.codex/config.toml` limits | `sync.py:51-63` | S `test_every_codex_profile_parses_as_toml`, `test_committed_codex_files_parse_as_toml`, `test_committed_codex_config_declares_the_agent_limits` | CONFIRMED |
+| `'''` rejected in body and in description | `sync.py:54-55` | S `test_triple_quote_in_a_body_is_rejected`, `..._profile_description_...` | CONFIRMED |
+| `--check` reports `+`/`~`/`-`, never writes or deletes; exit 1 on drift, 2 on unknown args | `sync.py:105-148` | S `test_check_reports_...`, `test_check_never_writes_or_deletes`, `test_main_*` | CONFIRMED |
+| Sync deletes only marked obsolete files (all four roots; not unmarked, symlinks, out-of-root); idempotent | `sync.py:85-124` | S `test_sync_writes_and_deletes_...`, `..._in_every_generated_root`, `test_sync_never_deletes_...`, `test_second_sync_is_a_no_op` | CONFIRMED |
+| Committed repo in sync, byte for byte; recipe skills hand-written; shared fragments in every body | `sync.py`, `adapters.py` | S `test_the_repository_is_in_sync`, `test_committed_adapters_match_...`, `test_recipe_skills_...`, `test_every_generated_body_carries_the_shared_fragments` | CONFIRMED |
+| Recipes `test-harness`, `harness-sync`, `harness-check` in `check` | `justfile:104-130` | closing `uv run just check` runs both | CONFIRMED (execution) |
+| Live Claude Code session blocks/lists skills and subagents; Codex lists profiles | n/a | none | NOT CONFIRMED (manual e2e; not runnable here) |
+
+GAP summary (product code not touched, strict xfail, 8 xfail cases): combined python flags
+(`-Sc`), `git clean --force`, `git add -Av|./|dir/.`, `docker-compose down -v`.
 
 ## Review findings
 
