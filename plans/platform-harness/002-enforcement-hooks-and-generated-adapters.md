@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: platform
 min_implementer: high
 depends_on: ["001"]
@@ -277,5 +277,83 @@ GAP summary (product code not touched, strict xfail, 8 xfail cases): combined py
 (`-Sc`), `git clean --force`, `git add -Av|./|dir/.`, `docker-compose down -v`.
 
 ## Review findings
+
+Reviewer, 2026-10-03, diff `ee162d3..3b4f9df`. Hooks were exercised with crafted payloads from
+a scratchpad script (`uv run python probe.py`); git/bash behavior was confirmed in a scratch repo.
+
+### Checklist — FAILED (1 item)
+
+- [ ] `uv run just plans-scope … --base ee162d3`: **fails**: `docs/harness/conventions/testing.md`
+      and `docs/harness/roles/reviewer.md` are out of scope. Deviation 4 records them, but no step's
+      Files list names them. `pyproject.toml` is declared but unchanged (Deviation 2, fine).
+- [x] `uv run just check`: green (429 harness passed, 8 strict xfail; API 238 passed).
+- [x] Integration / domain / CQRS / contracts / Money / migrations / routes / wiring: N/A (no
+      `apps/api` change).
+- [x] No secrets in the diff.
+- [x] Deviations honest. Spot-checked #1 (`2>&1`/`>&2` allowed: `guard_bash.py:198-203`), #3
+      (`justfile:130`) and #4 (markers removed: there are no "plan 002" leftovers in docs/AGENTS/CLAUDE).
+- [x] Adapters match web-rh `adapters.mjs` in substance: load order, gates, all four
+      fragments adapted (Alembic, `db-reset --test`, docker volumes, `plans/findings/`), the six
+      skill names, Codex profiles/models/efforts, and reviewer tools. Every referenced path
+      exists.
+- [x] Docs updated (HARNESS, security, workflow, AGENTS, CLAUDE).
+- [x] PR body: N/A (no PR yet).
+
+### Findings
+
+**High: these bypass rules the plan lists as enforced. Each one is exit 0 from the live guard.**
+
+1. `guard_bash.py:198-203`: bash's `>&word` (with a non-numeric `word`) is treated as fd
+   duplication, so `word` becomes a plain argument and is never inspected as a write. Example:
+   `echo x >&uv.lock` or `… >&apps/api/openapi.json` overwrites a protected file. Confirmed: bash
+   created `out.txt` from `>&out.txt`.
+2. `guard_bash.py:420-426,513-515`: a `cd` inside a pipeline (`|`) runs in a subshell, but the guard
+   still moves its tracked cwd. Example: `cd /tmp | echo x > uv.lock` is inspected as `/tmp/uv.lock`,
+   but bash writes the repo's `uv.lock`. The same trick defeats the untracked-`rm` check:
+   `cd apps | rm notes.txt`.
+3. `guard_bash.py:288-317`: git rules only match exact tokens. Git accepts abbreviated long
+   options and clustered short flags, so all of these pass:
+   - `git reset --har`: confirmed, it discarded work in a scratch repo.
+   - `git switch -f` / `--force`: confirmed, it discarded work. It is equivalent to
+     `--discard-changes`.
+   - `git push -uf`, `git push --forc`.
+   - `git branch -d -f x`, `git branch --delete --force x`.
+   - `git commit --al`, `git add --al`.
+   - `git restore --staged --work f`.
+   - `git checkout <path>` with a single path argument discards that file's changes.
+4. `guard_bash.py:413-419,454-455`: interpreters that read code from stdin are not checked.
+   `echo '<code>' | python3` runs inline code, and `echo 'drop database x' | uv run just psql`
+   runs destructive SQL.
+
+**Medium**
+
+5. `guard_paths.py:49,53` + `guard_bash.py:17` (and the other guards): hooks run with the system
+   `python3`. `except A, B:` is only valid syntax from Python 3.14 on, and the import sits outside
+   the `try`. With `python3` older than 3.14, every guard exits 1, which Claude Code treats as a
+   non-blocking error, so the hooks fail open. Not run on an older interpreter; this follows
+   from the language rules.
+6. `guard_bash.py:19,33`: the shell and wrapper lists are incomplete. `setsid git stash`,
+   `ionice …`, `flock /tmp/l …`, `ksh -c '…'` and `uvx python -c …` run the inner command
+   unchecked.
+7. `guard_bash.py:457-461`: Docker variants pass: `docker volume remove x`,
+   `docker compose down --volumes=true`, and `docker-compose down -v` (the tester's GAP).
+
+**Low**
+
+8. `guard_bash.py:250`: `rm -rf /abs/path/build` outside the project is allowed, because only the
+   basename is checked (web-rh has the same behavior).
+9. `git config alias.x stash` and `git config core.hooksPath /dev/null` are allowed. That makes
+   a two-step bypass of the git rules and `--no-verify`.
+10. `sync.py:93,116`: obsolete-file deletion keys on the marker *string* anywhere in the file, so
+    a hand-written skill that quotes it would be deleted. Writes also follow an existing symlink
+    out of the root. Uncertain impact.
+11. The plan's first Acceptance criterion is truncated or garbled ("`git stash`,
+    `docker compose down -v`, runs.").
+
+Documented residuals (security.md says arbitrary programs are not analyzed), so not counted:
+`cp/sed/grep/awk` reading `.env` or writing protected paths, and `dropdb`.
+
+**Tester GAPs: all four confirmed** (`python3 -Sc`, `git clean --force`,
+`git add -Av|./`, `docker-compose down -v`).
 
 ## Verification
