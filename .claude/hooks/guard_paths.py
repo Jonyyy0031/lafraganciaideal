@@ -43,9 +43,13 @@ def inspect_path(
     if not isinstance(path, str) or not path or "\0" in path:
         return "Missing or invalid path. Pass a literal file path"
     project = os.path.abspath(project_dir)
-    abs_path = os.path.abspath(os.path.join(cwd or project, path))
+    joined = os.path.join(cwd or project, path)
+    abs_path = os.path.abspath(joined)
     try:
         resolved = _resolve_existing_parent(abs_path)
+        # The kernel resolves symlinks before `..` (`link/../x` is next to the link target),
+        # and the cwd may be a logical path through a symlink (bash's `cd`).
+        physical = os.path.realpath(joined)
     except (OSError, RuntimeError, ValueError):
         return "The path could not be resolved safely. Use a plain path without symlink loops"
     try:
@@ -53,7 +57,7 @@ def inspect_path(
     except (OSError, ValueError):
         return "The project directory could not be resolved. Check CLAUDE_PROJECT_DIR"
 
-    for candidate, root in ((abs_path, project), (resolved, real_root)):
+    for candidate, root in ((abs_path, project), (resolved, real_root), (physical, real_root)):
         if _is_secret(candidate):
             return "Secret content is protected. Read .env.example for the variable names instead"
         if not write:

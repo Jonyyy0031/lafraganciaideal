@@ -985,3 +985,211 @@ def test_guards_fail_closed_when_the_shared_module_is_missing(
     )
     assert result.returncode == 2
     assert result.stderr.startswith(f"{prefix} blocked: the guard could not start")
+
+
+# --- implementer repairs after the round-2 review (plan 002): one regression per finding ---
+
+ROUND2_BLOCKS = [
+    # High 1: reserved words and compound commands are rejected, not modelled.
+    "if git stash; then true; fi",
+    "! git stash",
+    "while git stash; do break; done",
+    "until git stash; do break; done",
+    "for x in a; do git reset --hard; done",
+    "true; then git stash",
+    "select x in a; do git stash; done",
+    "coproc git stash",
+    "time git stash",
+    # High 1: builtins that run a string or change how words resolve.
+    "builtin eval 'git stash'",
+    "trap 'git stash' EXIT",
+    "source scripts/x.sh",
+    ". scripts/x.sh",
+    "alias x='git stash'",
+    "hash -p /usr/bin/git ls",
+    "shopt -s expand_aliases",
+    "mapfile -C 'git stash' -c 1 x",
+    "compgen -C 'git stash' x",
+    # High 2: any assignment word before the program, whatever its value holds.
+    "X=/a/echo git stash",
+    "X=1 git status",
+    "GIT_DIR=/tmp/x git status",
+    "X=1",
+    "uv run X=/a/echo git stash",
+    "sh -c 'X=/a/echo git stash'",
+    # High 3: pushd/popd do not move the tracked cwd, so they are rejected.
+    "pushd apps; echo x > api/openapi.json",
+    "pushd .git; echo x > config",
+    "popd",
+    # Medium 5: export/declare put variables into the environment of later commands.
+    "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=stash; git x",
+    "export GIT_DIR",
+    "declare -x GIT_CONFIG_COUNT=1",
+    "typeset -x X=1",
+    "readonly X=1",
+    "local X=1",
+    # Medium 6: git's dashed helper binaries.
+    "/usr/lib/git-core/git-stash",
+    "/usr/lib/git-core/git-reset --hard",
+    "git-stash",
+    # Medium 7: paths read from a file cannot be inspected.
+    "git checkout --pathspec-from-file=paths.txt",
+    "git checkout --pathspec-f=paths.txt",
+    "git checkout --pathspec-from-file paths.txt",
+    "git checkout --pathspec-file-nul --pathspec-from-file=paths.txt",
+    "git add --pathspec-from-file=paths.txt",
+    "git add --pathspec-f=paths.txt",
+    # Medium 8: `sh -c` payloads inside docker are checked like top-level commands.
+    "docker compose -f infra/docker/compose.yaml exec postgres "
+    "sh -c 'psql -U u -d d -c \"drop database x\"'",
+    "docker exec pg bash -c 'psql -c \"truncate x\"'",
+    "docker compose exec postgres sh -c 'echo 1 | psql'",
+    "docker compose exec postgres sh script.sh",
+    "docker compose exec postgres sh",
+    # Low 9: git config keys that change what git runs.
+    "git config include.path /tmp/x.cfg",
+    "git config includeIf.gitdir:x.path /tmp/x.cfg",
+    "git config clean.requireForce false",
+    "git config core.editor vim",
+    "git config core.pager cat",
+    "git config Core.HooksPath /dev/null",
+    "git config --global alias.x stash",
+    "git config set alias.x stash",
+    "git config --add include.path /tmp/x.cfg",
+    "git config --unset core.hooksPath",
+    "git config --edit",
+    "git config -f .git/config alias.x stash",
+    "git config credential.helper x",
+    "git config filter.x.clean x",
+    # Low 10: branch resets and mirror push.
+    "git switch -C feat/x HEAD~1",
+    "git switch --force-create feat/x HEAD~1",
+    "git switch --force-c feat/x HEAD~1",
+    "git branch -f feat/x HEAD~1",
+    "git branch --force feat/x HEAD~1",
+    "git branch -fm a b",
+    "git push --mirror origin",
+    "git push --mirr origin",
+    "git push --prune origin",
+    # Low 11: exclude-only (magic) pathspecs mean "everything but".
+    "git add ':!x'",
+    "git add ':^x'",
+    "git add ':(exclude)x'",
+    "git add -- ':!x'",
+    # Wrappers added on the same grounds as round-1 finding 6.
+    "doas git stash",
+    "watch git stash",
+    "busybox sh -c 'git stash'",
+    "script -c 'git stash'",
+]
+
+
+@pytest.mark.parametrize("command", ROUND2_BLOCKS)
+def test_guard_bash_blocks_round2_bypasses(command: str) -> None:
+    assert bash(command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "true",
+        "git status && true",
+        "git config user.name x",
+        "git config user.email x@example.com",
+        "git config --global pull.rebase true",
+        "git config --get alias.x",
+        "git config --get core.hooksPath",
+        "git config core.hooksPath",
+        "git config get core.hooksPath",
+        "git config --list",
+        "git config -l",
+        "git switch -c feat/y",
+        "git branch -d feat/x",
+        "git branch -u origin/feat/x",
+        "git branch '--format=%(refname)' --list",
+        "git push -u origin feat/x",
+        "git push --force-with-lease origin feat/x",
+        "git add apps/api/README.md",
+        "git add -- apps/api/README.md",
+        "git checkout feat/x",
+        "declare -p",
+        "export -p",
+        "docker compose -f infra/docker/compose.yaml exec postgres "
+        "sh -c 'psql -U u -d d -c \"select 1\"'",
+        "docker compose -f infra/docker/compose.yaml ps",
+        'docker compose exec postgres psql -c "select 1"',
+        "echo if then fi",
+        'git commit -m "if x then y"',
+    ],
+)
+def test_guard_bash_allows_after_round2_repairs(command: str) -> None:
+    result = run_hook("guard_bash.py", {"tool_input": {"command": command}, "cwd": str(REPO)})
+    assert result.returncode == 0, result.stderr
+
+
+def test_guard_bash_round2_messages_name_the_construct() -> None:
+    def stderr(command: str) -> str:
+        return run_hook(
+            "guard_bash.py", {"tool_input": {"command": command}, "cwd": str(REPO)}
+        ).stderr
+
+    assert "shell keywords" in stderr("if git stash; then true; fi")
+    assert "builtin" in stderr("trap 'git stash' EXIT")
+    assert "pushd/popd" in stderr("pushd apps")
+    assert "exporting or declaring" in stderr("export X=1")
+    assert "git helper binaries" in stderr("/usr/lib/git-core/git-stash")
+    assert "git config" in stderr("git config include.path x")
+
+
+@pytest.fixture
+def symlinked_repo(tmp_path: Path) -> Path:
+    """A git repo with `link` -> a directory outside it and `hooks` -> its .git/hooks."""
+    root = Path(os.path.realpath(tmp_path)) / "repo"
+    elsewhere = Path(os.path.realpath(tmp_path)) / "elsewhere" / "dir"
+    elsewhere.mkdir(parents=True)
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)  # noqa: S607
+    (root / "untracked.txt").write_text("user data")
+    (root / "link").symlink_to(elsewhere)
+    (root / "hooks").symlink_to(root / ".git" / "hooks")
+    (root / "sub").mkdir()
+    (root / "sub" / "untracked.txt").write_text("user data")
+    return root
+
+
+def test_guard_bash_cd_is_logical_like_bash(symlinked_repo: Path) -> None:
+    # Medium 4: `cd link; cd ..` returns to the repo root (bash's logical cd), so the redirect
+    # lands on the repo's uv.lock, not on the link target's parent.
+    assert bash("cd link; cd ..; echo x > uv.lock", symlinked_repo) == 2
+    assert bash("cd link && cd .. && echo x > uv.lock", symlinked_repo) == 2
+    assert bash("cd link && cd .. && rm untracked.txt", symlinked_repo) == 2
+    assert bash("cd link && ls", symlinked_repo) == 0
+    assert (symlinked_repo / "untracked.txt").exists()
+
+
+def test_guard_paths_resolve_symlinks_before_dot_dot(symlinked_repo: Path) -> None:
+    # Found while repairing Medium 4: the kernel resolves `hooks/..` as `.git`, not the root.
+    assert bash("echo x > hooks/../config", symlinked_repo) == 2
+    assert edit({"file_path": str(symlinked_repo / "hooks" / ".." / "config")}, symlinked_repo) == 2
+    assert bash("echo x > sub/../notes.txt", symlinked_repo) == 0
+
+
+def test_guard_bash_rm_resolves_the_parent_physically(symlinked_repo: Path) -> None:
+    (symlinked_repo / "tracked.txt").write_text("tracked")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=symlinked_repo, check=True)  # noqa: S607
+    outside = symlinked_repo.parent / "elsewhere" / "tracked.txt"
+    outside.write_text("user data")
+    # Lexically `link/../tracked.txt` is the repo's tracked file; the kernel removes
+    # elsewhere/tracked.txt, which is untracked: blocked.
+    assert bash("rm link/../tracked.txt", symlinked_repo) == 2
+    assert bash("cd link && rm ../tracked.txt", symlinked_repo) == 2
+    assert bash("rm sub/../untracked.txt", symlinked_repo) == 2
+    assert bash("rm tracked.txt", symlinked_repo) == 0
+    assert outside.exists()
+    assert (symlinked_repo / "untracked.txt").exists()
+
+
+def test_guard_bash_pushd_cannot_desynchronise_the_cwd(symlinked_repo: Path) -> None:
+    # High 3, in a repo where the relative target would otherwise look harmless.
+    assert bash("pushd sub; rm untracked.txt", symlinked_repo) == 2
+    assert (symlinked_repo / "sub" / "untracked.txt").exists()

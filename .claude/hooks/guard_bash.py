@@ -50,7 +50,84 @@ WRAPPERS = {
     "flock",
     "chrt",
     "taskset",
+    "doas",
+    "su",
+    "runuser",
+    "pkexec",
+    "run0",
+    "watch",
+    "parallel",
+    "script",
+    "busybox",
+    "unbuffer",
+    "systemd-run",
+    "nsenter",
+    "unshare",
+    "chroot",
 }
+# Reserved words start compound commands (`if`, `while`, `!`, ...): the real command follows
+# them, so the line is rejected instead of modelled.
+RESERVED_WORDS = {
+    "!",
+    "if",
+    "then",
+    "elif",
+    "else",
+    "fi",
+    "do",
+    "done",
+    "while",
+    "until",
+    "for",
+    "in",
+    "case",
+    "esac",
+    "select",
+    "coproc",
+    "function",
+    "[[",
+    "]]",
+}
+# Builtins that run a string as code, change how later words resolve, or install callbacks.
+HIDDEN_RUNNERS = {
+    "builtin",
+    "trap",
+    "source",
+    ".",
+    "alias",
+    "hash",
+    "enable",
+    "shopt",
+    "fc",
+    "mapfile",
+    "readarray",
+    "compgen",
+    "complete",
+    "bind",
+}
+# Builtins that put variables into the environment of the commands that follow.
+ENV_SETTERS = {"export", "declare", "typeset", "readonly", "local"}
+# `git config` keys an agent may set; anything else (alias.*, include.*, core.*,
+# clean.requireForce, hooks, filters, credential helpers...) can change what git runs.
+GIT_CONFIG_SAFE = (
+    "user.",
+    "color.",
+    "advice.",
+    "init.defaultbranch",
+    "pull.rebase",
+    "pull.ff",
+    "push.default",
+    "push.autosetupremote",
+    "fetch.prune",
+)
+GIT_CONFIG_WRITES = (
+    "--unset",
+    "--unset-all",
+    "--add",
+    "--replace-all",
+    "--rename-section",
+    "--remove-section",
+)
 INTERPRETER = re.compile(r"^(node|python[\d.]*|perl|ruby|php)$")
 # Short options that take the program text, per interpreter, and the options whose value
 # ends a cluster of short flags (`python3 -Wc` passes "c" to -W; `python3 -Sc` runs code).
@@ -334,6 +411,12 @@ def _inside(path: str, root: str) -> bool:
         return False
 
 
+def _physical(target: Word, ctx: Context) -> str:
+    """The file the kernel removes: the parent resolved through symlinks, the name kept."""
+    joined = os.path.join(ctx.cwd, target.value.rstrip("/") or "/")
+    return os.path.join(os.path.realpath(os.path.dirname(joined)), os.path.basename(joined))
+
+
 def _check_rm(args: list[Word], ctx: Context) -> None:
     flags = " ".join(a.value for a in args if a.value.startswith("-"))
     targets = [a for a in args if not a.value.startswith("-")]
@@ -344,7 +427,11 @@ def _check_rm(args: list[Word], ctx: Context) -> None:
         if target.glob or target.value.startswith("~"):
             raise Blocked("rm needs literal paths without wildcards. List each path")
         abs_path = os.path.abspath(os.path.join(ctx.cwd, target.value))
-        reason = inspect_path(abs_path, ctx.project_dir, write=True)
+        # The kernel resolves the parent physically (`link/../f` is under the link target).
+        physical = _physical(target, ctx)
+        reason = inspect_path(abs_path, ctx.project_dir, write=True) or inspect_path(
+            physical, ctx.project_dir, write=True
+        )
         if reason:
             raise Blocked(reason)
         if recursive:
@@ -359,11 +446,11 @@ def _check_rm(args: list[Word], ctx: Context) -> None:
                 raise Blocked(
                     "no recursive delete through symlinks. Remove the link target explicitly"
                 )
-        elif os.path.lexists(abs_path):
+        elif os.path.lexists(abs_path) or os.path.lexists(physical):
             import subprocess  # noqa: PLC0415 - lazy: only rm of an existing file needs git
 
             tracked = subprocess.run(  # noqa: S603 - fixed argv, no shell
-                ["git", "ls-files", "--error-unmatch", "--", abs_path],  # noqa: S607
+                ["git", "ls-files", "--error-unmatch", "--", physical],  # noqa: S607
                 cwd=ctx.project_dir,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -376,8 +463,9 @@ def _check_rm(args: list[Word], ctx: Context) -> None:
 
 
 def _broad_pathspec(path: str) -> bool:
+    # Any magic pathspec (`:/`, `:!x`, `:^x`, `:(exclude)x`) can mean "everything but".
     stripped = path.rstrip("/")
-    return stripped in ("", ".", "*", ":", ":/") or stripped.endswith("/.") or path == ":/"
+    return stripped in ("", ".", "*") or stripped.endswith("/.") or path.startswith(":")
 
 
 def _check_git(args: list[Word], ctx: Context) -> None:
@@ -410,7 +498,16 @@ def _check_git(args: list[Word], ctx: Context) -> None:
         branch = "-b" in options
         if (
             "--" in vals
-            or _has(options, "-B", "-f", "--force", "--ours", "--theirs")
+            or _has(
+                options,
+                "-B",
+                "-f",
+                "--force",
+                "--ours",
+                "--theirs",
+                "--pathspec-from-file",
+                "--pathspec-file-nul",
+            )
             or (not branch and len(positionals) > 1)
             or (
                 not branch
@@ -425,17 +522,28 @@ def _check_git(args: list[Word], ctx: Context) -> None:
             raise Blocked(
                 "git checkout can discard files. Use git switch <branch> or git switch -c"
             )
-    if sub == "switch" and _has(_options(vals, "cC")[0], "--discard-changes", "-f", "--force"):
-        raise Blocked("git switch --discard-changes/--force discards work. Commit first")
+    if sub == "switch":
+        options = _options(vals, "cC")[0]
+        if _has(options, "--discard-changes", "-f", "--force"):
+            raise Blocked("git switch --discard-changes/--force discards work. Commit first")
+        if _has(options, "-C", "--force-create"):
+            raise Blocked("git switch -C resets an existing branch. Use git switch -c <new>")
     if sub == "branch":
         options = _options(vals, "u")[0]
-        if "-D" in options or (_has(options, "-d", "--delete") and _has(options, "-f", "--force")):
-            raise Blocked("forced branch delete. Use git branch -d or ask the user")
+        if "-D" in options or _has(options, "-f", "--force"):
+            raise Blocked("forced branch delete or reset. Use git branch -d or ask the user")
     if sub == "add":
         options, positionals = _options(vals)
-        if _has(options, "-A", "--all", "-u", "--update", "--no-ignore-removal") or any(
-            _broad_pathspec(p) for p in positionals
-        ):
+        if _has(
+            options,
+            "-A",
+            "--all",
+            "-u",
+            "--update",
+            "--no-ignore-removal",
+            "--pathspec-from-file",
+            "--pathspec-file-nul",
+        ) or any(_broad_pathspec(p) for p in positionals):
             raise Blocked("staging needs explicit paths. Use git add <path>...")
     if sub == "commit":
         options = _options(vals, "mFCctuS")[0]
@@ -447,7 +555,7 @@ def _check_git(args: list[Word], ctx: Context) -> None:
         raise Blocked("never skip hooks. Fix what the hook reports")
     if sub == "push":
         options, positionals = _options(vals, "o")
-        if _has(options, "-f", "--force") or any(
+        if _has(options, "-f", "--force", "--mirror", "--prune") or any(
             v in ("main", "master") or v.startswith("+") or PUSH_TO_MAIN.search(v)
             for v in positionals
         ):
@@ -455,9 +563,32 @@ def _check_git(args: list[Word], ctx: Context) -> None:
                 "force push or direct push to the main branch. "
                 "Use --force-with-lease on a feature branch"
             )
-    if sub == "config" and not any(v in GIT_CONFIG_READS for v in vals):
-        if any(v.lower().startswith("alias.") or v.lower() == "core.hookspath" for v in vals):
-            raise Blocked("git aliases and hooksPath can bypass the guard. Ask the user")
+    if sub == "config":
+        _check_git_config(vals)
+
+
+def _check_git_config(vals: list[str]) -> None:
+    """Allow reads and a few harmless keys; any other write can change what git runs."""
+    options, positionals = _options(vals)
+    if _has(options, "-e", "--edit", "-f", "--file", "--blob"):
+        raise Blocked("git config on an editor or another file is not inspectable. Ask the user")
+    if any(o in GIT_CONFIG_READS or o == "--get-urlmatch" for o in options):
+        return
+    if positionals[:1] in (["get"], ["list"]):
+        return
+    if positionals[:1] in (["set"], ["unset"], ["rename-section"], ["remove-section"], ["edit"]):
+        if positionals[0] == "edit":
+            raise Blocked("git config edit is not inspectable. Ask the user")
+        key = positionals[1] if len(positionals) > 1 else ""
+    elif len(positionals) == 1 and not _has(options, *GIT_CONFIG_WRITES):
+        return  # `git config <key>` reads it
+    else:
+        key = positionals[0] if positionals else ""
+    if not key.lower().startswith(GIT_CONFIG_SAFE):
+        raise Blocked(
+            "this git config key can change what git runs (aliases, includes, core.*, "
+            "clean.requireForce, hooks). Ask the user"
+        )
 
 
 def _check_uv_run(args: list[Word], ctx: Context) -> None:
@@ -600,11 +731,30 @@ def check_segment(segment: list[Word], ctx: Context) -> None:
 def _check_segment(segment: list[Word], ctx: Context) -> None:
     if segment[0].glob:
         raise Blocked("dynamic executable is not supported. Name the program literally")
-    program = os.path.basename(segment[0].value)
+    first = segment[0].value
+    program = os.path.basename(first)
     args = segment[1:]
     vals = _vals(args)
-    if "=" in program or program in WRAPPERS:
+    if first in RESERVED_WORDS:
+        raise Blocked(
+            "shell keywords and compound commands (if, while, for, !, coproc...) are not "
+            "inspectable. Run each command explicitly"
+        )
+    # Any `NAME=value` before the program is an environment assignment, whatever the value
+    # holds (`X=/a/echo git stash` runs git).
+    if "=" in first or program in WRAPPERS:
         raise Blocked("dynamic wrapper is not supported. Invoke the command directly")
+    if first in HIDDEN_RUNNERS:
+        raise Blocked(f"the {first} builtin can run hidden commands. Invoke the command directly")
+    if first in ("pushd", "popd"):
+        raise Blocked("pushd/popd are not tracked by the guard. Use cd <literal path>")
+    if program in ENV_SETTERS and any(not v.startswith("-") for v in vals):
+        raise Blocked(
+            "exporting or declaring variables changes how later commands run. "
+            "Pass options explicitly"
+        )
+    if program.startswith("git-"):
+        raise Blocked("git helper binaries skip the git checks. Use git <subcommand>")
     if program == "sudo":
         raise Blocked("the agent never uses sudo. Ask the user")
     if ctx.pipe and program in SHELLS and ctx.previous_program in ("curl", "wget"):
@@ -623,7 +773,9 @@ def _check_segment(segment: list[Word], ctx: Context) -> None:
         if not os.path.isdir(target):
             raise Blocked("the working directory cannot be verified. cd into an existing directory")
         if not ctx.subshell:  # a pipeline member runs in a subshell: the cwd does not change
-            ctx.cwd = os.path.realpath(target)
+            # Logical, like bash: `cd link; cd ..` returns to where it started. Paths are then
+            # also inspected physically (guard_paths resolves the joined path).
+            ctx.cwd = target
     if program == "rm":
         _check_rm(args, ctx)
     if program == "find" and any(
@@ -660,6 +812,11 @@ def _check_segment(segment: list[Word], ctx: Context) -> None:
         _check_sql(vals, ctx)
     if docker and (_docker_removes_volumes(vals) or DOCKER_DATA_LOSS.search(" ".join(vals))):
         raise Blocked("never delete volumes/data. Use uv run just down (keeps data)")
+    if docker:
+        # `docker … exec <svc> sh -c '<cmd>'`: the payload is checked like a top-level command.
+        shell = next((k for k, a in enumerate(args) if os.path.basename(a.value) in SHELLS), -1)
+        if shell >= 0:
+            check_segment(args[shell:], ctx)
     if program in ("npm", "yarn", "npx", "bun", "bunx"):
         raise Blocked("this repo uses uv (Python) and pnpm (web, phase 3)")
     if program == "chmod" and any(re.match(r"^0?777$", v) for v in vals):

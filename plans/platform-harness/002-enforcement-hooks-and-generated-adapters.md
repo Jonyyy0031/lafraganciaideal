@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: platform
 min_implementer: high
 depends_on: ["001"]
@@ -265,6 +265,50 @@ Format: said / reality / done.
      because each one reproduces a bypass the reviewer reported. `docs/harness/security.md`
      "Shell subset" describes the new checks.
 
+9. **Repairs after review, round 2** (2026-10-03, re-review findings High 1–3, Medium 4–8,
+   Low 9–11). Said: the guards enforce the listed rules. Reality: shell constructs the guard
+   did not model still bypassed them. Done, preferring to reject over modelling
+   (`.claude/hooks/guard_bash.py` unless noted):
+   - High 1: shell reserved words (`if then elif else fi do done while until for in case esac
+     select ! coproc function [[ ]]`) as the first word are rejected; builtins that run a
+     string or change word resolution (`builtin trap source . alias hash enable shopt fc
+     mapfile readarray compgen complete bind`) are rejected. More wrappers on the same grounds:
+     `doas su runuser pkexec run0 watch parallel script busybox unbuffer systemd-run nsenter
+     unshare chroot`.
+   - High 2: any `=` in the first word (not its basename) is an assignment and is rejected.
+   - High 3: `pushd`/`popd` are rejected (use `cd`).
+   - Medium 4: `cd` keeps the logical path (`os.path.abspath`, no `realpath`), like bash.
+     Because the kernel resolves symlinks before `..` for every other path,
+     `.claude/hooks/guard_paths.py` `inspect_path` now also checks `os.path.realpath` of the
+     joined (un-normalized) path, and `rm`'s tracked check uses the physically resolved parent.
+     This closes a bypass found while repairing (not in the review): `echo x > hooks/../config`
+     with `hooks -> .git/hooks` wrote `.git/config` while being inspected as `<root>/config`.
+   - Medium 5: `export declare typeset readonly local` with any non-option argument are
+     rejected (all variables, not only `GIT_*`); `export -p`/`declare -p` still allowed.
+   - Medium 6: programs whose basename starts with `git-` are rejected.
+   - Medium 7: `--pathspec-from-file`/`--pathspec-file-nul` (and abbreviations) are blocked in
+     `git checkout` and `git add`.
+   - Medium 8: in a `docker`/`docker-compose` command, the first argument named like a shell is
+     checked as a top-level segment: only `sh -c '<cmd>'` is accepted and `<cmd>` is checked
+     recursively (SQL, pipes into `psql`, …).
+   - Low 9: `git config` writes are allowed only for `user.*`, `color.*`, `advice.*`,
+     `init.defaultBranch`, `pull.rebase|ff`, `push.default|autoSetupRemote`, `fetch.prune`;
+     reads (`--get*`, `--list`, `get`, `list`, a single key) stay allowed; `-e/--edit`,
+     `-f/--file`, `--blob` are blocked.
+   - Low 10: `switch -C/--force-create`, `branch -f/--force` (any use), `push --mirror` and,
+     on the same grounds, `push --prune` are blocked.
+   - Low 11: any `git add` pathspec starting with `:` (magic: `:!x`, `:^x`, `:(exclude)x`, `:/`)
+     is treated as broad.
+   - Tests: `ROUND2_BLOCKS` (78 cases, each finding has at least one case that the pre-repair
+     guard allowed, checked against a scratchpad copy of it; 8 cases were already blocked and
+     stay as complementary coverage), round-2 allows (every must-pass allow of the plan still
+     passes, plus config reads, `export -p`, docker `sh -c 'psql … select'`), message test,
+     and fixture tests with symlinks (logical `cd`, `hooks/../config`, physical `rm` parent,
+     `pushd`). `docs/harness/security.md` now states that the guard is a best-effort denylist
+     that catches accidents, not a sandbox, and lists the rejected constructs.
+   - Not handled (residual, documented): `CDPATH` from the user's environment can make `cd`
+     land elsewhere; `git -C` and `uv run --directory` paths are still joined lexically.
+
 Not verified here (manual, e2e layer): a fresh Claude Code session listing the skills and
 subagents; Codex listing the profiles; the hooks on an interpreter older than 3.14 (only parsed
 with `ast` at `feature_version=(3, 10)` and ruff's py310 target).
@@ -273,7 +317,11 @@ with `ast` at `feature_version=(3, 10)` and ruff's py310 target).
 
 Round 1 (superseded by the repair): baseline `uv run just check` green (348 harness tests); 8 strict-xfail GAPs.
 
-Round 2 (after the review repair, 2026-10-03): baseline `uv run just check` green (API 238 passed, 3 skipped; harness 545 passed, 0 xfail, `harness-check` 24 adapters up to date). The regression tests the implementer added for each reviewer finding are listed below; the tester added none (each already reproduces the reported bypass).
+Round 3 (after the round-2 review repair, Deviation 9): pending the tester; the Round 2
+numbers below do not cover that code. Implementer run: `uv run just check` green (API 238
+passed, 3 skipped; harness 655 passed).
+
+Round 2 (after the review repair, 2026-10-03; superseded by the round-2 repair): baseline `uv run just check` green (API 238 passed, 3 skipped; harness 545 passed, 0 xfail, `harness-check` 24 adapters up to date). The regression tests the implementer added for each reviewer finding are listed below; the tester added none (each already reproduces the reported bypass).
 
 The Round 1 table follows; its GAP states are superseded by the Round 2 table. Tests live in
 `scripts/harness/test_hooks.py` (H) and `scripts/harness/test_sync.py` (S). Tester additions are

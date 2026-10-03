@@ -28,15 +28,35 @@ evaluating untrusted code.
 
 ## Shell subset
 
+**The guards are a best-effort denylist that catches accidents, not a sandbox.** They stop an
+agent from typing a known destructive command by mistake; they do not contain a determined or
+compromised process. Every bypass found so far was a shell construct the guard did not model,
+so the guard rejects ambiguous constructs instead of modelling them, and new bypasses should be
+expected. The host's permissions and sandbox are the real barrier.
+
 The Bash guard keeps literal arguments and analyzes separators and redirections. It inspects
-shells with a literal command (`sh -c '<cmd>'`, checked recursively), quoted paths and known
-git options. It rejects substitutions (`$(…)`, backticks), dynamic variables, heredocs,
-wrappers (`env`, `eval`, `exec`, `xargs`, `setsid`, `flock`, `VAR=` prefixes) and inline
-interpreters that cannot be inspected (`python -c`/`-Sc`, `node -e`, code or SQL piped or
-redirected into an interpreter or `psql`). Git options are matched the way git parses them
-(abbreviated long options, clustered short flags), and a `cd` inside a pipeline does not move
-the directory the next commands are checked against. Use explicit commands or previously reviewed scripts
-within the host's permissions.
+shells with a literal command (`sh -c '<cmd>'`, checked recursively, also inside
+`docker … exec`), quoted paths and known git options. It rejects:
+
+- substitutions (`$(…)`, backticks), dynamic variables, heredocs and grouping;
+- shell keywords and compound commands (`if`, `while`, `for`, `!`, `coproc`, `then`, …);
+- wrappers (`env`, `eval`, `exec`, `xargs`, `setsid`, `flock`, `doas`, `watch`, …) and any
+  `NAME=value` word before the program, whatever the value holds;
+- builtins that run a string or change how words resolve (`builtin`, `trap`, `source`/`.`,
+  `alias`, `hash`, `shopt`, `mapfile -C`, `compgen`, …), `pushd`/`popd`, and
+  `export`/`declare`/`typeset`/`readonly`/`local` with arguments;
+- git's dashed helper binaries (`/usr/lib/git-core/git-stash`);
+- inline interpreters that cannot be inspected (`python -c`/`-Sc`, `node -e`, code or SQL
+  piped or redirected into an interpreter or `psql`).
+
+Git options are matched the way git parses them (abbreviated long options, clustered short
+flags). Besides the listed destructive forms it blocks `--pathspec-from-file`, magic pathspecs
+in `git add` (`:!x`, `:/`), branch resets (`switch -C`, `branch -f`), `push --mirror|--prune`,
+and `git config` writes other than a few harmless keys (`user.*`, `color.*`, `pull.rebase`, …).
+`cd` is tracked logically, like bash (`cd link; cd ..` returns to where it started), while
+paths are also checked physically (symlinks resolved before `..`); a `cd` inside a pipeline
+does not move the directory the next commands are checked against. Use explicit commands or
+previously reviewed scripts within the host's permissions.
 
 It blocks the known destructive operations; it does not interpret every language nor the
 inside of every program. Read/Edit hooks check normalized paths and symlink targets without
