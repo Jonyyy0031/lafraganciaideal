@@ -33,6 +33,8 @@ adapters checked for drift). Also undo two divergences from web-rh introduced in
    rule; tooling is Python (stdlib for hooks, so they start fast and need no venv).
 6. (2026-10-02) Work reaches `main` through pull requests (the user chose PRs for phase 2).
 7. (2026-10-02) Group related work into as few plans as possible (two plans, not five).
+8. (2026-10-02) New pull request format: what changed, why, how, how it was verified, what's
+   missing, risks and rollout (added to plan 001).
 
 ## Delivered
 

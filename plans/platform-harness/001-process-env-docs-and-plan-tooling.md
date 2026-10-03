@@ -231,6 +231,22 @@ None
      `plans-lint`.
    - Observable result: a malformed plan fails `just check` and CI.
 
+15. **Pull request format**
+   - Files: `.github/pull_request_template.md` (modify), `docs/harness/conventions/pull-requests.md` (create),
+     `CONTRIBUTING.md` (modify)
+   - Do: every PR answers, in this order: **What changed** (the outcome in 2–3 lines, readable
+     without the code); **Why** (the problem or need, link to the plan and its decisions);
+     **How** (approach, key design decisions, alternatives discarded, files worth reviewing
+     first); **How it was verified** (commands with their real result, live checks, evidence or
+     a link to the plan's Verification); **What's missing** (NOT VERIFIED items, known
+     limitations, follow-ups, open findings — "Nothing" only if true); **Risks and rollout**
+     (migrations, config/env changes, manual steps after merge, or "None"). Short checklist at
+     the end (`just check`, `test-integration` when persistence changed, `plans-scope`,
+     `openapi.json` regenerated, docs in English). The convention doc explains each section
+     with a good and a bad example, and that PR bodies carry no AI attribution.
+   - Observable result: a new PR opens with the template; the reviewer role's checklist
+     includes "the PR body answers the six sections".
+
 ## Acceptance criteria
 
 - [ ] With no root `.env`, `uv run just bootstrap` exits 0 twice; the second run reports
@@ -247,6 +263,8 @@ None
 - [ ] `uv run just plans-status` lists drafts first and hides done plans unless `--all`.
 - [ ] `uv run just plans-scope <plan>` flags a file outside the plan (exit 1) and passes when
       only declared/allowed files changed.
+- [ ] `.github/pull_request_template.md` has the six sections (What changed, Why, How, How it
+      was verified, What's missing, Risks and rollout); this initiative's PR uses it.
 - [ ] `uv run just check` passes (including `plans-lint`); CI green.
 
 ## Test layers required
