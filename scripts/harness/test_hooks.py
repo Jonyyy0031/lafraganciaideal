@@ -1089,6 +1089,53 @@ def test_guard_bash_blocks_round2_bypasses(command: str) -> None:
     assert bash(command) == 2
 
 
+# plans/findings/platform-guard-bash-round3-bypasses.md (fast-lane fix): each case passed the
+# guard before the fix.
+ROUND3_FINDING_BLOCKS = [
+    "set -k; git x GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=stash",
+    "sh -c 'set -k; git status'",
+    "set -o keyword",
+    "set -e",
+    "git checkout-index -f -a",
+    "git checkout-index -af",
+    "git read-tree -u --reset HEAD",
+    "git read-tree --res HEAD",
+    "git rm -f apps/api/README.md",
+    "git rm --forc apps/api/README.md",
+    "git worktree remove --force ../wt",
+    "git update-ref -d refs/heads/feat/x",
+    "git update-ref --delete refs/heads/feat/x",
+    "git reflog expire --expire=now --all",
+    "docker compose -f infra/docker/compose.yaml exec postgres dropdb x",
+    "docker compose -f infra/docker/compose.yaml exec -T postgres dropuser x",
+    "dropdb fragancia",
+]
+
+
+@pytest.mark.parametrize("command", ROUND3_FINDING_BLOCKS)
+def test_guard_bash_blocks_the_round3_finding_bypasses(command: str) -> None:
+    assert bash(command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "set",
+        "git rm --cached apps/api/README.md",
+        "git rm apps/api/README.md",
+        "git reflog",
+        "git reflog show",
+        "git read-tree HEAD",
+        "git worktree list",
+        "git worktree remove ../wt",
+        "git update-ref refs/heads/feat/x HEAD",
+        "docker compose -f infra/docker/compose.yaml exec -T postgres psql -U x -c 'select 1'",
+    ],
+)
+def test_guard_bash_still_allows_safe_forms_of_the_round3_commands(command: str) -> None:
+    assert bash(command) == 0
+
+
 @pytest.mark.parametrize(
     "command",
     [

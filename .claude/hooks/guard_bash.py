@@ -107,6 +107,8 @@ HIDDEN_RUNNERS = {
 }
 # Builtins that put variables into the environment of the commands that follow.
 ENV_SETTERS = {"export", "declare", "typeset", "readonly", "local"}
+# PostgreSQL client programs that destroy data, on the host or inside `docker … exec`.
+DB_DROPPERS = {"dropdb", "dropuser", "pg_resetwal"}
 # `git config` keys an agent may set; anything else (alias.*, include.*, core.*,
 # clean.requireForce, hooks, filters, credential helpers...) can change what git runs.
 GIT_CONFIG_SAFE = (
@@ -565,6 +567,25 @@ def _check_git(args: list[Word], ctx: Context) -> None:
             )
     if sub == "config":
         _check_git_config(vals)
+    _check_git_plumbing(sub, vals)
+
+
+def _check_git_plumbing(sub: str, vals: list[str]) -> None:
+    """Low-level commands that discard work like `checkout -- .` or `reset --hard` do."""
+    options = _options(vals)[0]
+    discards = (
+        (sub == "checkout-index" and _has(options, "-f", "--force"))
+        or (sub == "read-tree" and _has(options, "-u", "--reset"))
+        or (sub == "rm" and _has(options, "-f", "--force"))
+        or (sub == "worktree" and vals[:1] == ["remove"] and _has(options, "-f", "--force"))
+        or (sub == "update-ref" and _has(options, "-d", "--delete"))
+        or (sub == "reflog" and vals[:1] in (["expire"], ["delete"]))
+    )
+    if discards:
+        raise Blocked(
+            f"git {sub} with these options discards work or history. "
+            "Use the porcelain command (git rm --cached, git branch -d…) or ask the user"
+        )
 
 
 def _check_git_config(vals: list[str]) -> None:
@@ -753,6 +774,18 @@ def _check_segment(segment: list[Word], ctx: Context) -> None:
             "exporting or declaring variables changes how later commands run. "
             "Pass options explicitly"
         )
+    if program == "set" and vals:
+        # `set -k` turns later `NAME=value` arguments into environment variables (GIT_CONFIG_*
+        # aliases, core.hooksPath…); other options change how every later command runs.
+        raise Blocked(
+            "set changes how the shell runs later commands (set -k injects environment). "
+            "Pass options to each command explicitly"
+        )
+    if program in DB_DROPPERS or (
+        program in ("docker", "docker-compose")
+        and any(os.path.basename(v) in DB_DROPPERS for v in vals)
+    ):
+        raise Blocked("destructive database program. Ask the user")
     if program.startswith("git-"):
         raise Blocked("git helper binaries skip the git checks. Use git <subcommand>")
     if program == "sudo":

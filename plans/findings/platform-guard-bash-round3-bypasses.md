@@ -1,7 +1,8 @@
 ---
-status: open
+status: resolved
 module: platform
 found: 2026-10-03
+plan: platform-harness/002
 ---
 
 # guard_bash still allows `set -k` env injection and git plumbing that discards work
@@ -43,6 +44,17 @@ All exit 0 from the live `.claude/hooks/guard_bash.py` (payload on stdin,
 Item 1 re-opens every git rule (stash, reset --hard, no-verify) with one extra word, the same
 class as the round-2 `export` finding. Item 2 discards uncommitted work that may belong to
 another agent sharing the worktree. Items 3–4 are lower impact.
+
+## Resolution (2026-10-03, fast lane, user's decision)
+
+Fixed in `.claude/hooks/guard_bash.py`: `set` with any argument is rejected (covers `set -k`
+and `set -o keyword`); `_check_git_plumbing` rejects `checkout-index -f`, `read-tree -u|--reset`,
+`rm -f`, `worktree remove --force`, `update-ref -d` and `reflog expire|delete` (abbreviations and
+clusters included); `dropdb`, `dropuser` and `pg_resetwal` are rejected on the host and inside
+`docker … exec`. Regression tests: `ROUND3_FINDING_BLOCKS` and the safe-form allows in
+`scripts/harness/test_hooks.py` (all 13 reproduced bypasses passed the guard before the fix).
+Verified live: the session's hook refused `set -e`; `uv run just check` green (harness 682).
+The guard stays a best-effort denylist (`docs/harness/security.md`).
 
 ## Suggested next step
 
