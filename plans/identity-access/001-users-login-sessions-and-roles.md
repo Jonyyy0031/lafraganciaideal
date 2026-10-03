@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: identity
 min_implementer: high
 depends_on: []
@@ -972,5 +972,106 @@ excluded from this plan's scope, as the dispatch said.
 
 **Result:** 1 medium and 4 low findings. M1, L1, L3 and L4 need changes. L2 needs a user
 decision. Status stays `review` (repair handoff to the implementer via the main session).
+
+### Round 2 (2026-10-03, reviewer subagent, opus) — after repair round 1
+
+Round 1 above is superseded for the repaired code. Diff reviewed: `git diff ee84ef6..HEAD`
+(`c6a2d23` repairs, `d132922` regression tests), plus the whole branch against `main` for the
+checklist. Clean worktree. `310fe2b` is excluded as before.
+
+#### Pass 1 — Checklist: 14/15 pass, 1 conditional (scope), PR body n/a
+
+- [~] **`plans-scope` exits 1 with four files out of scope.** The three from round 1 are
+  unchanged and accounted for (`310fe2b` x2, `main/http.py` as a documented deviation). One is
+  **new**: `apps/api/tests/unit/test_settings_bounds.py` (created in `d132922` by the tester).
+  No step's `Files:` line names it (step 11 lists `tests/unit/test_settings.py`; step 12
+  lists `tests/unit/identity/`). It is listed in `## Test coverage` but not in
+  `## Deviations`. It is test-only and covers the step 1 observable result that round 1 noted
+  as untested, so it needs no code change. See L5. Hot files: no change in this round.
+- [x] `uv run just check` → green: lint, typecheck, arch "7 kept, 0 broken", plans-lint
+  "7 plans, 3 findings", "24 adapters up to date", "404 passed, 3 skipped, 47 deselected",
+  harness "684 passed", compose config.
+- [x] `uv run just test-integration` → "46 passed, 1 skipped" (the same migration skip).
+- [x] Business rules: still in `domain/`. `_email_key` (`log_in.py:21-28`) repeats `Email`'s
+  `strip().lower()` (`domain/user.py:31`); the two are identical, so the key and the lookup
+  agree.
+- [x] CQRS-lite: `ChangePassword` counts and loads in one `run`, verifies outside, and
+  saves/revokes/clears in a second `run`; it returns `Result`.
+- [x] Contracts: no contract change. `openapi.json` was regenerated (the 429 and the new
+  description on `change_my_password`); `test_committed_document_is_up_to_date` is green.
+- [x] Errors: the 429 reuses `TooManyAttempts` (`IDENTITY_TOO_MANY_ATTEMPTS`, a
+  `RateLimitedError`), which is the code decision 8 names.
+- [x] Clock and ids: `ChangePassword` uses `self._clock.now()` for the hit.
+- [x] Migrations: none in this round. `key String(330)` still fits every key: `email:` + at
+  most 254 = 260, `email-sha256:` + 64 = 77, `password:` + 36 = 45.
+- [x] Routes: unchanged; `PUT /admin/auth/password` declares 429 in `responses`.
+- [x] Wiring: `module.py` builds one `SqlLoginThrottle` (stateless over `platform.database`)
+  and shares it between `LogIn` and `ChangePassword`. `module.py:78` is the only
+  `ChangePassword(...)` call. `CreateUser` in `main/cli.py` runs under `asyncio.run`, so the
+  async hasher works there too.
+- [x] No secrets or personal data in the new tests (synthetic passwords, `example.test`).
+- [x] `## Deviations` → "Repair round 1" is honest. Spot-checked: the order in L2 (weak
+  password first, then count + load, then 429 with no verify, then 422 with the attempt kept)
+  matches `change_password.py:44-81`; the hasher runs both calls through `asyncio.to_thread`
+  (`argon2_password_hasher.py:16-20`).
+- [x] Docs: L3 (`apps/api/README.md:56`) and L4 (`docs/architecture.md:154-157`) are fixed.
+  ADR 0009 now describes the password-change throttle and the worker thread.
+- n/a PR body: no PR yet.
+
+#### Round 1 findings — status
+
+- **M1 — resolved.** `PasswordHasher.hash/verify` are `async` in the port; the argon2 adapter
+  runs both in `asyncio.to_thread`. Every caller awaits them (`log_in.py:103`,
+  `change_password.py:68,71`, `create_user.py:64`); no synchronous caller is left (grep over
+  `apps/api/src`). The dummy hash is still computed once at wiring time. Covered by
+  `test_argon2_off_the_loop.py`, including the loop-keeps-ticking test.
+- **L1 — resolved.** `_email_key` hashes a normalized email longer than 254 characters into an
+  `email-sha256:` key. That key is still counted and throttled, and it cannot collide with an
+  `email:` key. The unit, HTTP (`"İ" * 320` → 401) and integration (real table, 6th attempt
+  429) tests pass.
+- **L2 — resolved per README decision 8.** The `password:<user_id>` key is counted before the
+  check with `email_max_attempts`. Above it → 429 with no verify, even with the right password.
+  A success clears the key in the same transaction as the save. A weak new password is
+  rejected before counting, and that path does not verify the current password, so it is not an
+  oracle.
+- **L3, L4 — resolved** (above).
+
+#### Pass 2 — Findings in the repair diff
+
+No medium or high findings. Traced: request → `current_user`/`current_session` →
+`ChangePassword` (validate → `run(count_and_load)` → limit → verify in thread → hash in
+thread → `run(work)` with save, revoke others, clear) → `unwrap` → 204/422/429; and
+`LogIn` with the new key function.
+
+**Low**
+
+- **L5 — a test file outside the plan's file list, not recorded in `## Deviations`.**
+  Location: `apps/api/tests/unit/test_settings_bounds.py`.
+  - **What fails.** Rule: "unplanned changes are findings even if the code is fine".
+    `plans-scope` reports the file. Only `## Test coverage` mentions it.
+  - **Failure scenario.** None at runtime. A later `plans-scope` reader cannot tell it from
+    stray work. The same content could have gone in `tests/unit/test_settings.py`, which step
+    11 lists.
+  - **Needs no code change:** this entry documents it. The user should acknowledge it when
+    marking the plan done, together with `main/http.py`.
+
+**Informational (no change requested)**
+
+- *Uncertain:* with argon2 off the loop, hashes now run in parallel, up to the default
+  executor size (`min(32, cpu + 4)`). With the library defaults (64 MiB per hash) a flood of
+  public logins from rotating IPs could use about `workers × 64 MiB` of memory at once (for
+  example about 384 MiB on a 2-CPU VPS). Before, the blocked loop ran one hash at a time. This
+  is not measured here. Worth remembering for sizing the deployment; a bounded semaphore around
+  the hasher would cap it if it ever matters.
+- `TooManyAttempts.message` says "Too many sign-in attempts" on the password-change 429. The
+  implementer documented this as a choice. Clients branch on `code`.
+- `test_the_event_loop_keeps_running_while_a_slow_verify_is_in_progress` depends on timing
+  (0.3 s block, needs 5 of about 30 ticks). The margin is wide, but it could flake on a badly
+  overloaded CI runner.
+- Still not covered by automated tests (the verifier should check them live or mark them NOT
+  VERIFIED): the `create-owner` CLI and the migration round trip (skipped in the suite).
+
+**Result (round 2):** 0 high, 0 medium, 1 low (L5, documentation only, no code change).
+Every round 1 finding is resolved and no regression was found. Status → `verify`.
 
 ## Verification
