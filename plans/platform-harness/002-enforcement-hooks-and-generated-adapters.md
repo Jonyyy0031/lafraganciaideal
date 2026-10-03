@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: platform
 min_implementer: high
 depends_on: ["001"]
@@ -412,5 +412,113 @@ Documented residuals (security.md says arbitrary programs are not analyzed), so 
 
 **Tester GAPs: all four confirmed** (`python3 -Sc`, `git clean --force`,
 `git add -Av|./`, `docker-compose down -v`).
+
+### Round 2 — re-review after the repair (2026-10-03, diff `ee162d3..6609ede`)
+
+Round 1 above is historical. Hooks were exercised with crafted payloads from a scratchpad
+script (`uv run python probe.py`, payloads on stdin, `CLAUDE_PROJECT_DIR` set to the repo or
+to a disposable fixture repo in the scratchpad). Bash semantics were confirmed in that fixture
+with harmless `touch`/`echo` payloads only.
+
+#### Checklist — PASSED (applicable items)
+
+- [x] `uv run just plans-scope … --base ee162d3`: "Every change is inside the plan" (34
+      declared, 50 changed). No hot files touched.
+- [x] `uv run just check`: exit 0 (API 238 passed, 3 skipped; harness 545 passed, 0 xfail;
+      `harness-check` 24 adapters up to date; plans-lint OK; import-linter 7 kept).
+- [x] Integration / domain / CQRS / contracts / Money / migrations / routes / wiring: N/A (no
+      `apps/api` change).
+- [x] No secrets in the diff.
+- [x] Deviations honest: every claim of Deviation 8 reproduced (see below). Medium 5 also
+      confirmed on a real older interpreter: the five hooks compile on CPython 3.12.13 and
+      `guard_bash.py` blocks `git stash` with exit 2 there (3.10/3.11 not available here).
+- [x] Docs updated (`security.md` "Shell subset" describes the new checks).
+- [x] PR body: N/A (no PR yet).
+
+#### Round 1 findings — all 11 resolved
+
+Each original example now exits 2 from the live hook: `>&apps/api/openapi.json` (1);
+`cd /tmp | echo x > uv.lock`, `cd apps | rm notes.txt` (2); `git reset --har`, `switch -f`,
+`switch --force`, `push -uf`, `push --forc`, `branch -d -f`, `branch --delete --force`,
+`commit --al`, `add --al`, `restore --staged --work`, `checkout justfile`, `checkout -B`,
+`commit -n`, `commit --no-verif` (3); `echo … | uv run just psql`, `… | python3`,
+`python3 < f`, `… | sh -c 'python3'` (4); `setsid`/`ionice`/`flock` wrappers, `ksh -c`,
+`uvx python -c` (6); `docker volume remove`, `down --volumes=true`, `docker-compose down -v`
+(7); `rm -rf /tmp/abs/build` (8); `git config alias.x stash`, `core.hooksPath` (9, reads
+still allowed). Finding 10 is covered by the new sync tests; 11 is fixed in the plan text.
+
+#### New findings (bypasses still open; all exit 0 from the live `guard_bash.py`)
+
+None of these was opened by the repair: they exist at `3b4f9df` too and round 1 missed them.
+They still defeat rules the plan lists as enforced, so the status stays `review`.
+
+**High**
+
+1. `guard_bash.py:600-606` (`_check_segment`): shell reserved words and some builtins are taken
+   as the program, so the real command after them is never inspected.
+   `if git stash; then true; fi`, `! git stash`, `while git stash; do break; done`,
+   `for x in a; do git reset --hard; done`, `true; then git stash` (parsed as program `then`),
+   `coproc git stash`, `builtin eval 'git stash'`, `trap 'git stash' EXIT` all exit 0.
+   Confirmed in bash: `if touch m; then true; fi` and `! touch m` both ran `touch`. Failure
+   scenario: any destructive rule (stash, reset --hard, db-reset, docker down -v) is bypassed
+   by prefixing `!` or wrapping it in `if …; then …; fi`. Reserved words (`if then elif else
+   fi do done while until for case esac select ! coproc function time`) and string-running
+   builtins (`builtin`, `trap`, `.`/`source` aside) need to be treated like wrappers or
+   unwrapped and checked.
+2. `guard_bash.py:603,606`: the `VAR=` prefix check runs on `os.path.basename(segment[0])`, so
+   an assignment whose value contains `/` hides itself. `X=/a/echo git stash` is seen as
+   program `echo` with harmless arguments; bash treats `X=/a/echo` as an environment
+   assignment and runs `git stash`. Confirmed in bash: `X=/a/echo touch m` created `m`.
+   Failure scenario: every rule is bypassed with any `NAME=…/<harmless-program>` prefix.
+3. `guard_bash.py:619-626`: only `cd` moves the tracked cwd; `pushd` (and `popd`) are
+   ignored, so the guard resolves later relative paths against the wrong directory — the same
+   class as round-1 finding 2. `pushd apps; echo x > api/openapi.json` is inspected as
+   `<root>/api/openapi.json`; `pushd .git; echo x > config` as `<root>/config`. Confirmed in
+   the fixture: bash wrote `apps/api/openapi.json`. Failure scenario: writing `.git/config`
+   (aliases, `core.hooksPath`) or any protected file, and the untracked-`rm` check is
+   desynchronised the same way.
+
+**Medium**
+
+4. `guard_bash.py:626`: `cd` stores `os.path.realpath(target)`, but bash's `cd` is logical
+   (follows `..` lexically from `$PWD`). After `cd link; cd ..` (or `&&`), where `link` points
+   to a directory elsewhere, the guard checks paths under the link target's parent while bash
+   is back in the original directory. `cd link; cd ..; echo x > uv.lock` exits 0; confirmed in
+   the fixture (bash wrote the fixture's `uv.lock`). Needs an existing symlink to a directory
+   (`ln -s` is not checked).
+5. `guard_bash.py:606`: `export`/`declare -x`/`typeset -x` set the environment for the rest of
+   the line, which the `VAR=` prefix rule exists to prevent.
+   `export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=stash; git x` exits 0
+   and makes `git x` run `git stash` (equally `core.hooksPath` before `git commit`), bypassing
+   the round-1 finding 9 repair. Not executed (git documents `GIT_CONFIG_COUNT/KEY_n/VALUE_n`).
+6. `guard_bash.py:603,633`: git's dashed helpers bypass `_check_git` because only basename
+   `git` is checked. `/usr/lib/git-core/git-stash` and `/usr/lib/git-core/git-reset --hard`
+   exit 0; both binaries exist on this machine. Not executed.
+7. `guard_bash.py:408-427` (checkout): `git checkout --pathspec-from-file=<f>` (and the
+   abbreviation `--pathspec-f=`) has no positional, so none of the path conditions fire; it
+   discards the worktree changes of every path listed in `<f>`. Incomplete repair of round-1
+   finding 3. Not executed.
+8. `guard_bash.py:658-660`: SQL is only inspected when `psql` is a separate argument. The
+   repo's own `just psql` recipe shows the pattern that passes:
+   `docker compose -f infra/docker/compose.yaml exec postgres sh -c 'psql -U u -d d -c "drop database x"'`
+   exits 0. `docker … exec <svc> sh -c '<cmd>'` runs any command in the container unchecked.
+   Not executed. (`dropdb` remains the documented residual from round 1.)
+
+**Low**
+
+9. `guard_bash.py:458-460` (git config): the denylist covers `alias.*` and `core.hooksPath`
+   only. `git config include.path /tmp/x.cfg` (the included file can define aliases and
+   `hooksPath`) and `git config clean.requireForce false` (then `git clean -d` deletes
+   untracked files without `-f`) exit 0. Not executed.
+10. `guard_bash.py:428-433`: `git switch -C <existing> <rev>` and `git branch -f <existing>
+    <rev>` reset an existing branch (equivalent to the now-blocked `checkout -B`);
+    `git push --mirror` force-updates every remote ref. All exit 0. Uncertain whether the plan
+    intends these (they are not in its git list, but `checkout -B` was added on the same
+    grounds).
+11. `guard_bash.py:434-439`: `git add ':!x'` (exclude-only pathspec, meaning "everything but
+    x") is not treated as broad. Uncertain impact (staging only).
+
+Documented residuals unchanged (arbitrary programs: `cp`, `sed -i`, `unlink`, `ln`, `dropdb`,
+scripts written to a file then run).
 
 ## Verification
