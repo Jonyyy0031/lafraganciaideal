@@ -1075,3 +1075,37 @@ thread → `run(work)` with save, revoke others, clear) → `unwrap` → 204/422
 Every round 1 finding is resolved and no regression was found. Status → `verify`.
 
 ## Verification
+
+Verification 2026-10-03 (verifier subagent). Code under test: branch `feat/identity-access`, clean worktree.
+
+Suites (run for real):
+- `uv run just check` → green: "404 passed, 3 skipped, 47 deselected", harness "684 passed", compose config ok.
+- `uv run just test-integration` → "46 passed, 1 skipped" (the skip is the in-suite migration round trip).
+
+Migrations:
+- `just db-migrate` clean on dev; `alembic check` → "No new upgrade operations detected."
+- Round trip on the TEST database only: `alembic -x test=true downgrade -1` ("0003 -> 0002") then `upgrade head` ("0002 -> 0003"); current is `0003 (head)`.
+
+Driven against `uv run just api` (port 8100), synthetic users `owner@example.test` and `throttle@example.test`
+(created with `just create-owner --password-stdin`; passwords not recorded; cookies kept in the scratchpad):
+- Login 200 body `{user:{id,email,name:"Dueña Prueba",role:"owner",permissions:["catalog:manage","users:manage"]},expires_at}`, no token in body.
+- `Set-Cookie: fragancia_session=<redacted>; HttpOnly; Max-Age=43200; Path=/api/v1; SameSite=strict`, no `Secure`.
+- `identity.sessions.token_hash` is 64 hex and equals sha256 of the cookie value (so it differs from the cookie).
+- With cookie: `/admin/auth/me` 200, `/admin/brands` 200. Without: both 401 `AUTHENTICATION_REQUIRED`, no `WWW-Authenticate`. Bearer `dev-admin-token` → 401 (also on an instance started with `ADMIN_DEV_TOKEN=dev-admin-token` in its environment: key ignored, 401).
+- Wrong password, unknown email and `"no-at"` → identical 401 `IDENTITY_INVALID_CREDENTIALS`.
+- Throttle: 5 wrong → 401 x5, 6th with the right password → 429 `IDENTITY_TOO_MANY_ATTEMPTS`; another email from the same IP → 401.
+- Two logins: `/admin/auth/sessions` lists 2, one `current: true`. `DELETE` other → 204 and its cookie then 401; random uuid → 404 `IDENTITY_SESSION_NOT_FOUND`.
+- Password: wrong current → 422 `IDENTITY_CURRENT_PASSWORD_WRONG`; 11-char new → 422 `IDENTITY_PASSWORD_TOO_WEAK`; valid change → 204; other session → 401, current → 200; old password → 401, new → 200.
+- Logout → 204 with a `Max-Age=0` cookie; the same cookie then 401.
+- Idle: second instance with `SESSION_IDLE_MINUTES=1`: fresh session 200, after >60 s → 401.
+- `just create-owner` twice → second exits 1 `✘ IDENTITY_EMAIL_TAKEN`; no password in output.
+- OpenAPI served: `securitySchemes` only `APIKeyCookie` (in cookie, name `fragancia_session`). `/api/v1/docs` serves 200.
+- Cleanup: seeded rows removed (5 sessions, 5 throttle rows, 2 users; counts checked first, WHERE limited to my emails and key prefixes). Servers stopped.
+
+Note: one password-change probe used a 12-char string by mistake, so it succeeded (204); I continued with the real scenario afterwards, with no effect on results.
+
+Acceptance criteria: 20/21 verified; 1 partial.
+- NOT VERIFIED: Scalar in the browser (`log_in` then `get_my_account` with no manual auth). Only the pieces were checked: docs page 200, cookie `Path=/api/v1` covers `/api/v1/docs`, only the cookie scheme is declared. No browser was driven.
+- NOT VERIFIED: a real `apps/api/.env` containing `ADMIN_DEV_TOKEN` (the file must not be read); simulated through the process environment instead.
+- NOT VERIFIED: the `Secure` flag in production (unit test only).
+- `plans-scope` still lists 4 out-of-scope files (already documented: `main/http.py`, `tests/unit/test_settings_bounds.py`, and two from `310fe2b`).
