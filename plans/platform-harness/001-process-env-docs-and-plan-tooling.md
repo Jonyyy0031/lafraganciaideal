@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: platform
 min_implementer: mid
 depends_on: []
@@ -304,6 +304,59 @@ None
    job runs `plans-lint`; `CLAUDE.md` lists skills/subagents/hooks (adapters arrive with 002).
 
 ## Test coverage
+
+Baseline (`uv run just check`): green, 487 passed. Layer: tooling (`scripts/**/test_*.py`),
+the only unit-level layer this plan requires; the CI `infra` job is the integration layer.
+`ts` = `scripts/test_*.py`, `tp` = `scripts/plans/test_*.py`.
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| Env file copied only if missing, never overwritten | `infra.py:17` | tooling | `ts/test_bootstrap.py::test_ensure_env_file_*` | CONFIRMED |
+| Missing keys appended, existing values kept, idempotent (Deviation 1) | `infra.py:25` | tooling | `test_ensure_env_keys_*` (4 tests) | CONFIRMED |
+| `read_env` ignores comments/blank lines | `infra.py:48` | tooling | `test_read_env_ignores_comments_and_blank_lines` | CONFIRMED |
+| Test DB ensured in container, idempotent, safe names, uses container credentials, errors propagate | `infra.py:71` | tooling | `test_ensure_database_in_container_*` (5 tests) | CONFIRMED |
+| Bucket ensured; 404/NoSuchBucket = missing; other errors propagate | `infra.py:86` | tooling | `test_ensure_bucket_*` (4 tests) | CONFIRMED |
+| `apps/api/.env.example` carries the S3 settings | step 2 | tooling | `test_the_api_env_example_carries_the_s3_settings` | CONFIRMED |
+| Bootstrap works with no root `.env`, second run reports "already exists" | `bootstrap.py:62-93` | tooling (faked effects) | `test_bootstrap_works_without_a_root_env_and_is_idempotent` | CONFIRMED |
+| Leftover root `.env` is mentioned, never deleted | `bootstrap.py:68` | tooling | `test_bootstrap_mentions_but_never_deletes_a_leftover_root_env` | CONFIRMED |
+| Existing `apps/api/.env` gains S3 keys | `bootstrap.py:65` | tooling | `test_bootstrap_adds_missing_s3_keys_to_an_existing_api_env` | CONFIRMED |
+| Ports printed from compose defaults or exported variables | `bootstrap.py:28,73` | tooling | `test_bootstrap_prints_exported_ports_over_the_compose_defaults` | CONFIRMED |
+| Missing tool / docker daemon down stops with exit 1 | `bootstrap.py:51-59` | tooling | `test_bootstrap_stops_when_*` (2) | CONFIRMED |
+| Dev and test databases migrated | `bootstrap.py:82-83` | tooling | `test_bootstrap_migrates_the_development_and_the_test_database` | CONFIRMED |
+| Compose config valid with no env file | `justfile` `check` | check recipe | `docker compose config --quiet` in `just check` | CONFIRMED |
+| Fresh volume gets `fragancia_test` from the `.sql` | step 1 | integration | `test_a_fresh_postgres_volume_creates_the_test_database` | NOT CONFIRMED (skip; CI `infra` job / verifier) |
+| `POSTGRES_PORT=5544 just up` publishes on 5544 | step 1 | integration | `test_exporting_postgres_port_publishes_postgres_on_that_port` | NOT CONFIRMED (skip) |
+| `just psql` / aborted `just db-reset --test` | `justfile:35,39` | integration | `test_psql_and_db_reset_use_the_containers_own_credentials` | NOT CONFIRMED (skip; touches the dev stack) |
+| Commit scope `harness`; type/scope/length/generic/attribution rules | `commits.py:35-95` | tooling | `ts/test_commits.py` (existing + boundary 100, empty scope/message, generic subjects, attribution in merge) | CONFIRMED |
+| `--file` and `--range` CLI exit codes and output | `commits.py:110-137` | tooling | `test_main_validates_a_message_file`, `test_main_requires_exactly_one_source`, `test_main_checks_every_commit_in_a_range` | CONFIRMED |
+| Frontmatter/sections parsing, YAML errors, date normalization, `is_empty` | `lib.py:96,139` | tooling | `tp/test_lib.py` | CONFIRMED |
+| Plans/initiatives/findings listing excludes templates, README, findings dir | `lib.py:155-195` | tooling | `test_plans_exclude_templates_readmes_findings_and_non_markdown` | CONFIRMED |
+| Owner module (longest prefix), `resolve_ref` zero-pad/cross-initiative | `lib.py:149,198` | tooling | `tp/test_lint.py::test_owner_module_*`, `test_resolve_ref` | CONFIRMED |
+| `declared_files`: wrapped lines, change marker, only inside Steps | `lib.py:210` | tooling | `test_declared_files_*` (3) | CONFIRMED |
+| `declared_files` reads only `Files:` lines | `lib.py:221` (any line containing `files:` counts) | tooling | `tp/test_lib.py::test_a_do_line_mentioning_files_does_not_declare_paths` | GAP (strict xfail) |
+| `reached` follows the pipeline | `lib.py:240` | tooling | `test_reached_follows_the_pipeline_order` | CONFIRMED |
+| Lint structural rules (names, loose/nested plans, numbers, README, frontmatter, YAML) | `lint.py:43-106` | tooling | `test_each_rule_reports_a_precise_problem`, `test_missing_readme_and_frontmatter`, `test_invalid_yaml_is_reported`, `test_a_frontmatter_that_is_not_a_mapping_is_reported` | CONFIRMED |
+| Lint field rules (status, module/owner, tier, depends_on list, superseded_by, deps exist/self/cycle/done) incl. positive cases | `lint.py:108-131,145` | tooling | parametrized rules + `test_dependencies_*`, `test_cycles_*`, `test_superseded_by_is_allowed_*` | CONFIRMED |
+| Sections present/ordered; evidence by status (fail and pass); Out of scope rule | `lint.py:132-142` | tooling | `test_evidence_is_required_by_status`, `test_evidence_present_passes_at_each_status`, `test_out_of_scope_may_be_empty_*` | CONFIRMED |
+| Findings rules (name, YAML, status, module, date, plan link) incl. positive cases | `lint.py:75-96` | tooling | `test_findings_*`, `test_planned_and_resolved_*`, `test_a_finding_*` | CONFIRMED |
+| Lint output `path: message`, exit 1 / 0 | `lint.py:175` | tooling | `test_errors_are_prefixed_*`, `test_main_exits_one_*` | CONFIRMED |
+| Status priority order, bump for unfinished deps, title ≤50, tier/next columns | `status.py:13,38-63` | tooling | `tp/test_status.py` (8 tests) | CONFIRMED |
+| Status hides done/superseded unless `--all`; filter; open findings only when unfiltered | `status.py:75-107` | tooling | `test_done_plans_are_hidden_unless_all`, `test_filtering_by_initiative_*`, `test_only_open_findings_are_listed`, `test_unknown_initiative_fails` | CONFIRMED |
+| Scope: declared/dir/plan/README/findings/hot/migrations/openapi/uv.lock allowed | `scope.py:76-90` | tooling | `test_declared_and_companion_files_are_in_scope`, `test_is_allowed_*` (4) | CONFIRMED |
+| Scope changed set: committed, staged, unstaged, deleted, renames (both paths), untracked, merge-base | `scope.py:44-73` | tooling (temp git repo) | `test_committed_*`, `test_an_unstaged_edit_*`, `test_a_deleted_*`, `test_changes_made_on_the_base_*` | CONFIRMED |
+| Scope output: counts, hot files, declared-unchanged, JSON-quoted NUL-safe paths, exit 0/1 | `scope.py:111-128` | tooling | `test_the_summary_line_*`, `test_paths_with_spaces_*`, `test_declared_but_unchanged_is_reported` | CONFIRMED |
+| Scope git/usage errors exit 2 (bad/missing base, no plan, not a repo, no commits) | `scope.py:61-66,100-109` | tooling | `test_bad_base_*`, `test_missing_plan_*`, `test_a_directory_that_is_not_a_git_repository_*`, `test_a_repository_without_commits_*` | CONFIRMED |
+| `plans-lint` / `plans-status` / `plans-scope` recipes; `check` runs `plans-lint` | `justfile:89-115` | check recipe | `plans-lint` step of `just check` (green on the repo); status/scope exercised via module `main` | CONFIRMED (recipe wiring only via `just check`) |
+
+Added: `scripts/plans/test_lib.py` (new, 1 GAP), additions to `test_lint.py`, `test_status.py`,
+`test_scope.py`, `test_bootstrap.py` (bootstrap `main` with faked effects, 3 NOT CONFIRMED
+skips), `test_commits.py` (CLI + edge cases). Finding in the GAP above: a `- Do:` line
+containing the text `files:` declares its backticked paths, widening scope silently; fix in
+product code belongs to the implementer. Not tested: pull-request template and docs content
+(prose, no behavior). Closing run: see the line below.
+
+Closing `uv run just check`: green, `564 passed, 3 skipped, 15 deselected, 1 xfailed`
+(baseline 487 passed).
 
 ## Review findings
 

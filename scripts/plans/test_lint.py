@@ -157,3 +157,106 @@ def test_declared_files_follow_wrapped_files_lines(tmp_path) -> None:  # noqa: A
         )
     )
     assert declared_files(parse_document(path)) == ["a/b.py", "README.md", "justfile", "docs/"]
+
+
+def test_evidence_present_passes_at_each_status(make_repo: MakeRepo) -> None:
+    for status in ("testing", "review", "verify", "done"):
+        text = plan_text(status=status)
+        assert problems(make_repo, {"catalog-brands/001-x.md": text}) == [], status
+
+
+def test_out_of_scope_may_be_empty_in_draft_and_superseded(make_repo: MakeRepo) -> None:
+    for status, extra in (("draft", ""), ("superseded", "superseded_by: 002")):
+        text = plan_text(status=status, sections={"Out of scope": ""}, extra_frontmatter=extra)
+        assert problems(make_repo, {"catalog-brands/001-x.md": text}) == [], status
+
+
+def test_superseded_by_is_allowed_when_superseded(make_repo: MakeRepo) -> None:
+    text = plan_text(status="superseded", extra_frontmatter="superseded_by: 002")
+
+    assert problems(make_repo, {"catalog-brands/001-x.md": text}) == []
+
+
+def test_dependencies_may_point_to_another_initiative(make_repo: MakeRepo) -> None:
+    plans = {
+        "catalog-brands/001-a.md": plan_text(status="done"),
+        "catalog-x-photos/001-b.md": plan_text(
+            status="implementing", module="catalog-x", depends='["catalog-brands/1"]'
+        ),
+    }
+
+    assert problems(make_repo, plans) == []
+
+
+def test_a_dependency_on_a_done_plan_is_accepted_once_implementing(make_repo: MakeRepo) -> None:
+    plans = {
+        "catalog-brands/001-a.md": plan_text(status="done"),
+        "catalog-brands/002-b.md": plan_text(status="testing", depends='["001"]'),
+    }
+
+    assert problems(make_repo, plans) == []
+
+
+def test_a_frontmatter_that_is_not_a_mapping_is_reported(make_repo: MakeRepo) -> None:
+    found = problems(make_repo, {"catalog-brands/001-x.md": "---\n- a\n---\n\n# x\n"})
+
+    assert "frontmatter must be a YAML mapping" in found
+
+
+FINDING = "---\nstatus: {s}\nmodule: catalog\nfound: 2026-10-02\n{extra}---\n# x\n"
+
+
+def test_planned_and_resolved_findings_accept_an_existing_plan(make_repo: MakeRepo) -> None:
+    extra = "plan: catalog-brands/001\n"
+    findings = {
+        "catalog-a.md": FINDING.format(s="planned", extra=extra),
+        "catalog-b.md": FINDING.format(s="resolved", extra=extra),
+    }
+
+    assert problems(make_repo, {"catalog-brands/001-x.md": plan_text()}, findings) == []
+
+
+def test_a_finding_pointing_to_a_missing_plan_is_reported(make_repo: MakeRepo) -> None:
+    finding = FINDING.format(s="resolved", extra="plan: catalog-brands/007\n")
+
+    found = problems(make_repo, {"catalog-brands/001-x.md": plan_text()}, {"catalog-a.md": finding})
+
+    assert any("status resolved needs plan" in p for p in found)
+
+
+def test_a_finding_with_invalid_yaml_or_no_frontmatter_is_reported(make_repo: MakeRepo) -> None:
+    findings = {"catalog-a.md": "---\nstatus: [unclosed\n---\n# x\n", "catalog-b.md": "# bare\n"}
+
+    found = problems(make_repo, {"catalog-brands/001-x.md": plan_text()}, findings)
+
+    assert any("invalid YAML" in p for p in found)
+    assert any("missing frontmatter" in p for p in found)
+
+
+def test_findings_accept_every_non_linked_status(make_repo: MakeRepo) -> None:
+    findings = {
+        f"catalog-{s}.md": FINDING.format(s=s, extra="") for s in ("open", "deferred", "discarded")
+    }
+
+    assert problems(make_repo, {"catalog-brands/001-x.md": plan_text()}, findings) == []
+
+
+def test_errors_are_prefixed_with_the_relative_path(make_repo: MakeRepo) -> None:
+    root = make_repo({"catalog-brands/001-x.md": plan_text(status="started")})
+
+    assert lint(root)[0].startswith("plans/catalog-brands/001-x.md: ")
+
+
+def test_main_exits_one_with_a_summary_and_zero_when_clean(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from plans import lint as lint_module
+
+    monkeypatch.setattr(lint_module, "lint", lambda: ["plans/x/001-a.md: broken"])
+    assert lint_module.main() == 1
+    err = capsys.readouterr().err
+    assert "✘ plans/x/001-a.md: broken" in err and "1 problem(s)" in err
+
+    monkeypatch.setattr(lint_module, "lint", lambda: [])
+    assert lint_module.main() == 0
+    assert "plans OK" in capsys.readouterr().out

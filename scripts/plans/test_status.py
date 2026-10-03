@@ -69,3 +69,94 @@ def test_done_plans_are_hidden_unless_all(
 def test_unknown_initiative_fails(make_repo: MakeRepo) -> None:
     root = make_repo({"catalog-brands/001-a.md": plan_text()})
     assert main(["nope"], root) == 1
+
+
+def test_every_status_has_its_priority_in_the_documented_order(make_repo: MakeRepo) -> None:
+    statuses = [
+        "superseded", "done", "approved", "implementing", "testing", "review", "verify",
+        "draft", "blocked",
+    ]  # fmt: skip
+    root = make_repo(
+        {f"catalog-brands/{i:03d}-x.md": plan_text(status=s) for i, s in enumerate(statuses, 1)}
+    )
+
+    assert [r[2] for r in rows(load_plans(root))] == [
+        "blocked", "draft", "verify", "review", "testing", "implementing", "approved", "done",
+        "superseded",
+    ]  # fmt: skip
+
+
+def test_an_implementing_plan_with_unfinished_dependencies_is_bumped(make_repo: MakeRepo) -> None:
+    root = make_repo(
+        {
+            "catalog-brands/001-a.md": plan_text(status="draft"),
+            "catalog-brands/002-b.md": plan_text(status="implementing", depends='["001"]'),
+            "catalog-brands/003-c.md": plan_text(status="blocked"),
+        }
+    )
+
+    first, second = rows(load_plans(root))[:2]
+
+    assert (first[0], first[1]) == (0, "catalog-brands/002")
+    assert (second[0], second[1]) == (0, "catalog-brands/003")
+
+
+def test_a_long_title_is_truncated_to_fifty_characters(make_repo: MakeRepo) -> None:
+    text = plan_text().replace("# 001 — A plan", "# " + "t" * 80)
+    root = make_repo({"catalog-brands/001-a.md": text})
+
+    title = rows(load_plans(root))[0][4]
+
+    assert len(title) == 50 and title.endswith("…")
+
+
+def test_rows_carry_tier_and_next_action(make_repo: MakeRepo) -> None:
+    root = make_repo({"catalog-brands/001-a.md": plan_text(status="testing", tier="high")})
+
+    row = rows(load_plans(root))[0]
+
+    assert row[3] == "high" and "write-tests" in row[5]
+
+
+OPEN = "---\nstatus: {s}\nmodule: catalog\nfound: 2026-10-02\n---\n\n# {s} finding\n"
+
+
+def test_filtering_by_initiative_hides_other_initiatives_and_findings(
+    make_repo: MakeRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_repo(
+        {
+            "catalog-brands/001-a.md": plan_text(),
+            "platform-x/001-b.md": plan_text(module="platform"),
+        },
+        {"catalog-thing.md": OPEN.format(s="open")},
+    )
+
+    assert main(["platform-x"], root) == 0
+    out = capsys.readouterr().out
+    assert "platform-x/001" in out
+    assert "catalog-brands/001" not in out and "Open findings" not in out
+
+
+def test_nothing_needs_attention_when_only_done_plans_exist(
+    make_repo: MakeRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_repo({"catalog-brands/001-a.md": plan_text(status="done")})
+
+    assert main([], root) == 0
+    out = capsys.readouterr().out
+    assert "Nothing needs attention." in out and "1 done/superseded hidden" in out
+
+
+def test_only_open_findings_are_listed(
+    make_repo: MakeRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_repo(
+        {"catalog-brands/001-a.md": plan_text()},
+        {"catalog-a.md": OPEN.format(s="open"), "catalog-b.md": OPEN.format(s="discarded")},
+    )
+
+    main([], root)
+
+    out = capsys.readouterr().out
+    assert "open finding" in out and "discarded finding" not in out

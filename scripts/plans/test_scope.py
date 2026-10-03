@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -98,3 +99,101 @@ def test_is_allowed_rules() -> None:
     assert is_allowed("apps/api/openapi.json", declared, PLAN)
     assert not is_allowed("apps/api/migrations/versions/0009.py", declared, PLAN)
     assert not is_allowed("uv.lock", declared, PLAN)
+
+
+def test_is_allowed_directory_prefix_needs_the_whole_segment() -> None:
+    declared = ["docs/recipes/"]
+    assert is_allowed("docs/recipes/new.md", declared, PLAN)
+    assert not is_allowed("docs/recipes-old/new.md", declared, PLAN)
+
+
+def test_is_allowed_openapi_also_follows_a_declared_router() -> None:
+    assert is_allowed("apps/api/openapi.json", ["x/http/router.py"], PLAN)
+
+
+def test_is_allowed_does_not_allow_another_initiatives_readme_or_plan() -> None:
+    assert not is_allowed("plans/other-thing/README.md", [], PLAN)
+    assert not is_allowed("plans/catalog-brands/002-other.md", [], PLAN)
+
+
+def commit(root: Path, message: str) -> None:
+    git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", message)
+
+
+def test_a_committed_change_outside_the_plan_fails(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write(repo, "src/stray.py")
+    git(repo, "add", "-A")
+    commit(repo, "stray")
+
+    assert run(repo) == 1
+    assert "src/stray.py" in capsys.readouterr().err
+
+
+def test_an_unstaged_edit_of_a_tracked_file_fails(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write(repo, "src/tracked.py", "one\n")
+    git(repo, "add", "-A")
+    commit(repo, "track")
+    write(repo, "src/tracked.py", "two\n")
+
+    assert run(repo, "--base=HEAD") == 1
+    assert "src/tracked.py" in capsys.readouterr().err
+
+
+def test_a_deleted_tracked_file_counts_as_a_change(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write(repo, "src/gone.py")
+    git(repo, "add", "-A")
+    commit(repo, "track")
+    (repo / "src/gone.py").unlink()
+
+    assert run(repo, "--base=HEAD") == 1
+    assert "src/gone.py" in capsys.readouterr().err
+
+
+def test_changes_made_on_the_base_after_branching_are_not_counted(repo: Path) -> None:
+    git(repo, "switch", "-q", "main")
+    write(repo, "src/on_main.py")
+    git(repo, "add", "-A")
+    commit(repo, "main moves on")
+    git(repo, "switch", "-q", "feat/x")
+
+    assert run(repo) == 0
+
+
+def test_paths_with_spaces_and_non_ascii_characters_are_reported_intact(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write(repo, "src/with space/ñandú.py")
+
+    assert run(repo) == 1
+    reported = capsys.readouterr().err.splitlines()[1].strip()
+    assert json.loads(reported) == "src/with space/ñandú.py"  # JSON-quoted, not git-escaped
+
+
+def test_the_summary_line_counts_declared_and_changed_files(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write(repo, "justfile")
+
+    run(repo)
+
+    first = capsys.readouterr().out.splitlines()[0]
+    assert first == f'Plan "{PLAN}": 5 declared, 1 changed (base main)'
+
+
+def test_a_directory_that_is_not_a_git_repository_is_a_usage_error(make_repo: MakeRepo) -> None:
+    root = make_repo({"catalog-brands/001-create.md": plan_text(sections={"Steps": STEPS})})
+
+    assert main([PLAN], root) == 2
+
+
+def test_a_repository_without_commits_is_a_usage_error(make_repo: MakeRepo) -> None:
+    root = make_repo({"catalog-brands/001-create.md": plan_text(sections={"Steps": STEPS})})
+    git(root, "init", "-q", "-b", "main")
+
+    assert main([PLAN], root) == 2
