@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: identity
 min_implementer: high
 depends_on: []
@@ -722,6 +722,48 @@ Evidence (2026-10-03):
   (above).
 
 ## Test coverage
+
+Baseline (before any test): `uv run just check` green (236 passed, 3 skipped; harness 684) and
+`uv run just test-integration` 15 passed. Closing: `uv run just check` green (370 passed, 3
+skipped, 42 deselected; harness 684) and `uv run just test-integration` 41 passed, 1 skipped.
+New: 134 unit tests (domain, application, http, adapters) and 26 integration tests plus 1
+skip. No GAP found: every behavior the plan promises that the tester checked is in the code.
+
+Files: `apps/api/tests/unit/identity/` (`conftest.py` builds every use case over the in-memory
+fakes; `test_user_domain.py`, `test_session_domain.py`, `test_create_user.py`, `test_log_in.py`,
+`test_change_password.py`, `test_sessions.py`, `test_resolve_session_actor.py`,
+`test_security_adapters.py`, `test_auth_http.py`) and `apps/api/tests/integration/identity/`
+(`conftest.py`, `test_sql_identity.py`). `tests/support.py` was not changed.
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| Email is trimmed, lowercased; shape rules; 254 limit | `domain/user.py` `Email.create` | domain | `test_user_domain.py::test_email_is_trimmed_and_lowercased`, `::test_invalid_emails`, `::test_email_length_limit_is_254_inclusive` | CONFIRMED |
+| Display name trim, collapse, 2-80 | `domain/user.py` `DisplayName.create` | domain | `test_user_domain.py::test_display_name_is_trimmed_and_inner_whitespace_collapsed`, `::test_invalid_display_names`, `::test_display_name_length_limits_are_inclusive` | CONFIRMED |
+| Password 12-128 characters, kept as typed, `repr` hides it | `domain/user.py` `PlainPassword` | domain | `test_user_domain.py::test_password_limits_are_inclusive_and_it_is_kept_exactly_as_typed`, `::test_weak_passwords`, `::test_a_password_never_shows_in_its_repr` | CONFIRMED |
+| Role permissions (owner both, staff catalog) and new users active | `domain/user.py` `ROLE_PERMISSIONS`, `User` | domain | `test_user_domain.py::test_the_owner_has_every_permission_and_staff_only_the_catalog`, `::test_new_users_are_active_with_both_timestamps_set_to_now`, `::test_changing_the_password_replaces_the_hash_and_stamps_the_time` | CONFIRMED |
+| Session lifetime: absolute expiry, idle deadline, revoked, touch, idempotent revoke, user agent cut at 255 | `domain/session.py` | domain | `test_session_domain.py::*` | CONFIRMED |
+| `CreateUser` validates in order email, name, password; conflict on taken email (case-insensitive); stores a hash | `create_user.py` | application | `test_create_user.py::*` | CONFIRMED |
+| `LogIn` counts the attempt before verifying; the 6th is 429 and nothing is verified | `log_in.py` | application | `test_log_in.py::test_the_attempt_above_the_email_limit_is_rejected_before_the_password_is_checked`, `::test_the_last_attempt_within_the_email_limit_still_works` | CONFIRMED |
+| `LogIn` uses the dummy hash for an unknown or malformed email; same error as a wrong password; inactive user refused | `log_in.py` | application | `test_log_in.py::test_an_unknown_email_gets_the_same_error_and_checks_the_dummy_hash`, `::test_a_malformed_email_...`, `::test_an_inactive_user_...`, `::test_a_wrong_password_...` | CONFIRMED |
+| `LogIn` success clears the email key and gives the IP attempt back; IP limit per IP; window reset; unknown IP key | `log_in.py` | application | `test_log_in.py::test_a_successful_sign_in_clears_...`, `::test_the_ip_limit_...`, `::test_the_counters_start_over_...`, `::test_the_window_still_blocks_...`, `::test_an_unknown_ip_...`, `::test_after_a_successful_sign_in_the_email_has_its_full_allowance_again` | CONFIRMED |
+| `ChangePassword` revokes other sessions and keeps the current one; wrong current and weak new rejected without side effects; unknown user is `LookupError` | `change_password.py` | application | `test_change_password.py::*` | CONFIRMED |
+| `RevokeSession` (other user's, unknown and closed sessions are not found), `RevokeOtherSessions`, `LogOut` idempotent, `GetMyAccount`, `ListMySessions` | `revoke_sessions.py`, `log_out.py`, `my_account.py` | application | `test_sessions.py::*` | CONFIRMED |
+| `ResolveSessionActor`: unknown, revoked, idle, expired, inactive user or missing user -> None; touch only after 60 s; activity extends idle | `resolve_session_actor.py` | application | `test_resolve_session_actor.py::*` | CONFIRMED |
+| argon2id hash and verify (mismatch and unreadable hash return False), dummy hash, token and digest format | `argon2_password_hasher.py`, `secure_session_tokens.py` | application (adapters, no IO) | `test_security_adapters.py::*` | CONFIRMED |
+| Login: 200 body, no token in body, cookie HttpOnly / SameSite=Strict / Path=/api/v1 / Max-Age, `Secure` only when configured | `router.py` `log_in`, `cookies.py` | http | `test_auth_http.py::test_login_returns_the_user_and_the_expiry`, `::test_login_never_puts_the_token_in_the_body`, `::test_login_sets_an_httponly_...`, `::test_the_cookie_is_secure_when_configured` | CONFIRMED |
+| Login 401 (wrong password; unknown and malformed email identical), 429, payload validation 422 | `router.py` | http | `test_auth_http.py::test_a_wrong_password_...`, `::test_unknown_and_malformed_...`, `::test_the_attempt_after_the_email_limit_...`, `::test_a_blocked_email_does_not_block_...`, `::test_login_validates_the_payload_shape` | CONFIRMED |
+| Cookie is the only transport: no cookie, unknown cookie or Bearer header (even with a real token) -> 401 `AUTHENTICATION_REQUIRED`, no `WWW-Authenticate` | `access.py`, `errors.py` | http | `test_auth_http.py::test_without_a_valid_session_cookie_admin_routes_are_401`, `::test_a_bearer_header_does_not_replace_...` | CONFIRMED |
+| The seven operations exist; every admin route is protected | `router.py`, `assert_admin_routes_are_protected` | http | `test_auth_http.py::test_every_identity_admin_operation_is_declared_and_protected` (and the helper in the `client` fixture) | CONFIRMED |
+| Logout 204 clears the cookie and kills the session; password change 204 / 422 codes / others closed; sessions list marks one current; close one 204/404/422; close others | `router.py` | http | `test_auth_http.py::test_logout_...`, `::test_changing_the_password_...`, `::test_a_wrong_current_password_is_422`, `::test_a_new_password_of_11_...`, `::test_lists_my_sessions_...`, `::test_closing_...` | CONFIRMED |
+| Actor without a session (or whose id is not a user UUID) is 403 on session-only routes | `router.py` `current_session`, `current_user` | http | `test_auth_http.py::test_an_actor_without_a_session_is_403_...`, `::test_an_actor_whose_id_is_not_a_user_uuid_...` | CONFIRMED |
+| User round trip, `save` of the password, unique email -> `EmailTaken` inside a savepoint, concurrent `CreateUser` yields one user, DB constraint | `sql_user_repository.py`, `tables.py` | integration | `test_sql_identity.py::test_a_user_round_trips_...`, `::test_saving_a_user_...`, `::test_a_duplicate_email_...`, `::test_concurrent_creation_...`, `::test_the_database_refuses_...` | CONFIRMED |
+| Session round trip, `save`, `revoke_all_for_user` (except, none, already revoked), FK to users, unique token hash | `sql_session_repository.py`, `tables.py` | integration | `test_sql_identity.py::test_a_session_round_trips_...`, `::test_saving_a_session_...`, `::test_revoking_all_...`, `::test_a_session_needs_an_existing_user`, `::test_two_sessions_cannot_share_a_token_hash` | CONFIRMED |
+| Throttle: counts per key, 10 parallel `hit`s give 1..10, window reset at the boundary, `clear`, `give_back` floor at 0, unknown key | `sql_login_throttle.py` | integration | `test_sql_identity.py::test_hits_in_one_window_count_up`, `::test_keys_count_independently`, `::test_parallel_hits_each_see_their_own_count`, `::test_a_hit_after_the_window_...`, `::test_clearing_...`, `::test_giving_back_...` | CONFIRMED |
+| Account queries: permissions by role; sessions filtered by user, revoked, expired, idle (boundary exact) and ordered | `sql_account_queries.py` | integration | `test_sql_identity.py::test_me_derives_...`, `::test_my_sessions_filters_...`, `::test_a_session_idle_exactly_...` | CONFIRMED |
+| Real stack (argon2 + SQL): sign in stores an argon2id hash and a 64-hex digest different from the token; the token resolves to the user; same failure for wrong password and unknown email; 6th attempt blocked; parallel wrong guesses cannot exceed the limit | `log_in.py`, `module.py` | integration | `test_sql_identity.py::test_a_created_user_signs_in_...`, `::test_a_wrong_password_and_an_unknown_email_...`, `::test_the_sixth_attempt_...`, `::test_parallel_wrong_guesses_...` | CONFIRMED |
+| Migration round trip (downgrade -1 / upgrade head) | `migrations/versions/0003_identity_users_and_sessions.py` | integration | `test_sql_identity.py::test_migration_0003_downgrades_and_upgrades_cleanly` | NOT CONFIRMED (skipped: downgrading `fragancia_test` inside the suite would race the other tests; the main session ran it by hand, see Deviations) |
+| `just create-owner` CLI (`main/cli.py`) | `main/cli.py` | none | not in this plan's required layers; exercised by hand by the implementer (Evidence) | NOT CONFIRMED by automated test |
+| `Settings` bounds for the five new variables | `config.py` | none | not covered by a new test (`test_settings.py` was only adjusted in step 11) | NOT CONFIRMED by automated test |
 
 ## Review findings
 
