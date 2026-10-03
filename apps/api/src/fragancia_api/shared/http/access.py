@@ -1,30 +1,36 @@
 """Declared access: every route lives in a `public_router()` or an `admin_router()`.
 
-Admin routers are mounted under `/admin` and require an admin actor resolved from the
-`Authorization: Bearer <token>` header through the `ActorResolver` port. A test walks every
-route to check that nothing under `/admin` escapes this dependency.
+Admin routers are mounted under `/admin` and require an admin actor resolved from the session
+cookie (`fragancia_session`, set by `POST /api/v1/auth/login`) through the `ActorResolver`
+port. A test walks every route to check that nothing under `/admin` escapes this dependency.
 """
 
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import APIKeyCookie
 
 from fragancia_api.shared.application.actor import Actor, ActorResolver
 from fragancia_api.shared.http.errors import AuthenticationRequired, ErrorResponse, Forbidden
 from fragancia_api.shared.http.services import provide
 
-_bearer = HTTPBearer(auto_error=False, description="Admin token")
+SESSION_COOKIE = "fragancia_session"
+
+_cookie = APIKeyCookie(
+    name=SESSION_COOKIE,
+    auto_error=False,
+    description="Session cookie set by POST /api/v1/auth/login",
+)
 
 
 async def require_admin(
     request: Request,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    token: Annotated[str | None, Depends(_cookie)],
     resolver: Annotated[ActorResolver, Depends(provide(ActorResolver))],
 ) -> Actor:
-    if credentials is None:
+    if token is None:
         raise AuthenticationRequired
-    actor = await resolver.resolve(credentials.credentials)
+    actor = await resolver.resolve(token)
     if actor is None:
         raise AuthenticationRequired
     if not actor.is_admin:
@@ -39,7 +45,7 @@ def public_router(**kwargs: Any) -> APIRouter:
 
 
 ADMIN_RESPONSES: dict[int | str, dict[str, Any]] = {
-    401: {"model": ErrorResponse, "description": "Missing or unknown token"},
+    401: {"model": ErrorResponse, "description": "Missing or unknown session"},
     403: {"model": ErrorResponse, "description": "The actor is not an admin"},
 }
 

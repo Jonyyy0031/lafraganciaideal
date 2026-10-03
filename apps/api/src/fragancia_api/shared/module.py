@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from fastapi import APIRouter
 
-from fragancia_api.shared.application.actor import ActorResolver
+from fragancia_api.config import Settings
 from fragancia_api.shared.application.clock import Clock
 from fragancia_api.shared.application.events import EventPublisher, EventSubscriptions
 from fragancia_api.shared.application.transactions import TransactionRunner
@@ -15,14 +15,15 @@ from fragancia_api.shared.infrastructure.database import Database
 
 @dataclass(frozen=True)
 class Platform:
-    """Shared adapters a module may use to build its own."""
+    """Shared adapters a module may use to build its own, plus the application settings
+    (a module reads only the fields it owns, e.g. identity's session lifetimes)."""
 
     database: Database
     transactions: TransactionRunner
     events: EventPublisher
     subscriptions: EventSubscriptions
-    actors: ActorResolver
     clock: Clock
+    settings: Settings
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 API_ROOT = Path(__file__).resolve().parents[2]
@@ -53,13 +53,12 @@ class Settings(DatabaseSettings):
     valkey_url: str
     cors_origins: str = ""
     log_level: str = "INFO"
-    admin_dev_token: SecretStr | None = None
-
-    @model_validator(mode="after")
-    def _check_production(self) -> Self:
-        if self.app_env == "production" and self.admin_dev_token is not None:
-            raise ValueError("ADMIN_DEV_TOKEN is for development only; unset it in production")
-        return self
+    # Back-office sessions and login throttle (identity module).
+    session_idle_minutes: int = Field(default=120, ge=1)
+    session_max_hours: int = Field(default=12, ge=1)
+    login_email_max_attempts: int = Field(default=5, ge=1)
+    login_ip_max_attempts: int = Field(default=50, ge=1)
+    login_window_minutes: int = Field(default=15, ge=1)
 
     @cached_property
     def cors_origin_list(self) -> list[str]:

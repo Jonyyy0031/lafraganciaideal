@@ -76,6 +76,10 @@ db-revision message:
     next=$(printf "%04d" $(( $(ls migrations/versions/[0-9]*.py | wc -l) + 1 )))
     uv run alembic revision --autogenerate --rev-id "$next" -m "$1"
 
+# Create a back-office owner account (asks for the password)
+create-owner *args:
+    cd apps/api && uv run python -m fragancia_api.main.cli create-owner "$@"
+
 # Regenerate the committed OpenAPI document (apps/api/openapi.json) after changing a contract
 openapi:
     uv run python -m fragancia_api.main.openapi

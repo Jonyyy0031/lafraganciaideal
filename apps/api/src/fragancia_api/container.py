@@ -10,13 +10,13 @@ from fastapi import APIRouter
 
 from fragancia_api.config import Settings
 from fragancia_api.modules.catalog.module import module as catalog
+from fragancia_api.modules.identity.module import module as identity
 from fragancia_api.shared.application.actor import ActorResolver
 from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.http.health import HealthChecks
 from fragancia_api.shared.http.services import ServiceRegistry
 from fragancia_api.shared.infrastructure.clock import SystemClock
 from fragancia_api.shared.infrastructure.database import Database, SqlTransactionRunner
-from fragancia_api.shared.infrastructure.dev_token_actor_resolver import DevTokenActorResolver
 from fragancia_api.shared.infrastructure.outbox import (
     EventBus,
     OutboxEventPublisher,
@@ -26,7 +26,7 @@ from fragancia_api.shared.infrastructure.tables import metadata
 from fragancia_api.shared.infrastructure.valkey import ValkeyHealth
 from fragancia_api.shared.module import AppModule, Platform
 
-MODULES: Sequence[AppModule] = (catalog,)
+MODULES: Sequence[AppModule] = (identity, catalog)
 
 __all__ = ["MODULES", "Container", "build_container", "metadata"]
 
@@ -48,23 +48,23 @@ class Container:
 def build_container(settings: Settings, modules: Sequence[AppModule] = MODULES) -> Container:
     database = Database(settings.database_url)
     bus = EventBus()
-    admin_token = settings.admin_dev_token.get_secret_value() if settings.admin_dev_token else None
     platform = Platform(
         database=database,
         transactions=SqlTransactionRunner(database),
         events=OutboxEventPublisher(database),
         subscriptions=bus,
-        actors=DevTokenActorResolver(admin_token),
         clock=SystemClock(),
+        settings=settings,
     )
     valkey = ValkeyHealth(settings.valkey_url)
 
     services = ServiceRegistry()
-    services.add(ActorResolver, platform.actors)  # type: ignore[type-abstract]
     services.add(TransactionRunner, platform.transactions)  # type: ignore[type-abstract]
     services.add(HealthChecks, HealthChecks(database=database.ping, valkey=valkey.ping))
     for module in modules:
         module.register(platform, services)
+    if ActorResolver not in services:
+        raise RuntimeError("No module registered the ActorResolver")
 
     return Container(
         settings=settings,

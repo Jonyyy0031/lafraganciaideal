@@ -1,6 +1,6 @@
 """One place that turns errors into HTTP responses: always `{code, message, details?}`.
 
-- `Err(DomainError)` from a use case → `unwrap()` → status by category (404/409/422).
+- `Err(DomainError)` from a use case → `unwrap()` → status by category (401/404/409/422/429).
 - Invalid input (Pydantic) → 422 `VALIDATION_ERROR` with per-field issues.
 - Missing/unknown credentials → 401 `AUTHENTICATION_REQUIRED`; not allowed → 403 `FORBIDDEN`.
 - Unknown route / method → 404 `NOT_FOUND` / 405 `METHOD_NOT_ALLOWED`.
@@ -23,7 +23,9 @@ from fragancia_api.shared.kernel import (
     InvalidValueError,
     NotFoundError,
     Ok,
+    RateLimitedError,
     Result,
+    UnauthenticatedError,
 )
 
 
@@ -52,6 +54,8 @@ _STATUS_BY_CATEGORY: tuple[tuple[type[DomainError], int], ...] = (
     (ConflictError, 409),
     (InvalidValueError, 422),
     (BusinessRuleViolationError, 422),
+    (UnauthenticatedError, 401),
+    (RateLimitedError, 429),
 )
 
 _HTTP_CODES = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
@@ -96,9 +100,7 @@ def install_error_handlers(app: FastAPI) -> None:
         return error_response(422, "VALIDATION_ERROR", "Invalid request", {"issues": issues})
 
     async def authentication_required(_: Request, __: Exception) -> JSONResponse:
-        response = error_response(401, "AUTHENTICATION_REQUIRED", "Authentication required")
-        response.headers["WWW-Authenticate"] = "Bearer"
-        return response
+        return error_response(401, "AUTHENTICATION_REQUIRED", "Authentication required")
 
     async def forbidden(_: Request, __: Exception) -> JSONResponse:
         return error_response(403, "FORBIDDEN", "You are not allowed to perform this action")

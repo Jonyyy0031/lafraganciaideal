@@ -86,6 +86,7 @@ name = Module layers point inwards (module -> http | infrastructure -> applicati
 type = layers
 containers =
     fragancia_api.modules.catalog
+    fragancia_api.modules.identity
 layers =
     module
     http | infrastructure
