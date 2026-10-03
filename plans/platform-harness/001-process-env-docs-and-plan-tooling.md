@@ -1,5 +1,5 @@
 ---
-status: review
+status: testing
 module: platform
 min_implementer: mid
 depends_on: []
@@ -302,6 +302,17 @@ None
    `apps/api/.env`. One example in `pull-requests.md` corrected (savepoint backs the pre-check).
 7. **Also touched**: `pyproject.toml` ruff ignores now cover `scripts/**/test_*.py`; CI quality
    job runs `plans-lint`; `CLAUDE.md` lists skills/subagents/hooks (adapters arrive with 002).
+8. **Tester files not declared in step 13** — the tester added `scripts/plans/conftest.py`
+   (shared fixtures, written with the first tests) and `scripts/plans/test_lib.py`; both are
+   tests of this plan's tooling (review finding 3).
+9. **Repairs after review (2026-10-02)** — review → implementing: finding 1, `Files:` entries
+   only start at a line that begins with `Files:` (`lib._FILES_ENTRY`); the strict-xfail GAP
+   test became a regular regression test. Finding 2, docs mark what arrives with plan 002.
+   Finding 4, README explains that moving a port also needs the URLs in `apps/api/.env`.
+   Finding 5, lint compares scalar fields as text (`_scalar`), no `TypeError`. Finding 6,
+   `plans-scope` allows only migrations that did not exist at the merge-base. Nits: wrapped
+   `Files:` lines stop only at `N. ` steps; `## ` inside code fences no longer splits
+   sections; `just db-reset` rejects anything but no flag or `--test` (exit 2).
 
 ## Test coverage
 
@@ -359,5 +370,78 @@ Closing `uv run just check`: green, `564 passed, 3 skipped, 15 deselected, 1 xfa
 (baseline 487 passed).
 
 ## Review findings
+
+Reviewer pass, 2026-10-02, diff `origin/main...HEAD` (7 commits, `186f152..794d18c`). Untracked
+plan-002 files (`.claude/`, `scripts/harness/`, plan 002) excluded from the review.
+
+**Checklist: FAILED** (2 items).
+
+- [ ] `plans-scope --base origin/main`: exit 1. Besides the expected plan-002 files it flags
+      `scripts/plans/conftest.py` and `scripts/plans/test_lib.py`, committed in `794d18c` but
+      declared on no `Files:` line (step 13 lists only `test_lint/status/scope.py`) and not
+      recorded as a deviation. Hot file `docs/modules.json`: declared in step 9; the only edit
+      extends the `$comment` string (no registry entry touched) — acceptable.
+- [x] `uv run just check`: green (`564 passed, 3 skipped, 15 deselected, 1 xfailed`; plans OK).
+- [x] `test-integration`: not applicable (no `apps/api` infrastructure/tables/migrations).
+- [x] API checklist items (domain, CQRS, contracts, Result codes, Money/Clock, migrations,
+      routes, wiring): not applicable — no `apps/api` source changed.
+- [x] No secrets: only development defaults already in compose/`.env.example`.
+- [x] Deviations honest: spot-checked 1 (`infra.py:25 ensure_env_keys`), 4
+      (`platform-api-foundation/002` has `module: platform`) and 5 (002 is `approved`).
+- [ ] Docs accurate vs. the repo: commands from plan 002 are presented as existing (major 2).
+- [x] PR template has the six sections in order + checklist; no PR opened yet, so the body
+      check is deferred to the PR.
+- [x] Commits: convention followed, no AI attribution in the 7 messages.
+
+### Major
+
+1. **`declared_files` widens scope from any line containing `files:`** —
+   `scripts/plans/lib.py:221` (`"files:" in line.lower()`). Failure: a step with
+   `- Do: update the files: \`evil/x.py\` and \`README.md\`` declares both paths (reproduced:
+   `['a/b.py', 'evil/x.py', 'README.md']`), so `plans-scope` passes changes the plan never
+   listed — fail-open on the reviewer's scope gate. Should match only an entry that starts
+   with `Files:` (optionally after `- `). Strict xfail
+   `tp/test_lib.py::test_a_do_line_mentioning_files_does_not_declare_paths` already pins it.
+2. **Docs present plan-002 commands/hooks as existing** — the plan's Out of scope requires
+   them marked "added by plan 002", and the acceptance criterion says "commands that exist in
+   this repo". `harness-sync`, `harness-check`, `test-harness` are not justfile recipes and
+   `just check` runs neither; `.claude/` is untracked on this branch. Unmarked at:
+   `AGENTS.md:89,95`; `CLAUDE.md:17` ("Active hooks"); `docs/harness/workflow.md:223,236,239`;
+   `docs/harness/roles/reviewer.md:18` ("check passes (… hooks, harness)");
+   `docs/harness/HARNESS.md:64,71` ("in `just check`"; the only disclaimer is at :49-50);
+   `docs/harness/security.md:17`; `docs/harness/conventions/testing.md:30,78`. Failure: if
+   001 merges before 002, a reader runs `uv run just harness-sync` → "Justfile does not
+   contain recipe", and believes `just check` covers hooks/adapters when it does not.
+
+### Minor
+
+3. **Scope out-of-scope: tester files undeclared** — see checklist; add
+   `scripts/plans/conftest.py` (create) and `scripts/plans/test_lib.py` (create) to step 13 or
+   record a deviation, so `plans-scope` reports only plan-002 files.
+4. **Exported port overrides break bootstrap** — `scripts/bootstrap.py:73,82-93` +
+   `README.md:41`, `AGENTS.md:99-100`. Failure: `POSTGRES_PORT=5544 uv run just bootstrap`
+   binds 5544 and prints it, but alembic uses `DATABASE_URL` (5433) from `apps/api/.env` →
+   connection refused (or migrates whatever else listens on 5433). Same for
+   `VALKEY_PORT`/`S3_PORT`. Docs should say the override must also be mirrored in
+   `apps/api/.env` (or bootstrap should warn when they differ).
+5. **Lint crashes on a non-scalar `module`** — `scripts/plans/lint.py:112` (and `:89` for
+   findings): `module: [platform]` → `TypeError: unhashable type: 'list'` traceback instead
+   of a `where: message` line (reproduced). Fail-closed, but not the precise message the
+   plan promises.
+6. **Migration allowance broader than documented** — `scripts/plans/scope.py:84`: any path
+   under `apps/api/migrations/versions/` is allowed when a `tables.py` is declared, including
+   edits/deletions of existing migrations; `conventions/plans.md` says "new". Failure: editing
+   `0001_*.py` passes scope. Either check the git status is `A` or fix the doc.
+
+### Nit
+
+7. `scripts/plans/lib.py:223` — a wrapped `Files:` continuation line starting with a digit
+   ends the entry, dropping its paths (fail-closed: shows as out of scope).
+8. `scripts/plans/lib.py:122` — `## ` lines inside fenced code blocks start a new section;
+   a fenced example inside `## Steps` would truncate the Files parsed after it.
+9. `justfile:44` — `db-reset` treats any flag other than `--test` (typo `--tset`) as the dev
+   database; the typed-name confirmation still protects it.
+
+Status left at `review`: findings 1–6 need product/plan changes (repair handoff).
 
 ## Verification

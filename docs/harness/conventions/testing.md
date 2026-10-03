@@ -27,7 +27,7 @@ worse than no test: false confidence that breaks on the first refactor.
 | application | `apps/api/tests/unit/<m>/test_<command>.py`                 | use cases with in-memory adapters + fakes            | `uv run just check`            |
 | http        | `apps/api/tests/unit/<m>/test_*_http.py`                    | status codes, error `code`s, validation, access, wiring | `uv run just check`         |
 | integration | `apps/api/tests/integration/<m>/` (`@pytest.mark.integration`) | SQL adapters, constraints, outbox against `fragancia_test` | `uv run just test-integration` |
-| tooling     | `scripts/test_*.py`, `scripts/**/test_*.py`                 | repo tooling (bootstrap, commits, plans, hooks, harness) | `uv run just check`         |
+| tooling     | `scripts/test_*.py`, `scripts/**/test_*.py`                 | repo tooling (bootstrap, commits, plans; hooks and harness from plan 002) | `uv run just check`         |
 | e2e         | not set up yet                                              | user flows in a browser                              | —                              |
 
 - **http** tests build the app with `build_app(services, routers)` from
@@ -75,7 +75,7 @@ E2E infrastructure must be added by a plan before any plan may require the e2e l
    domain/application/http tests.
 5. Fixture ids or data that collide across tests (per-test data, fresh in-memory stores).
 6. Running a malicious or destructive command to prove a hook blocks it: hook tests hand the
-   command to the guard process as inert text (`just test-harness`).
+   command to the guard process as inert text (`just test-harness`, plan 002).
 
 ## Execution budget
 

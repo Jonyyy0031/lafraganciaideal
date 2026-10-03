@@ -73,7 +73,16 @@ def changed_files(base: str, root: Path) -> set[str]:
     return paths
 
 
-def is_allowed(path: str, declared: list[str], plan_path: str) -> bool:
+def migrations_at_base(base: str, root: Path) -> set[str]:
+    """Migration files that already existed where the branch started: never editable."""
+    merge_base = git(["merge-base", base, "HEAD"], root).strip()
+    listing = git(["ls-tree", "-r", "--name-only", "-z", merge_base, "--", MIGRATIONS], root)
+    return {p for p in listing.split("\0") if p}
+
+
+def is_allowed(
+    path: str, declared: list[str], plan_path: str, existing_migrations: set[str] | None = None
+) -> bool:
     if path in declared or any(d.endswith("/") and path.startswith(d) for d in declared):
         return True
     initiative = plan_path.rsplit("/", 1)[0]
@@ -81,8 +90,10 @@ def is_allowed(path: str, declared: list[str], plan_path: str) -> bool:
         return True
     if path.startswith(f"{PLANS_DIR}/{FINDINGS_DIR}/") or path in HOT_FILES:
         return True
-    if path.startswith(MIGRATIONS) and any(
-        d.endswith("infrastructure/tables.py") for d in declared
+    if (
+        path.startswith(MIGRATIONS)
+        and path not in (existing_migrations or set())  # only NEW migrations
+        and any(d.endswith("infrastructure/tables.py") for d in declared)
     ):
         return True
     if path == OPENAPI and any(d.endswith(("contracts.py", "http/router.py")) for d in declared):
@@ -104,6 +115,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     declared = declared_files(parse_document(plan_file))
     try:
         changed = changed_files(args.base, root)
+        existing = migrations_at_base(args.base, root)
     except GitError as error:
         print(f"✘ {error}", file=sys.stderr)
         return 2
@@ -118,7 +130,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     unchanged = sorted(d for d in declared if not d.endswith("/") and d not in changed)
     if unchanged:
         print("Declared but unchanged: " + ", ".join(map(q, unchanged)))
-    outside = sorted(p for p in changed if not is_allowed(p, declared, plan_path))
+    outside = sorted(p for p in changed if not is_allowed(p, declared, plan_path, existing))
     if outside:
         print("✘ Out of scope:", file=sys.stderr)
         for path in outside:

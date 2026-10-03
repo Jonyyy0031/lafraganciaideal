@@ -39,6 +39,9 @@ psql *args:
 db-reset *flags:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--test" ) ]]; then
+        echo "Usage: just db-reset [--test]"; exit 2
+    fi
     user=$({{ compose }} exec -T postgres printenv POSTGRES_USER)
     db=$({{ compose }} exec -T postgres printenv POSTGRES_DB)
     if [[ "${1:-}" == "--test" ]]; then db="fragancia_test"; fi

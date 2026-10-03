@@ -33,6 +33,12 @@ from plans.lib import (
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+def _scalar(frontmatter: dict[str, object], key: str) -> str | None:
+    """The field as text; lists/maps become their repr so membership checks never crash."""
+    value = frontmatter.get(key)
+    return None if value is None else value if isinstance(value, str) else repr(value)
+
+
 def lint(root: Path = ROOT) -> list[str]:
     errors: list[str] = []
     modules = load_registry(root)
@@ -83,10 +89,10 @@ def lint(root: Path = ROOT) -> list[str]:
         if fm is None:
             err(where, "missing frontmatter (copy plans/_FINDING.md)")
             continue
-        status = fm.get("status")
+        status = _scalar(fm, "status")
         if status not in FINDING_STATUSES:
             err(where, f"status must be one of {', '.join(FINDING_STATUSES)}")
-        if fm.get("module") not in modules:
+        if _scalar(fm, "module") not in modules:
             err(where, f"module {fm.get('module')!r} is not in docs/modules.json")
         if not _DATE.match(str(fm.get("found", ""))):
             err(where, "found must be a date YYYY-MM-DD")
@@ -105,15 +111,15 @@ def _lint_plan(plan: Plan, by_ref: dict[str, Plan], modules: set[str], err) -> N
     if fm is None:
         err(plan.path, "missing frontmatter (copy plans/_TEMPLATE.md)")
         return
-    status = fm.get("status")
+    status = _scalar(fm, "status")
     if status not in STATUSES:
         err(plan.path, f"status must be one of {', '.join(STATUSES)}")
-    module = fm.get("module")
+    module = _scalar(fm, "module")
     if module not in modules:
-        err(plan.path, f"module {module!r} is not in docs/modules.json")
+        err(plan.path, f"module {fm.get('module')!r} is not in docs/modules.json")
     elif module != owner_module(plan.initiative, modules):
         err(plan.path, f"module {module!r} does not own initiative {plan.initiative!r}")
-    if fm.get("min_implementer") not in TIERS:
+    if _scalar(fm, "min_implementer") not in TIERS:
         err(plan.path, f"min_implementer must be one of {', '.join(TIERS)}")
     depends = fm.get("depends_on", [])
     if not isinstance(depends, list):

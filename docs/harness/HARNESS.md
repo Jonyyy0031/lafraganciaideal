@@ -61,14 +61,14 @@ session, any tool, any model, or a human reads a plan's `status:` and the routin
 | Layer and module boundaries                                                 | `just arch` (import-linter, `apps/api/.importlinter`) |
 | Plans are well-formed, statuses coherent                                    | `just plans-lint` (in `just check`)               |
 | Diff stays inside the plan's file list                                      | `just plans-scope <plan>` (reviewer runs it)      |
-| Adapters match their role docs                                              | `just harness-check` (in `just check`)            |
+| Adapters match their role docs                                              | `just harness-check` (in `just check`; plan 002)  |
 | Known destructive shell/git/db/docker forms (registered Claude hook only)   | `.claude/hooks/guard_bash.py` (+ its tests)       |
 | Protected paths through registered edit hooks (not arbitrary programs)      | `.claude/hooks/guard_files.py`                    |
 | Secrets not read through the registered Read hook                           | `.claude/hooks/guard_read.py`                     |
 | Formatting of edited Python files                                           | `.claude/hooks/format_file.py` (ruff), pre-commit |
 | Commit format, registry scopes, no AI attribution, no generic subjects      | `scripts/commits.py` (`commit-msg` hook + CI `commits` job) |
 | Explicit staging only (no `git add -A` / `.` / `-u` / `commit -a`)          | `.claude/hooks/guard_bash.py`                     |
-| Hook programs keep blocking what they must block                            | `just test-harness` (in `just check`)             |
+| Hook programs keep blocking what they must block                            | `just test-harness` (in `just check`; plan 002)   |
 
 Codex does not run Claude hooks. That is why its generated profiles carry the destructive
 rules as text. `just test-harness` tests guard behavior with inert payloads; it does not

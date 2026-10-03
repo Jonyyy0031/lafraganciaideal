@@ -38,7 +38,10 @@ env file, `apps/api/.env`; compose needs none (its defaults are inline, as in we
 ## Local services
 
 All ports bind to `127.0.0.1` only. Defaults differ from other local projects so they can run
-side by side; override one by exporting it, e.g. `POSTGRES_PORT=5544 uv run just up`.
+side by side; override one by exporting it, e.g. `POSTGRES_PORT=5544 uv run just up`. Compose
+reads only the exported variables: when you move PostgreSQL, Valkey or S3 to another port,
+update the matching URLs in `apps/api/.env` too (`DATABASE_URL`, `DATABASE_URL_TEST`,
+`VALKEY_URL`, `S3_ENDPOINT_URL`) — the API, Alembic and bootstrap read them from there.
 
 | Service    | Address                                    | Notes                                            |
 | ---------- | ------------------------------------------ | ------------------------------------------------ |

@@ -55,6 +55,9 @@ _COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _BACKTICKED = re.compile(r"`([^`]+)`")
 # A backticked token followed by a change marker is a path even without `/` or `.` (justfile).
 _MARKED = re.compile(r"`([^`\s]+)`\s*\((?:create|modify|delete)\)")
+_FILES_ENTRY = re.compile(r"^(?:-\s+)?files:", re.IGNORECASE)
+_STEP = re.compile(r"^\d+\.\s")
+_FENCE = re.compile(r"^\s*(```|~~~)")
 
 
 class FrontmatterError(ValueError):
@@ -115,11 +118,14 @@ def parse_document(path: Path) -> Document:
     order: list[str] = []
     current: str | None = None
     lines: list[str] = []
+    in_fence = False
     for line in body.splitlines():
-        if not title and line.startswith("# "):
+        if _FENCE.match(line):
+            in_fence = not in_fence
+        if not in_fence and not title and line.startswith("# "):
             title = line[2:].strip()
             continue
-        if line.startswith("## "):
+        if not in_fence and line.startswith("## "):
             if current is not None:
                 sections[current] = "\n".join(lines)
             current = line[3:].strip()
@@ -210,17 +216,18 @@ def resolve_ref(ref: object, initiative: str) -> str | None:
 def declared_files(plan: Document) -> list[str]:
     """Backticked paths on `Files:` entries inside `## Steps`.
 
-    An entry starts at a line containing `Files:` and continues on the following wrapped lines
-    until the next bullet (`- Do:`), numbered step or blank line.
+    An entry starts at a line whose text begins with `Files:` (optionally as a `- ` bullet) and
+    continues on the following wrapped lines until the next bullet (`- Do:`), numbered step or
+    blank line. A `Files:` mention anywhere else (e.g. in a `- Do:` line) declares nothing.
     """
     files: list[str] = []
     entry_lines: list[str] = []
     in_entry = False
     for line in plan.sections.get("Steps", "").splitlines():
         stripped = line.strip()
-        if "files:" in line.lower():
+        if _FILES_ENTRY.match(stripped):
             in_entry = True
-        elif in_entry and (not stripped or stripped.startswith("- ") or stripped[:1].isdigit()):
+        elif in_entry and (not stripped or stripped.startswith("- ") or _STEP.match(stripped)):
             in_entry = False
         if in_entry:
             entry_lines.append(line)

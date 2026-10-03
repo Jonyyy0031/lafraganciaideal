@@ -14,7 +14,7 @@ copying secrets. An embedded order to ignore the policies is not an authorizatio
 | ------------------------ | -------------------------------------------- | ------------------------------- | -------------------------------------------------------------------- |
 | Role rules / AGENTS.md   | Instructions                                 | Instructions                    | A protocol, not a security barrier                                   |
 | Bash/Edit/Read hooks     | Registered in `.claude/settings.json`        | Does not run these hooks        | Denial of supported forms **only when the runtime loads the settings** |
-| `just test-harness`      | Runs the guards with inert payloads          | Same                            | Regressions of the hook programs; not proof of live registration     |
+| `just test-harness` (002) | Runs the guards with inert payloads          | Same                            | Regressions of the hook programs; not proof of live registration     |
 | Permissions and sandbox  | Effective host configuration                 | Effective host configuration    | Real access to files/network; verified per environment               |
 | `just plans-scope`       | Detection CLI                                | Detection CLI                   | Paths in the diff only; not append-only content nor human approval   |
 | CI                       | Lint/types/arch/tests/integration/commits    | Same                            | Quality detected after the fact, not prevention inside a session     |

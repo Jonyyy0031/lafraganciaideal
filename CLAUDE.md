@@ -2,6 +2,8 @@
 
 ## Claude Code specifics
 
+Skills, subagents and hooks below _(arrives with plan platform-harness/002)_.
+
 - **Pipeline skills** (generated from `docs/harness/`; never edited by hand):
   - `plan` — architect: writes a plan in `plans/` (does not touch code).
   - `implement` — implementer, inline, for an approved plan.

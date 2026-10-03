@@ -114,14 +114,7 @@ def test_declared_files_ignore_files_lines_outside_steps(tmp_path: Path) -> None
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "GAP: plan 001 'Files: lines' (lib summary) - declared_files treats ANY line containing "
-        "'files:' (lib.py:221), e.g. a '- Do:' line, as a Files entry, so a path mentioned there "
-        "is wrongly declared and scope lets it through"
-    ),
-)
+# Was a strict-xfail GAP (review finding 1 of plan 001); fixed in lib._FILES_ENTRY.
 def test_a_do_line_mentioning_files_does_not_declare_paths(tmp_path: Path) -> None:
     text = "1. **A**\n   - Files: `a/b.py` (modify)\n   - Do: update the files: `c/d.py`\n"
 

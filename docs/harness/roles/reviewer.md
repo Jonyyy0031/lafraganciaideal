@@ -15,7 +15,7 @@ Read-only: no `git stash` / `checkout --` / `restore` / `clean`.
 - [ ] `uv run just plans-scope <plan>` passes: every changed file is in the plan or an allowed
       file, and hot-file changes (`container.py`, `docs/modules.json`, `.importlinter`) are
       genuinely append-only (manual check).
-- [ ] `uv run just check` passes (lint, types, arch, tests, plans, hooks, harness).
+- [ ] `uv run just check` passes (lint, types, arch, tests, plans; hooks and harness once plan 002 is done).
 - [ ] If `infrastructure/`, tables or migrations changed: `uv run just test-integration` passes.
 - [ ] Business rules live in `domain/`; routers, mappers, query adapters and UI contain none.
 - [ ] CQRS-lite: commands go aggregate → repository inside `TransactionRunner.run(...)` and

@@ -233,10 +233,10 @@ plan's `min_implementer`: it preserves the plan's tier and dispatches the cost-a
 uv run just plans-status                    # what needs attention, computed from frontmatter
 uv run just plans-lint                      # plan format + status/evidence coherence (in just check)
 uv run just plans-scope plans/x-y/001-z.md  # diff vs. the plan's file list (--base main by default)
-uv run just check                           # lint, types, arch, unit+http+tooling tests, plans, hooks, harness
+uv run just check                           # lint, types, arch, unit+http+tooling tests, plans (+ hooks, harness: plan 002)
 uv run just test-integration                # SQL adapters against fragancia_test (needs just up; migrates it)
 uv run just openapi                         # regenerate apps/api/openapi.json after a contract change
-uv run just harness-sync                    # regenerate agent/skill adapters from the role docs
+uv run just harness-sync                    # regenerate agent/skill adapters (plan 002)
 ```
 
 ## Repair handoff
