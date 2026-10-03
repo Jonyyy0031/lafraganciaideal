@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from fragancia_api.shared.contracts import Page
+
 
 class CreateBrandRequest(BaseModel):
     # Business rules (length, characters) live in the domain; this only bounds the payload.
@@ -31,3 +33,7 @@ class AdminBrand(BaseModel):
     slug: str
     is_active: bool
     created_at: datetime
+
+
+class AdminBrandPage(Page[AdminBrand]):
+    """One page of the admin brand list."""

@@ -1,6 +1,5 @@
 from fragancia_api.modules.catalog.application.ports import BrandQueries
-from fragancia_api.modules.catalog.contracts import AdminBrand, PublicBrand
-from fragancia_api.shared.contracts import Page
+from fragancia_api.modules.catalog.contracts import AdminBrandPage, PublicBrand
 
 
 class ListPublicBrands:
@@ -19,5 +18,5 @@ class ListAdminBrands:
     def __init__(self, queries: BrandQueries) -> None:
         self._queries = queries
 
-    async def execute(self, *, page: int, size: int) -> Page[AdminBrand]:
+    async def execute(self, *, page: int, size: int) -> AdminBrandPage:
         return await self._queries.list_all(page=page, size=size)

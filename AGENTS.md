@@ -75,6 +75,7 @@ pyproject.toml   uv workspace root: repo tooling + dev tools; apps/api is a memb
 | Run the API / the worker             | `just api` (port 8100) / `just worker`    |
 | Migrations                           | `just db-migrate [--test]` · `just db-revision "msg"` |
 | Types / architecture rules           | `just typecheck` / `just arch`            |
+| Regenerate the committed OpenAPI     | `just openapi` (after any contract change) |
 | Unit / integration tests             | `just test` / `just test-integration`     |
 | **Full verification (mandatory)**    | `just check`                              |
 | Check a range of commit messages     | `uv run scripts/commits.py --range a..b`  |

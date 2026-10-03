@@ -7,7 +7,7 @@ Commands run from the repository root with `uv run just <recipe>`.
 
 ```bash
 uv run just bootstrap        # once: services, apps/api/.env, migrations on both databases
-uv run just api              # http://127.0.0.1:8100/api/v1/docs (auto-reload)
+uv run just api              # http://127.0.0.1:8100/api/v1/docs (Scalar, auto-reload)
 uv run just worker           # background jobs: relays the outbox every 2 seconds
 ```
 
@@ -56,6 +56,17 @@ New module or use case? Follow [docs/recipes/](../../docs/recipes/) and copy `mo
   404/409/422; invalid input is 422 `VALIDATION_ERROR`; unexpected is 500 `INTERNAL_ERROR`.
 - **Boundaries** are checked by `uv run just arch` (`.importlinter`). Do not work around a
   broken contract: explain why and propose an ADR.
+
+## OpenAPI and the API reference
+
+- `apps/api/openapi.json` is **committed**: every contract change shows up in the PR diff and
+  phase 3 generates the web client from it. After changing a request/response model or a
+  route, run `uv run just openapi`; `just check` fails while the file is stale.
+- Operation ids are the route function names (`list_brands`) — keep them unique and readable.
+  List responses use a concrete page class (`AdminBrandPage(Page[AdminBrand])`).
+- `/api/v1/docs` serves **Scalar** outside production (script pinned in
+  `shared/http/reference.py`). Click *Authorize*, choose *HTTPBearer* and paste
+  `ADMIN_DEV_TOKEN` to call admin routes; the token is remembered in the browser.
 
 ## Settings
 

@@ -1,9 +1,8 @@
 """In-memory adapters for unit tests. They honor the same contracts as the SQL ones."""
 
-from fragancia_api.modules.catalog.contracts import AdminBrand, PublicBrand
+from fragancia_api.modules.catalog.contracts import AdminBrand, AdminBrandPage, PublicBrand
 from fragancia_api.modules.catalog.domain.brand import Brand
 from fragancia_api.modules.catalog.domain.errors import BrandAlreadyExists
-from fragancia_api.shared.contracts import Page
 from fragancia_api.shared.kernel import Err, Ok, Result
 
 
@@ -32,7 +31,7 @@ class InMemoryBrands:
             if b.is_active
         ]
 
-    async def list_all(self, *, page: int, size: int) -> Page[AdminBrand]:
+    async def list_all(self, *, page: int, size: int) -> AdminBrandPage:
         everything = self._sorted()
         chunk = everything[(page - 1) * size : page * size]
         items = [
@@ -45,4 +44,4 @@ class InMemoryBrands:
             )
             for b in chunk
         ]
-        return Page[AdminBrand](items=items, total=len(everything), page=page, size=size)
+        return AdminBrandPage(items=items, total=len(everything), page=page, size=size)

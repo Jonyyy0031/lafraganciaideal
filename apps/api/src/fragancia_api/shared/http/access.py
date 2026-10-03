@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from fragancia_api.shared.application.actor import Actor, ActorResolver
-from fragancia_api.shared.http.errors import AuthenticationRequired, Forbidden
+from fragancia_api.shared.http.errors import AuthenticationRequired, ErrorResponse, Forbidden
 from fragancia_api.shared.http.services import provide
 
 _bearer = HTTPBearer(auto_error=False, description="Admin token")
@@ -38,7 +38,16 @@ def public_router(**kwargs: Any) -> APIRouter:
     return APIRouter(**kwargs)
 
 
+ADMIN_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": ErrorResponse, "description": "Missing or unknown token"},
+    403: {"model": ErrorResponse, "description": "The actor is not an admin"},
+}
+
+
 def admin_router(*, prefix: str = "", **kwargs: Any) -> APIRouter:
     """Routes for the back office: mounted under /admin and restricted to admins."""
     dependencies = [Depends(require_admin), *kwargs.pop("dependencies", [])]
-    return APIRouter(prefix=f"/admin{prefix}", dependencies=dependencies, **kwargs)
+    responses = {**ADMIN_RESPONSES, **kwargs.pop("responses", {})}
+    return APIRouter(
+        prefix=f"/admin{prefix}", dependencies=dependencies, responses=responses, **kwargs
+    )

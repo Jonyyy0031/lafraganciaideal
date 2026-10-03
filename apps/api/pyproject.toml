@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.142.2",
     "psycopg[binary]>=3.3.6",
     "pydantic-settings>=2.15.0",
+    "scalar-fastapi>=1.9.1",
     "sqlalchemy[asyncio]>=2.1.2",
     "structlog>=26.1.0",
     "uvicorn[standard]>=0.54.0",

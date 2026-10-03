@@ -22,14 +22,17 @@ Model: `modules/catalog/application/commands/create_brand.py`.
    use case, `unwrap(result)`, response model out. Admin actions go in `admin_router`.
    Document error codes in the docstring and `responses=`.
 6. **Wire** it in `module.py` (`services.add(UseCase, UseCase(...))`).
+7. **Contract changed?** Run `uv run just openapi` and commit `apps/api/openapi.json`
+   (`just check` fails while it is stale). The route function name is the operation id.
 
 ## Query (reads only)
 
 Model: `modules/catalog/application/queries/list_brands.py` + `sql_brand_queries.py`.
 
 1. Response model in `contracts.py`.
-2. Method on the `XxxQueries` port (`application/ports.py`) returning that model (or
-   `Page[...]` from `fragancia_api.shared.contracts`).
+2. Method on the `XxxQueries` port (`application/ports.py`) returning that model (for lists,
+   a concrete subclass of `Page[T]` from `fragancia_api.shared.contracts`, e.g.
+   `class AdminBrandPage(Page[AdminBrand])`, so the OpenAPI schema has a readable name).
 3. SQL implementation with `async with self._database.reader()`, selecting only the needed
    columns; in-memory implementation for unit tests.
 4. Thin use case + route (`public_router` or `admin_router`) + wiring.
