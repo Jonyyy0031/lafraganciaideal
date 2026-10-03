@@ -7,8 +7,10 @@ JSON payload on stdin, exactly as Claude Code runs it.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -639,40 +641,19 @@ def test_guard_bash_allows_safe_variants(command: str) -> None:
         "python3 -Bc 'x'",
     ],
 )
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: plan 002 Context 'no inline code for python (-c, -e, -)': INLINE_FLAG "
-    "(guard_bash.py:35) only matches a flag that starts with -c/-e/-p, so combined short "
-    "flags such as -Sc run inline code",
-)
 def test_guard_bash_blocks_inline_python_in_combined_flags(command: str) -> None:
     assert bash(command) == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: plan 002 Context 'clean -f': _check_git (guard_bash.py:292) regex "
-    "^-[^-]*f misses the long option --force",
-)
 def test_guard_bash_blocks_git_clean_long_force() -> None:
     assert bash("git clean --force") == 2
 
 
 @pytest.mark.parametrize("command", ["git add -Av", "git add ./", "git add apps/."])
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: plan 002 Context 'add -A/./-u': _check_git (guard_bash.py:304) compares exact "
-    "tokens, so combined short flags and ./ or dir/. pathspecs stage everything",
-)
 def test_guard_bash_blocks_broad_git_add_variants(command: str) -> None:
     assert bash(command) == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: plan 002 Context 'docker … down -v': the rule only matches program == 'docker' "
-    "(guard_bash.py:457), so the legacy docker-compose binary is not inspected",
-)
 def test_guard_bash_blocks_legacy_docker_compose_down_volumes() -> None:
     assert bash("docker-compose down -v") == 2
 
@@ -828,3 +809,179 @@ def test_settings_permissions_allow_ask_deny_shape() -> None:
     for rule in allow:
         assert not any(word in rule for word in destructive), rule
     assert not set(allow) & set(ask) & set(deny)
+
+
+# --- implementer repairs after review (plan 002): one regression per reported bypass -------
+
+REVIEW_BLOCKS = [
+    # High 1: `>&word` with a non-numeric word redirects to a file.
+    "echo x >&uv.lock",
+    "echo x >& uv.lock",
+    "echo x >&apps/api/openapi.json",
+    "echo x 2>&1 >&uv.lock",
+    # High 3: abbreviated long options and clustered short flags.
+    "git reset --har",
+    "git reset --h HEAD",
+    "git switch -f main",
+    "git switch --force main",
+    "git switch --discard main",
+    "git push -uf origin feat/x",
+    "git push --forc origin feat/x",
+    "git branch -d -f x",
+    "git branch -df x",
+    "git branch --delete --force x",
+    "git commit --al -m x",
+    "git commit -n -m x",
+    "git commit --no-verif -m x",
+    "git add --al",
+    "git add -uv",
+    "git restore --staged --work f",
+    "git restore --staged -W f",
+    "git checkout AGENTS.md",
+    "git checkout 'apps/*.py'",
+    "git checkout :/",
+    "git clean -fd",
+    "git clean -d -f",
+    "git clean --forc",
+    # High 4: code or SQL fed through stdin.
+    "echo 'import os' | python3",
+    "echo 'import os' | uv run python",
+    "python3 < scripts/bootstrap.py",
+    "echo 1 | python3 -W ignore",
+    "echo 1 | python3 /dev/stdin",
+    "echo 1 | node",
+    "echo 1 | sh -c 'python3'",
+    "echo 'drop database x' | psql",
+    "echo 'drop database x' | uv run just psql",
+    "just psql < dump.sql",
+    "echo 'select 1' | docker compose exec -T postgres psql",
+    "echo 'select 1' | docker-compose exec -T postgres psql",
+    # Medium 6: more wrappers, shells and uvx.
+    "setsid git stash",
+    "ionice -c3 git stash",
+    "flock /tmp/l git stash",
+    "chrt 1 git stash",
+    "taskset 1 git stash",
+    "ksh -c 'git stash'",
+    "csh -c 'git stash'",
+    "tcsh -c 'git stash'",
+    "uvx python -c 1",
+    "uvx --from x python -c 1",
+    "uv tool run python -c 1",
+    # Medium 7: docker variants.
+    "docker volume remove x",
+    "docker compose down --volumes=true",
+    "docker compose down -v=true",
+    "docker compose -f infra/docker/compose.yaml down -tv 5",
+    "docker-compose down --volumes",
+    # Inline code in other spellings.
+    "python3 -mpip install x",
+    "python3 -B -m pip install x",
+    "perl -pe 1",
+    "php -r 1",
+    "ruby -we 1",
+    # Low 8 and 9.
+    "rm -rf /tmp/claude-guard-test/build",
+    "git config alias.x stash",
+    "git config --global alias.x 'reset --hard'",
+    "git config core.hooksPath /dev/null",
+]
+
+
+@pytest.mark.parametrize("command", REVIEW_BLOCKS)
+def test_guard_bash_blocks_review_bypasses(command: str) -> None:
+    assert bash(command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo x >&2",
+        "echo x 2>&1",
+        "ls 1>&2 2>&-",
+        "git reset HEAD~1",
+        "git reset --soft HEAD~1",
+        "git switch -c feat/y",
+        "git switch -",
+        "git push --force-with-lease origin feat/x",
+        "git push -u origin feat/x",
+        "git branch -d feat/x",
+        "git commit --amend --no-edit",
+        'git commit -m "-a is mentioned here"',
+        "git add -p apps/api/README.md",
+        "git add apps/api/README.md docs/harness/HARNESS.md",
+        "git checkout feat/does-not-exist-as-a-path",
+        "git checkout -b feat/z origin/feat/z",
+        "git clean -n",
+        "git config user.name x",
+        "git config --get alias.x",
+        "uv run pytest -q 2>&1 | tail -5",
+        "echo x | grep x",
+        "git log --oneline | head -5",
+        "uv run python scripts/bootstrap.py < /dev/null",
+        "python3 -W ignore scripts/commits.py --range a..b",
+        "python3 -m pytest -q",
+        "uvx ruff check",
+        'just psql -d fragancia_test -c "select 1"',
+        "docker compose -f infra/docker/compose.yaml down",
+        "docker compose down --volumes=false",
+        "docker volume ls",
+        "rm -rf .pytest_cache",
+    ],
+)
+def test_guard_bash_allows_after_review_repairs(command: str) -> None:
+    assert bash(command) == 0
+
+
+def test_guard_bash_cd_inside_a_pipeline_does_not_move_the_cwd(fixture_repo: Path) -> None:
+    # High 2: each pipeline member runs in a subshell, so the redirect lands in the repo root.
+    assert bash("cd sub | echo x > .env", fixture_repo) == 2
+    assert bash("cd sub | rm untracked.txt", fixture_repo) == 2
+    assert bash("cd /tmp | echo x > uv.lock") == 2
+    assert bash("echo x | cd sub && rm untracked.txt", fixture_repo) == 2
+    # Sequential `cd` still moves it.
+    assert bash("cd sub && rm untracked.txt", fixture_repo) == 0  # missing in sub/
+    assert (fixture_repo / "untracked.txt").exists()
+
+
+def test_guard_bash_checkout_of_an_existing_path_is_blocked(fixture_repo: Path) -> None:
+    assert bash("git checkout tracked.txt", fixture_repo) == 2
+    assert bash("git -C sub checkout __pycache__", fixture_repo) == 2
+    assert bash("git checkout some-branch", fixture_repo) == 0
+
+
+HOOK_FILES = [
+    "guard_bash.py",
+    "guard_files.py",
+    "guard_read.py",
+    "guard_paths.py",
+    "format_file.py",
+]
+
+
+@pytest.mark.parametrize("hook", HOOK_FILES)
+def test_hooks_parse_as_python_3_10(hook: str) -> None:
+    # Medium 5: the system python3 runs them; a syntax error would exit 1 and fail open.
+    source = (HOOKS / hook).read_text(encoding="utf-8")
+    ast.parse(source, filename=hook, feature_version=(3, 10))
+    assert not re.search(r"^\s*except [^(\s:][^:]*,[^:]*:", source, re.MULTILINE), hook
+
+
+@pytest.mark.parametrize(
+    ("hook", "prefix"),
+    [("guard_bash.py", "Command"), ("guard_files.py", "Edit"), ("guard_read.py", "Read")],
+)
+def test_guards_fail_closed_when_the_shared_module_is_missing(
+    tmp_path: Path, hook: str, prefix: str
+) -> None:
+    shutil.copy(HOOKS / hook, tmp_path / hook)  # without guard_paths.py next to it
+    result = subprocess.run(  # noqa: S603 - fixed argv
+        [sys.executable, "-S", str(tmp_path / hook)],
+        input=json.dumps({"tool_input": {"command": "ls", "file_path": "x"}}),
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert result.stderr.startswith(f"{prefix} blocked: the guard could not start")

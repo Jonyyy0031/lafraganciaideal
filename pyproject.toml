@@ -34,6 +34,8 @@ fragancia-api = { workspace = true }
 [tool.ruff]
 line-length = 100
 target-version = "py314"
+# The Claude Code hooks run on the system python3: keep their syntax valid on Python 3.10+.
+per-file-target-version = { ".claude/hooks/*.py" = "py310" }
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S"]

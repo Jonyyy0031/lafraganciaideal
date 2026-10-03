@@ -46,11 +46,11 @@ def inspect_path(
     abs_path = os.path.abspath(os.path.join(cwd or project, path))
     try:
         resolved = _resolve_existing_parent(abs_path)
-    except OSError, RuntimeError, ValueError:
+    except (OSError, RuntimeError, ValueError):
         return "The path could not be resolved safely. Use a plain path without symlink loops"
     try:
         real_root = os.path.realpath(project, strict=True)
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return "The project directory could not be resolved. Check CLAUDE_PROJECT_DIR"
 
     for candidate, root in ((abs_path, project), (resolved, real_root)):

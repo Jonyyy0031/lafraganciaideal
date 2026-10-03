@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: platform
 min_implementer: high
 depends_on: ["001"]
@@ -152,14 +152,16 @@ turns roles into tool-specific adapters with `~/codes/web-rh/scripts/harness/ada
    - Observable result: editing a generated file by hand fails `just check`.
 
 10. **Docs**
-   - Files: `docs/harness/HARNESS.md` (modify), `docs/harness/workflow.md` (modify), `AGENTS.md` (modify), `CLAUDE.md` (modify)
+   - Files: `docs/harness/HARNESS.md` (modify), `docs/harness/workflow.md` (modify), `AGENTS.md` (modify), `CLAUDE.md` (modify),
+     `docs/harness/conventions/testing.md` (modify), `docs/harness/roles/reviewer.md` (modify)
    - Do: adapter architecture diagram ("agnostic core + generated adapters"), how to change a
      role (edit the doc or `adapters.py`, run `just harness-sync`).
 
 ## Acceptance criteria
 
 - [ ] In a live Claude Code session in this repo: `git stash`, `docker compose down -v`,
-      runs.
+      reading `apps/api/.env` and editing `uv.lock` are blocked with the reason and the safe
+      alternative; `uv run just check` runs.
 - [ ] Editing a `.py` file reformats it with ruff.
 - [ ] `uv run just harness-check` passes; a manual edit to `.claude/agents/tester.md` makes it
       fail with `~ .claude/agents/tester.md`.
@@ -226,8 +228,46 @@ Format: said / reality / done.
    `CLAUDE.md` from plan 001; only the "arrives with 002" caveats were removed and the hook
    registration/Codex note added.
 
+8. **Repairs after review** (2026-10-03, reviewer findings 1–11 and the tester's 4 GAPs).
+   Said: the guards enforce the listed rules. Reality: the review showed bypasses. Done:
+   - High 1: `>&word` / `>& word` with a non-numeric word is a write redirect and is inspected;
+     only `>&N`, `N>&M`, `>&-` are descriptor duplication.
+   - High 2: `check_command` now splits the line into simple commands with their redirections;
+     a `cd` that is a pipeline member is validated but does not move the tracked cwd.
+   - High 3: git arguments are parsed like git does (`_options`/`_has`): abbreviated long
+     options (`--har`, `--forc`, `--al`, `--work`, `--no-verif`), clustered short flags
+     (`-uf`, `-df`, `-Av`, `-fd`), `switch -f/--force`, `commit -n`, `checkout -B`,
+     `checkout <path>` when the single argument exists as a path or is a glob/`:` pathspec
+     (web-rh's `len > 1` rule kept), `add ./`, `add dir/.`, `clean --force`.
+   - High 4: a command fed by a pipe or a `<` redirection may not be an interpreter without a
+     script file (`python*`, `node`, `perl`, `ruby`, `php`; `/dev/stdin` scripts too), nor
+     `psql` / `just psql` / `docker[-compose] … psql` (message: use `-c` or `-f <file>`);
+     stdin propagates into `sh -c`.
+   - Medium 5: hooks parse on Python 3.10+ (parenthesized `except`; ruff
+     `per-file-target-version` py310 for `.claude/hooks/*.py` in `pyproject.toml` so the
+     formatter keeps it); the `guard_paths` import is inside a `try` and every unexpected
+     exception (`BaseException`) exits 2.
+   - Medium 6/7: wrappers `setsid`, `ionice`, `flock`, `chrt`, `taskset`; shells `ksh`, `mksh`,
+     `csh`, `tcsh`; `uvx` and `uv tool run` checked like `uv run`; inline code in clusters
+     (`-Sc`, `-mpip`, `perl -pe`, `php -r`); docker `volume remove`, `--volumes[=true]`,
+     `-v=…`, clustered `-tv`, and `docker-compose` treated like `docker compose`.
+   - Low 8: recursive `rm` outside the project is blocked. Low 9: `git config` setting
+     `alias.*` or `core.hooksPath` is blocked (reads allowed). Low 10: `sync.py` deletes only
+     files whose notice comment heads one of the first 15 lines (`is_generated`) and refuses to
+     write through a symlink. Low 11: the first acceptance criterion was rewritten.
+   - Checklist: `docs/harness/conventions/testing.md` and `docs/harness/roles/reviewer.md` are
+     now declared in step 10 (see Deviation 4). `pyproject.toml` is now modified (Deviation 2
+     superseded).
+   - Tests: the 8 strict-`xfail` GAP cases are regular tests now; regressions for every finding
+     were added at the end of `scripts/harness/test_hooks.py` (`REVIEW_BLOCKS`, allows,
+     pipeline `cd`, checkout of a path, 3.10 syntax, missing `guard_paths`) and
+     `scripts/harness/test_sync.py` (header marker, symlink). The implementer wrote these
+     because each one reproduces a bypass the reviewer reported. `docs/harness/security.md`
+     "Shell subset" describes the new checks.
+
 Not verified here (manual, e2e layer): a fresh Claude Code session listing the skills and
-subagents; Codex listing the profiles.
+subagents; Codex listing the profiles; the hooks on an interpreter older than 3.14 (only parsed
+with `ast` at `feature_version=(3, 10)` and ruff's py310 target).
 
 ## Test coverage
 

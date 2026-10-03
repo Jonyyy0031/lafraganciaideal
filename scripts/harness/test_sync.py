@@ -262,3 +262,38 @@ def test_recipe_skills_are_hand_written_and_not_generated() -> None:
 def test_committed_adapters_match_the_generator_byte_for_byte() -> None:
     for rel, content in sync.build_outputs().items():
         assert (REPO / rel).read_bytes() == content.encode("utf-8"), rel
+
+
+# --- implementer repairs after review (plan 002) -------------------------------------------
+
+
+def test_every_output_is_recognized_as_generated_by_its_header() -> None:
+    for rel, content in sync.build_outputs().items():
+        assert sync.is_generated(content), rel
+
+
+def test_a_hand_written_file_quoting_the_marker_is_never_deleted(tmp_path: Path) -> None:
+    # Review Low 10: only the notice comment at the top marks a file as generated.
+    skill = tmp_path / ".claude/skills/notes/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(f"---\nname: notes\n---\n\nFiles with `{sync.MARKER}` are generated.\n")
+    late = tmp_path / ".claude/agents/late.md"
+    late.parent.mkdir(parents=True)
+    late.write_text("x\n" * sync.HEADER_LINES + f"<!-- {sync.MARKER} -->\n")
+
+    assert sync.sync(tmp_path, {}, check=False) == []
+    assert skill.exists()
+    assert late.exists()
+
+
+def test_sync_refuses_to_write_through_a_symlink(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "repo"
+    (root / ".claude").mkdir(parents=True)
+    (root / ".claude/agents").symlink_to(outside)
+    outputs = {".claude/agents/tester.md": f"<!-- {sync.MARKER} -->\n"}
+
+    with pytest.raises(ValueError, match="symlink"):
+        sync.sync(root, outputs, check=False)
+    assert list(outside.iterdir()) == []

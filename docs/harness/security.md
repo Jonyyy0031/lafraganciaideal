@@ -31,8 +31,11 @@ evaluating untrusted code.
 The Bash guard keeps literal arguments and analyzes separators and redirections. It inspects
 shells with a literal command (`sh -c '<cmd>'`, checked recursively), quoted paths and known
 git options. It rejects substitutions (`$(…)`, backticks), dynamic variables, heredocs,
-wrappers (`env`, `eval`, `exec`, `xargs`, `VAR=` prefixes) and inline interpreters that cannot
-be inspected (`python -c`, `node -e`, …). Use explicit commands or previously reviewed scripts
+wrappers (`env`, `eval`, `exec`, `xargs`, `setsid`, `flock`, `VAR=` prefixes) and inline
+interpreters that cannot be inspected (`python -c`/`-Sc`, `node -e`, code or SQL piped or
+redirected into an interpreter or `psql`). Git options are matched the way git parses them
+(abbreviated long options, clustered short flags), and a `cd` inside a pipeline does not move
+the directory the next commands are checked against. Use explicit commands or previously reviewed scripts
 within the host's permissions.
 
 It blocks the known destructive operations; it does not interpret every language nor the

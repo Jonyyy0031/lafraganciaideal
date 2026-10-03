@@ -10,9 +10,12 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from guard_paths import inspect_path  # noqa: E402
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from guard_paths import inspect_path
+except Exception as import_error:  # noqa: BLE001 - fail closed when the guard cannot start
+    print(f"Edit blocked: the guard could not start ({import_error}).", file=sys.stderr)
+    sys.exit(2)
 
 
 class Blocked(Exception):  # noqa: N818 - reads as `raise Blocked(reason)`
@@ -55,7 +58,7 @@ def main() -> int:
     except Blocked as error:
         print(f"Edit blocked: {error}.", file=sys.stderr)
         return 2
-    except Exception as error:  # noqa: BLE001 - fail closed on anything unexpected
+    except BaseException as error:  # noqa: BLE001 - fail closed on anything unexpected
         print(f"Edit blocked: the guard could not inspect it ({error}).", file=sys.stderr)
         return 2
     return 0

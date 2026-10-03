@@ -18,6 +18,9 @@ NOTICE = (
     "Run `uv run just harness-sync`."
 )
 
+# The notice comment sits right after the frontmatter (or on line 1 of a TOML profile).
+HEADER_LINES = 15
+
 # Directories that hold generated files (to detect obsolete ones).
 GENERATED_ROOTS = (".claude/agents", ".claude/skills", ".codex/agents", ".agents/skills")
 
@@ -90,9 +93,15 @@ def existing_generated(root: Path) -> list[str]:
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*")):
-            if path.is_file() and not path.is_symlink() and MARKER in (_read(path) or ""):
+            if path.is_file() and not path.is_symlink() and is_generated(_read(path) or ""):
                 found.append(path.relative_to(root).as_posix())
     return found
+
+
+def is_generated(text: str) -> bool:
+    """The marker heads one of the first lines (the notice comment), not merely quoted."""
+    header = text.splitlines()[:HEADER_LINES]
+    return any(line.startswith((f"<!-- {MARKER}", f"# {MARKER}")) for line in header)
 
 
 def _read(path: Path) -> str | None:
@@ -107,6 +116,8 @@ def sync(root: Path, outputs: dict[str, str], check: bool) -> list[str]:
     drift: list[str] = []
     for rel, content in outputs.items():
         full = root / rel
+        if any(p.is_symlink() for p in (full, *full.parents) if p != root and root in p.parents):
+            raise ValueError(f"{rel}: refusing to write through a symlink")
         current = _read(full) if full.is_file() else None
         if current == content:
             continue
@@ -131,7 +142,11 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
         return 2
     check = "--check" in args
     outputs = build_outputs()
-    drift = sync(root, outputs, check)
+    try:
+        drift = sync(root, outputs, check)
+    except ValueError as error:
+        print(f"✖ harness-sync — {error}", file=sys.stderr)
+        return 1
     if check and drift:
         print(
             "✖ harness-check — adapters out of date (run uv run just harness-sync):\n  "

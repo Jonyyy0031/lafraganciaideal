@@ -10,9 +10,12 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from guard_paths import inspect_path  # noqa: E402
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from guard_paths import inspect_path
+except Exception as import_error:  # noqa: BLE001 - fail closed when the guard cannot start
+    print(f"Read blocked: the guard could not start ({import_error}).", file=sys.stderr)
+    sys.exit(2)
 
 
 def main() -> int:
@@ -27,7 +30,7 @@ def main() -> int:
                 reason = "invalid working directory in the payload"
             else:
                 reason = inspect_path(payload["tool_input"].get("file_path"), project_dir, cwd)
-    except Exception as error:  # noqa: BLE001 - fail closed on anything unexpected
+    except BaseException as error:  # noqa: BLE001 - fail closed on anything unexpected
         reason = f"the guard could not inspect it ({error})"
     if reason:
         print(f"Read blocked: {reason}.", file=sys.stderr)
