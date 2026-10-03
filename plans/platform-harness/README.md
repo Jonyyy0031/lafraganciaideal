@@ -38,6 +38,15 @@ adapters checked for drift). Also undo two divergences from web-rh introduced in
 
 ## Delivered
 
+- **001** (2026-10-02): single env file (`apps/api/.env`) and fixed-name test database;
+  `docs/harness/` (vision, workflow, security, roles, conventions incl. pull requests); full
+  plan format and templates; `plans-lint` / `plans-status` / `plans-scope`.
+- **002** (2026-10-03): guard hooks + `.claude/settings.json` permissions (three review rounds,
+  best-effort denylist); generated Claude subagents, skills and Codex profiles with
+  `harness-sync` / `harness-check`; recipe skills. Finding
+  `plans/findings/platform-guard-bash-round3-bypasses.md` resolved by a fast-lane fix.
+- PR #3.
+
 ## Considered and discarded
 
 - **A lighter harness** (plans + ADRs only): discarded, see decision 2.
