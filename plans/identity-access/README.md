@@ -43,6 +43,10 @@ them, and only the owner may invite or deactivate. Until 002, every account is c
 7. (2026-10-03) The development token `ADMIN_DEV_TOKEN` is **removed in plan 001**: one
    authentication path (the session cookie), no back door if `APP_ENV` is ever misconfigured,
    no actions recorded under a non-user, no special case for permissions in plan 002.
+8. (2026-10-03) Review of plan 001, finding L2: wrong current passwords in
+   `PUT /admin/auth/password` are throttled inside plan 001, reusing the login throttle with
+   key `password:<user_id>` and the per-email limit; above it → 429
+   `IDENTITY_TOO_MANY_ATTEMPTS`. M1, L1, L3 and L4 are repaired in plan 001 too.
 
 ## Delivered
 

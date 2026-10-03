@@ -767,4 +767,128 @@ fakes; `test_user_domain.py`, `test_session_domain.py`, `test_create_user.py`, `
 
 ## Review findings
 
+Review 2026-10-03 (reviewer subagent, opus). Diff: `git diff main...HEAD` on
+`feat/identity-access`, with a clean worktree. Commit `310fe2b` (the harness fast-lane fix) is
+excluded from this plan's scope, as the dispatch said.
+
+### Pass 1 — Checklist: 13/15 pass, 1 conditional, 1 not applicable
+
+- [~] **`plans-scope`: exits 1, with three files out of scope.** Each one is accounted for:
+  - `.claude/hooks/guard_paths.py` and `scripts/harness/test_hooks.py` come from `310fe2b`
+    (the separate fast-lane fix).
+  - `apps/api/src/fragancia_api/main/http.py` is a documented deviation. Its `DESCRIPTION` is
+    needed by the `test_openapi.py` assertion in step 11.
+
+  Hot files:
+  - `.importlinter`: append-only.
+  - `container.py` and `docs/modules.json` are **not strictly append-only**. `MODULES`
+    became `(identity, catalog)`, the dev-token lines were removed, and the `identity`
+    status changed from `planned` to `active`. Steps 1 and 3 order exactly these edits, so
+    they are authorized.
+
+  Accepted as documented, but the user should acknowledge `main/http.py` when marking the plan
+  done. It is not in any step's `Files:` line.
+- [x] `uv run just check` → green: lint, typecheck, arch "7 kept, 0 broken", "24 adapters up to
+  date", "370 passed, 3 skipped, 42 deselected", harness "684 passed".
+- [x] `uv run just test-integration` → "41 passed, 1 skipped". The skip is the in-suite
+  migration round trip. The main session ran that round trip by hand (see Deviations).
+- [x] Business rules live in `domain/`. Routers, mappers and queries hold no logic. Note
+  (plan-prescribed, not a finding): `log_in.py:59` repeats `Email`'s strip-and-lowercase
+  normalization to build the throttle key.
+- [x] CQRS-lite: commands go through repositories inside `transactions.run` and return
+  `Result`. `AccountQueries` reads through `Database.reader()` and returns contract models.
+- [x] Every request and response model comes from `contracts.py`. `openapi.json` is current
+  (`test_committed_document_is_up_to_date` is green) and lists the seven operations.
+- [x] Expected errors use stable `IDENTITY_*` codes. The new kernel categories map to 401 and
+  429. The only exceptions are the unreachable `LookupError` and the defensive 401/403
+  (documented).
+- [x] No money is involved. Times come from `Clock`; ids from `new_id()`.
+- [x] Migration `0003` creates the schema first and drops it last. Its only foreign key stays
+  inside the schema. Every constraint name matches the naming convention
+  (`uq_users_email` = `USER_EMAIL_UNIQUE`). It drops nothing it did not create, and its
+  downgrade mirrors the upgrade.
+- [x] Every route is in `public_router` or `admin_router`. `assert_admin_routes_are_protected`
+  runs with `{"APIKeyCookie": []}`.
+- [x] Wiring: identity registers `ActorResolver`, and the container raises if no module does.
+  `test_container.py` asserts that the resolver is a `ResolveSessionActor`. Adapters are
+  created only in `module.py`, `container.py` and `main/`.
+- [x] No secrets or real personal data. Fixtures use `example.test`, and the evidence uses
+  `<synthetic>` passwords.
+- [x] `## Deviations` is honest. Spot-checked:
+  - `CreateUser` uses two `run`s with the hash in between (`create_user.py:54-75`).
+  - The 401 description reads "Missing or unknown session" (`access.py:48`).
+- [ ] **Docs are stale in two in-scope places.** See L3 and L4.
+- n/a PR body: no PR exists yet. The main session writes it, with the six sections.
+
+### Pass 2 — Findings
+
+**Medium**
+
+- **M1 — argon2 runs synchronously on the event loop.** Locations:
+  `application/commands/log_in.py:93` (`verify`), `change_password.py:52,55` (`verify` + `hash`)
+  and `create_user.py:64`.
+  - **What fails.** `PasswordHasher.hash/verify` are synchronous CPU work called from
+    `async def execute`. Measured on this machine with the library defaults: `hash` 0.094 s,
+    `verify` 0.065 s. The whole uvicorn event loop stalls for that long on every call.
+  - **Failure scenario.** `POST /api/v1/auth/login` is public. 20 concurrent login attempts
+    (different emails and IPs, so the throttle does not stop them before `verify`) freeze every
+    other request for about 1.3 s: storefront, admin and health. A sustained stream from
+    rotating IPs keeps the API unresponsive.
+  - **Fix direction** (for the implementer or architect, not prescribed here): move the
+    hasher work off the loop, e.g. `await asyncio.to_thread(...)`. That needs either an async
+    `PasswordHasher` port or the thread hop in the use cases.
+  - **Decision needed.** If the user would rather accept this for a low-traffic back office,
+    record it as a deviation with that decision. As it stands it is unaddressed, so status
+    stays `review`.
+
+**Low**
+
+- **L1 — a crafted email turns login into a 500.** Locations: `log_in.py:59-60` and
+  `infrastructure/tables.py:41` (`key String(330)`).
+  - **What fails.** `LoginRequest.email` is capped at 320 characters *before* `.lower()`, and
+    lowercasing can grow a string. Verified: `"İ" * 320` lowercases to 640 characters, so the
+    key has 646 characters.
+  - **Failure scenario.** The `INSERT` into `login_throttle` raises
+    `StringDataRightTruncation`. The unauthenticated caller gets 500 `INTERNAL_ERROR` and a
+    logged traceback.
+  - The rolled-back transaction also means the attempt is not counted. It gains the attacker
+    nothing, but it is an unhandled error path.
+  - **Fix direction:** bound the key after normalization (e.g. reject or hash a normalized
+    email longer than 254 characters), or bound the column/key differently.
+- **L2 — `PUT /admin/auth/password` is an unthrottled password oracle.** Location:
+  `change_password.py:52`. Uncertain: this may be by design, since the plan specifies no
+  throttle here.
+  - **What fails.** Whoever holds a session (e.g. a stolen or shared-machine cookie) can try
+    `current_password` without limit. Each attempt returns 422
+    `IDENTITY_CURRENT_PASSWORD_WRONG` or 204, and none passes through `LoginThrottle`.
+  - **Failure scenario.** A hijacked session brute-forces the account password. The attacker
+    then keeps access after the victim revokes the session, and the password may be reused
+    elsewhere. Each attempt also costs about 65 ms of loop-blocking argon2 (M1).
+  - The user decides whether to fix it here or file it for plan 002. It is not required by
+    this plan's text.
+- **L3 — stale doc.** Location: `apps/api/README.md:56` still says "A test checks that every
+  `/api/v1/admin` operation requires the **bearer scheme**". The check is now the
+  `APIKeyCookie` session-cookie scheme. The file is in step 10's list.
+- **L4 — stale doc.** Location: `docs/architecture.md:154-156`, the "Errors" mapping. It lists
+  401 for unauthenticated but not the new rate-limited → 429 category, while
+  `apps/api/README.md:58` and `shared/http/errors.py:3` now list it. The file is in step 10's
+  list.
+
+**Informational (no change requested)**
+
+- Three behaviors have no automated test, which the tester reported honestly:
+  - `Settings` bounds (`ge=1`): the step 1 observable result
+    `make_settings(session_idle_minutes=0)` raises.
+  - The `create-owner` CLI.
+  - The migration round trip, which is in-suite but skipped.
+
+  The verifier should check the CLI and the round trip live, or mark them NOT VERIFIED.
+- Accepted by the plan, not a defect: anyone can lock the owner out by spending 5 attempts
+  per 15 minutes on the owner's email (the 6th attempt is 429 even with the right password,
+  as the acceptance criterion requires). Worth remembering for the deployment and plan 002.
+- Out of scope, already filed: `plans/findings/platform-harness-module-registry-stale.md`.
+
+**Result:** 1 medium and 4 low findings. M1, L1, L3 and L4 need changes. L2 needs a user
+decision. Status stays `review` (repair handoff to the implementer via the main session).
+
 ## Verification
