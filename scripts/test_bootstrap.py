@@ -1,30 +1,33 @@
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from botocore.exceptions import ClientError
 
-from infra import ensure_bucket, ensure_database, ensure_env_file, missing_tools, read_env
+from infra import (
+    ensure_bucket,
+    ensure_database_in_container,
+    ensure_env_file,
+    ensure_env_keys,
+    missing_tools,
+    read_env,
+)
 
 
-class FakeCursor:
-    def __init__(self, row):
-        self._row = row
-
-    def fetchone(self):
-        return self._row
-
-
-class FakeConnection:
-    """Minimal stand-in for a psycopg connection: knows which databases exist."""
+class FakeCompose:
+    """Stand-in for subprocess.run against `docker compose exec postgres psql`."""
 
     def __init__(self, existing: set[str]):
         self.existing = existing
-        self.created: list[str] = []
+        self.commands: list[list[str]] = []
 
-    def execute(self, query, params=None):
-        if params is not None:  # existence check
-            return FakeCursor((1,) if params[0] in self.existing else None)
-        self.created.append(query.as_string(None))
-        return FakeCursor(None)
+    def __call__(self, command, **_):
+        self.commands.append(command)
+        sql = command[-1]
+        if command[-2] == "-tAc":  # existence check
+            name = sql.split("'")[1]
+            return SimpleNamespace(stdout="1\n" if name in self.existing else "\n")
+        return SimpleNamespace(stdout="CREATE DATABASE\n")
 
 
 class FakeS3:
@@ -60,6 +63,17 @@ def test_ensure_env_file_never_overwrites(tmp_path: Path):
     assert target.read_text() == "A=custom\n"
 
 
+def test_ensure_env_keys_appends_only_missing_keys(tmp_path: Path):
+    example = tmp_path / ".env.example"
+    example.write_text("# comment\nA=1\nB=2\n\nC=3\n")
+    target = tmp_path / ".env"
+    target.write_text("A=custom\nC=mine\n")
+
+    assert ensure_env_keys(example, target) == ["B"]
+    assert read_env(target) == {"A": "custom", "B": "2", "C": "mine"}
+    assert ensure_env_keys(example, target) == []  # idempotent
+
+
 def test_read_env_ignores_comments_and_blank_lines(tmp_path: Path):
     env = tmp_path / ".env"
     env.write_text("# comment\n\nA=1\nB = two words \nC=\n")
@@ -75,18 +89,29 @@ def test_missing_tools_reports_only_absent_ones():
     ]
 
 
-def test_ensure_database_creates_when_missing():
-    conn = FakeConnection(existing={"fragancia"})
-
-    assert ensure_database(conn, "fragancia_test", owner="fragancia") is True
-    assert conn.created == ['CREATE DATABASE "fragancia_test" OWNER "fragancia"']
+COMPOSE = ["docker", "compose", "-f", "compose.yaml"]
 
 
-def test_ensure_database_is_idempotent():
-    conn = FakeConnection(existing={"fragancia", "fragancia_test"})
+def test_ensure_database_in_container_creates_when_missing():
+    compose = FakeCompose(existing={"fragancia"})
 
-    assert ensure_database(conn, "fragancia_test", owner="fragancia") is False
-    assert conn.created == []
+    assert ensure_database_in_container(COMPOSE, "fragancia_test", run=compose) is True
+    create = compose.commands[-1]
+    assert create[:7] == [*COMPOSE, "exec", "-T", "postgres"]
+    assert create[-2:] == ["-c", 'CREATE DATABASE "fragancia_test"']
+
+
+def test_ensure_database_in_container_is_idempotent():
+    compose = FakeCompose(existing={"fragancia", "fragancia_test"})
+
+    assert ensure_database_in_container(COMPOSE, "fragancia_test", run=compose) is False
+    assert len(compose.commands) == 1  # only the existence check
+
+
+@pytest.mark.parametrize("name", ["x; DROP DATABASE fragancia", "Fragancia", "a-b", ""])
+def test_ensure_database_in_container_rejects_unsafe_names(name):
+    with pytest.raises(ValueError, match="Unsafe database name"):
+        ensure_database_in_container(COMPOSE, name, run=FakeCompose(set()))
 
 
 def test_ensure_bucket_creates_when_missing():
