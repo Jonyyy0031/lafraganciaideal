@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: platform
 min_implementer: mid
 depends_on: []
@@ -449,5 +449,45 @@ plan-002 files (`.claude/`, `scripts/harness/`, plan 002) excluded from the revi
    database; the typed-name confirmation still protects it.
 
 Status left at `review`: findings 1–6 need product/plan changes (repair handoff).
+
+### Re-review (2026-10-02, after `1f0cce5` + `dafabfc`)
+
+The first review above is superseded by this block for the current code.
+
+**Checklist: PASSED.**
+
+- `uv run just check`: green, `573 passed, 3 skipped, 15 deselected` (no xfail left).
+- `plans-scope --base origin/main`: exit 1. Only these are outside: the plan-002 files
+  (`.claude/*`, `scripts/harness/*`, `plans/platform-harness/002-…md`) and
+  `scripts/plans/conftest.py` + `scripts/plans/test_lib.py`. The latter two are recorded as
+  Deviation 8, the remedy finding 3 allowed. 50 declared paths, same as before the fix, so
+  narrowing `Files:` dropped no real declarations.
+
+Findings:
+
+1. RESOLVED — `scripts/plans/lib.py:58,230` `_FILES_ENTRY` anchors at the line start.
+   Re-probed: a `- Do: … files: \`evil/x.py\`` line now declares nothing. Former xfail is a
+   regular test (`test_lib.py`).
+2. RESOLVED — plan-002 items marked: `AGENTS.md:89,95,97`, `CLAUDE.md:5`,
+   `HARNESS.md:64,71` (+ disclaimer :49-50), `workflow.md:236,239`, `reviewer.md:18`,
+   `security.md:17`, `testing.md:30,78`.
+3. RESOLVED (by deviation) — Deviation 8. Optional: declare both files in step 13 so the tool
+   output only lists plan-002 files.
+4. RESOLVED — `README.md:41-44` says that moving a port also needs the URLs in
+   `apps/api/.env`. Residual nit: `AGENTS.md:101-102` still says only "export a variable to
+   override one".
+5. RESOLVED — `lint.py:36` `_scalar`. Re-probed: `module: [platform]` →
+   `module ['platform'] is not in docs/modules.json`, no traceback.
+6. RESOLVED — `scope.py:76-81,93-97` allows only migrations absent at the merge-base (plus a
+   new `test_scope.py` regression).
+7. Nits — wrapped line starting with a digit now kept (`lib.py:59` `_STEP`; re-probed);
+   `## ` inside fences ignored (`lib.py:122-128`); `justfile:42-44` `db-reset` rejects other
+   arguments with exit 2.
+
+Regressions looked for: an unclosed fence swallows the remaining sections, and lint then
+reports them missing (fail-closed). `migrations_at_base` git errors exit 2. `_scalar`
+keeps non-string `status` invalid. None found.
+
+All passed → `status: verify`.
 
 ## Verification

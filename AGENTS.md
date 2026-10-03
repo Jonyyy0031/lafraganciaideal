@@ -99,7 +99,7 @@ Entries marked (002) _(arrives with plan platform-harness/002)_.
 `just` comes from the uv environment (`rust-just` dev dependency). Python dependencies:
 `uv add [--dev] <pkg>` (never `pip install`, never npm/yarn/npx; pnpm only for the web app in
 phase 3). The only env file is `apps/api/.env` (from `.env.example`); compose has inline
-defaults — export a variable to override one.
+defaults — export a variable to override one, and update the matching URL in `apps/api/.env`.
 
 ## Architecture rules (not negotiable)
 
