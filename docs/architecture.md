@@ -153,7 +153,8 @@ POST /api/v1/admin/brands
 
 - **Expected** (validation, rules, not found, conflict) → `Result` with a `DomainError` that
   has a stable `code`. HTTP maps the category: not found → 404, conflict → 409, invalid value
-  or broken rule → 422, unauthenticated → 401, forbidden → 403.
+  or broken rule → 422, unauthenticated → 401, forbidden → 403, rate limited (too many
+  attempts) → 429.
 - **Invalid HTTP input** → 422 `VALIDATION_ERROR` with `details.issues` per field.
 - **No or unknown session** → 401 `AUTHENTICATION_REQUIRED`; **not allowed** → 403 `FORBIDDEN`.
 - **Unknown route / method** → 404 `NOT_FOUND` / 405 `METHOD_NOT_ALLOWED`.

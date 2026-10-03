@@ -61,7 +61,7 @@ class CreateUser:
             case Err(error):
                 return Err(error)
 
-        password_hash = self._hasher.hash(plain.value)  # slow: outside any transaction
+        password_hash = await self._hasher.hash(plain.value)  # slow: outside any transaction
 
         async def work() -> Result[UUID, DomainError]:
             user = User.create(

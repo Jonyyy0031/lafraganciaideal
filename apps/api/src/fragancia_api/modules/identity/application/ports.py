@@ -6,15 +6,15 @@ from fragancia_api.modules.identity.contracts import AdminMe, AdminSession
 
 
 class PasswordHasher(Protocol):
-    """Slow, salted password hashing."""
+    """Slow, salted password hashing. Async so that the CPU work runs off the event loop."""
 
     dummy_hash: str
     """A hash of a random password, verified when the user does not exist so that timing does
     not reveal which accounts exist."""
 
-    def hash(self, password: str) -> str: ...
+    async def hash(self, password: str) -> str: ...
 
-    def verify(self, password_hash: str, password: str) -> bool:
+    async def verify(self, password_hash: str, password: str) -> bool:
         """False on a mismatch or an unreadable hash; never raises for those."""
         ...
 

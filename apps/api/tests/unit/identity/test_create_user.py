@@ -16,7 +16,7 @@ async def test_creates_an_active_user_with_a_hashed_password(identity: Identity)
         Role.OWNER,
         True,
     )
-    assert user.password_hash == identity.hasher.hash(PASSWORD)
+    assert user.password_hash == identity.hasher.encode(PASSWORD)
     assert (user.created_at, user.password_changed_at) == (identity.clock.now(),) * 2
 
 

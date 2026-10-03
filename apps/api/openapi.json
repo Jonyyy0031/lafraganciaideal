@@ -215,7 +215,7 @@
           "identity · admin"
         ],
         "summary": "Change My Password",
-        "description": "Change my password; every other session of mine is closed. 422\n`IDENTITY_PASSWORD_TOO_WEAK` if the new password breaks the rules, 422\n`IDENTITY_CURRENT_PASSWORD_WRONG` if the current one is not correct.",
+        "description": "Change my password; every other session of mine is closed. 422\n`IDENTITY_PASSWORD_TOO_WEAK` if the new password breaks the rules, 422\n`IDENTITY_CURRENT_PASSWORD_WRONG` if the current one is not correct, 429\n`IDENTITY_TOO_MANY_ATTEMPTS` after too many wrong current passwords.",
         "operationId": "change_my_password",
         "requestBody": {
           "content": {
@@ -253,6 +253,16 @@
           },
           "422": {
             "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
             "content": {
               "application/json": {
                 "schema": {

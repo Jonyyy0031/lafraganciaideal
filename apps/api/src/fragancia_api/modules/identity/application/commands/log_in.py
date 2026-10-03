@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -11,10 +12,20 @@ from fragancia_api.modules.identity.application.ports import (
 from fragancia_api.modules.identity.domain.errors import InvalidCredentials, TooManyAttempts
 from fragancia_api.modules.identity.domain.repositories import SessionRepository, UserRepository
 from fragancia_api.modules.identity.domain.session import Session
-from fragancia_api.modules.identity.domain.user import Email, User
+from fragancia_api.modules.identity.domain.user import EMAIL_MAX_LENGTH, Email, User
 from fragancia_api.shared.application.clock import Clock
 from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
+
+
+def _email_key(email: str) -> str:
+    """The throttle key of an email, normalized as `Email` does. Lowercasing can make a string
+    longer, so a result longer than any valid email (which belongs to no account) is keyed by
+    its SHA-256 instead: the key always fits the throttle table."""
+    normalized = email.strip().lower()
+    if len(normalized) > EMAIL_MAX_LENGTH:
+        return f"email-sha256:{hashlib.sha256(normalized.encode()).hexdigest()}"
+    return f"email:{normalized}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,8 +67,7 @@ class LogIn:
     async def execute(
         self, email: str, password: str, *, ip: str | None, user_agent: str | None
     ) -> Result[LoginResult, DomainError]:
-        normalized = email.strip().lower()
-        email_key = f"email:{normalized}"
+        email_key = _email_key(email)
         ip_key = f"ip:{ip or 'unknown'}"
 
         async def count() -> Result[tuple[int, int], DomainError]:
@@ -90,7 +100,7 @@ class LogIn:
 
         # Slow: outside any transaction. Always verify something, even without a user.
         password_hash = user.password_hash if user is not None else self._hasher.dummy_hash
-        password_matches = self._hasher.verify(password_hash, password)
+        password_matches = await self._hasher.verify(password_hash, password)
         if user is None or not user.is_active or not password_matches:
             return Err(InvalidCredentials())  # the attempt stays counted
         signed_in = user

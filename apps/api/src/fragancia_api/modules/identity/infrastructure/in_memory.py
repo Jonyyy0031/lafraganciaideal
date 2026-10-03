@@ -131,12 +131,17 @@ class PlainTextPasswordHasher:
     def __init__(self) -> None:
         self.verified_hashes: list[str] = []
 
-    def hash(self, password: str) -> str:
+    @staticmethod
+    def encode(password: str) -> str:
+        """The "hash" of a password, synchronously (for test setup and assertions)."""
         return f"plain:{password}"
 
-    def verify(self, password_hash: str, password: str) -> bool:
+    async def hash(self, password: str) -> str:
+        return self.encode(password)
+
+    async def verify(self, password_hash: str, password: str) -> bool:
         self.verified_hashes.append(password_hash)
-        return password_hash == f"plain:{password}"
+        return password_hash == self.encode(password)
 
 
 class SequentialSessionTokens:

@@ -36,8 +36,11 @@ plan [001](../../plans/identity-access/001-users-login-sessions-and-roles.md).
   (fixed window, `LOGIN_WINDOW_MINUTES`), *before* the password is checked, so parallel
   bursts cannot slip through. Above `LOGIN_EMAIL_MAX_ATTEMPTS` or `LOGIN_IP_MAX_ATTEMPTS` the
   answer is 429. A success clears the email counter and gives the IP its attempt back.
-- Passwords are hashed with argon2id (library defaults). A login for an unknown email still
-  verifies a dummy hash, so timing does not reveal accounts.
+  Changing the password while signed in throttles the current-password check the same way,
+  under `password:<user_id>` with the per-email limit; a correct password clears it.
+- Passwords are hashed with argon2id (library defaults), in a worker thread so the event loop
+  is never blocked. A login for an unknown email still verifies a dummy hash, so timing does
+  not reveal accounts.
 
 ## Alternatives considered
 

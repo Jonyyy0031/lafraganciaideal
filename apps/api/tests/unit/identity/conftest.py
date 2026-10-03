@@ -77,9 +77,11 @@ class Identity:
         self.change_password = ChangePassword(
             users=self.users,
             sessions=self.sessions,
+            throttle=self.throttle,
             hasher=self.hasher,
             transactions=transactions,
             clock=clock,
+            policy=self.policy,
         )
         self.revoke_session = RevokeSession(
             sessions=self.sessions, transactions=transactions, clock=clock
@@ -111,7 +113,7 @@ class Identity:
             Email(email),
             DisplayName(name),
             role,
-            self.hasher.hash(password),
+            self.hasher.encode(password),
             now=self.clock.now(),
         )
         user.is_active = active

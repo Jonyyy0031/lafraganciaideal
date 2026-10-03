@@ -107,7 +107,11 @@ async def get_my_account(
     return _found(await use_case.execute(user_id))
 
 
-@admin.put("/password", status_code=204, responses={422: {"model": ErrorResponse}})
+@admin.put(
+    "/password",
+    status_code=204,
+    responses={422: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
+)
 async def change_my_password(
     body: ChangePasswordRequest,
     user_id: Annotated[UUID, Depends(current_user)],
@@ -116,7 +120,8 @@ async def change_my_password(
 ) -> None:
     """Change my password; every other session of mine is closed. 422
     `IDENTITY_PASSWORD_TOO_WEAK` if the new password breaks the rules, 422
-    `IDENTITY_CURRENT_PASSWORD_WRONG` if the current one is not correct."""
+    `IDENTITY_CURRENT_PASSWORD_WRONG` if the current one is not correct, 429
+    `IDENTITY_TOO_MANY_ATTEMPTS` after too many wrong current passwords."""
     unwrap(await use_case.execute(user_id, session_id, body.current_password, body.new_password))
 
 

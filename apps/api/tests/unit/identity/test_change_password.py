@@ -24,7 +24,7 @@ async def test_changes_the_password_and_stamps_the_time(identity: Identity) -> N
     result = await identity.change_password.execute(user.id, current, PASSWORD, NEW_PASSWORD)
 
     assert isinstance(result, Ok)
-    assert user.password_hash == identity.hasher.hash(NEW_PASSWORD)
+    assert user.password_hash == identity.hasher.encode(NEW_PASSWORD)
     assert user.password_changed_at == identity.clock.now()
 
 

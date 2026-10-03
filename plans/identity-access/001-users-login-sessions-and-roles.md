@@ -1,5 +1,5 @@
 ---
-status: review
+status: testing
 module: identity
 min_implementer: high
 depends_on: []
@@ -720,6 +720,57 @@ Evidence (2026-10-03):
 - The step 10 grep finds only ADR 0009.
 - `plans-scope`: the only file out of scope from this plan's own work is `main/http.py`
   (above).
+
+### Repair round 1 (2026-10-03, after review round 1)
+
+The main session returned the plan from `review` to `implementing` with the reason in
+`## Review findings` and README decision 8. Every repair stays inside the plan's file list.
+The earlier `## Test coverage` and `## Review findings` describe the code before this round.
+The repaired code goes through testing, review and verify again. No regression tests were
+added here: that is the tester's job.
+
+- **M1, argon2 off the event loop.** `PasswordHasher.hash` and `verify` are now `async` in the
+  port (`application/ports.py`). `Argon2PasswordHasher` runs both through
+  `asyncio.to_thread`. The `dummy_hash` is still computed synchronously, once, when the module
+  is wired at startup. `LogIn`, `ChangePassword` and `CreateUser` `await` the hasher.
+  - `PlainTextPasswordHasher` (the fake) is async too. It gained a synchronous static
+    `encode(password)` so that test setup and assertions do not need `await`.
+  - Tests changed only for the signature: `conftest.py` and `test_create_user.py` /
+    `test_change_password.py` use `hasher.encode(...)` instead of `hasher.hash(...)`.
+    `test_security_adapters.py`'s five argon2 tests are now `async` and `await` the hasher.
+- **L1, over-long normalized email.** `log_in.py` builds the email throttle key with
+  `_email_key`. If the email is longer than `EMAIL_MAX_LENGTH` (254) after strip and lowercase,
+  the key is `email-sha256:<hex of the normalized email>`. Such an email cannot belong to any
+  account, so it still counts and is still throttled. The key is then 77 characters at most
+  and always fits `login_throttle.key String(330)`. The `email-sha256:` prefix cannot collide
+  with an `email:` key. Schema and contract are unchanged.
+- **L2, throttled current-password check (decision 8).** `ChangePassword` now takes
+  `throttle: LoginThrottle` and `policy: AuthPolicy`.
+  - The order is: weak new password (422, nothing counted), then one transaction that `hit`s
+    `password:<user_id>` and loads the user, then above `policy.email_max_attempts` → 429
+    `IDENTITY_TOO_MANY_ATTEMPTS` with no verify, then a wrong current password → 422 (the
+    attempt stays counted). On success the work transaction `clear`s the key.
+  - `module.py` builds one `SqlLoginThrottle` and shares it between `LogIn` and
+    `ChangePassword`. The unit `conftest.py` passes the in-memory throttle and the policy.
+  - `PUT /admin/auth/password` declares 429 in `responses`, and its docstring names the 429.
+    `uv run just openapi` regenerated `apps/api/openapi.json`: a 429 response and the new
+    description on `change_my_password`.
+  - The error reuses `TooManyAttempts`, whose message says "Too many sign-in attempts; try
+    again later". The code is the one decision 8 names.
+- **L3.** `apps/api/README.md` now says the admin-route test requires the session cookie (the
+  `APIKeyCookie` security scheme), not the bearer scheme.
+- **L4.** `docs/architecture.md` → "Errors" now lists rate limited (too many attempts) → 429.
+- **Also updated (same canonical-docs rule, in step 10's list):** ADR 0009 describes the
+  password-change throttle and says argon2 runs in a worker thread.
+
+Evidence (2026-10-03):
+
+- `uv run just check` → green. It runs lint, typecheck, arch, plans-lint ("7 plans, 3
+  findings"), harness-check ("24 adapters up to date"), unit tests ("370 passed, 3 skipped,
+  42 deselected"), harness tests ("684 passed") and compose config.
+- `uv run just test-integration` → "41 passed, 1 skipped".
+- `plans-scope` reports the same three out-of-scope files as before (two from `310fe2b`, plus
+  `main/http.py`). Nothing new.
 
 ## Test coverage
 

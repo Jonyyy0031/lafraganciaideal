@@ -53,7 +53,7 @@ New module or use case? Follow [docs/recipes/](../../docs/recipes/) and copy `mo
   same `run(...)`. Subscribers (registered with `platform.subscriptions.subscribe(name, handler)`)
   must be idempotent: delivery is at-least-once, retried with backoff (ADR 0006).
 - **Declared access**: put routes in `public_router()` or `admin_router()` — never a bare
-  `APIRouter`. A test checks that every `/api/v1/admin` operation requires the bearer scheme.
+  `APIRouter`. A test checks that every `/api/v1/admin` operation requires the session cookie (the `APIKeyCookie` security scheme).
 - **Errors** always have the shape `{code, message, details?}`; categories map to
   401 (unauthenticated)/404/409/422/429 (rate limited); invalid input is 422 `VALIDATION_ERROR`; unexpected is 500 `INTERNAL_ERROR`.
 - **Boundaries** are checked by `uv run just arch` (`.importlinter`). Do not work around a

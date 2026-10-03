@@ -49,6 +49,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     users = SqlUserRepository(platform.database)
     sessions = SqlSessionRepository(platform.database)
     queries = SqlAccountQueries(platform.database)
+    throttle = SqlLoginThrottle(platform.database)
     hasher = Argon2PasswordHasher()
     tokens = SecureSessionTokens()
     transactions = platform.transactions
@@ -63,7 +64,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         LogIn(
             users=users,
             sessions=sessions,
-            throttle=SqlLoginThrottle(platform.database),
+            throttle=throttle,
             hasher=hasher,
             tokens=tokens,
             transactions=transactions,
@@ -77,9 +78,11 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         ChangePassword(
             users=users,
             sessions=sessions,
+            throttle=throttle,
             hasher=hasher,
             transactions=transactions,
             clock=clock,
+            policy=policy,
         ),
     )
     services.add(
