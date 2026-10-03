@@ -17,6 +17,7 @@ def errors_for(message: str) -> list[str]:
         "fix(payments)!: reject webhooks with an invalid signature",
         "docs(platform): plan 001 for the local environment\n\nLonger body explaining why.",
         "ci(ci): pin actions by commit sha",
+        "docs(harness): roles and workflow for the plan pipeline",
     ],
 )
 def test_valid_messages_pass(message: str):
@@ -24,7 +25,7 @@ def test_valid_messages_pass(message: str):
 
 
 def test_scopes_include_registry_modules_and_cross_cutting():
-    assert {"catalog", "orders", "platform", "infra", "docs"} <= SCOPES
+    assert {"catalog", "orders", "platform", "infra", "docs", "harness"} <= SCOPES
 
 
 @pytest.mark.parametrize(
