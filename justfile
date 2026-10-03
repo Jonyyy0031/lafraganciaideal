@@ -100,6 +100,14 @@ plans-status *args:
 plans-scope plan *args:
     PYTHONPATH=scripts uv run python -m plans.scope "$@"
 
+# Regenerate the agent/skill adapters from docs/harness/roles + scripts/harness/adapters.py
+harness-sync:
+    PYTHONPATH=scripts uv run python -m harness.sync
+
+# Fail if a generated adapter drifted from its source (+ missing, ~ different, - obsolete)
+harness-check:
+    PYTHONPATH=scripts uv run python -m harness.sync --check
+
 # Lint and format checks, plus every pre-commit hook on all files
 lint:
     uv run ruff check
@@ -114,6 +122,10 @@ test *args:
 test-integration *args: (db-migrate "--test")
     uv run pytest apps/api/tests -m integration "$@"
 
+# Claude Code guard hooks and adapter generator tests (inert payloads; no services needed)
+test-harness *args:
+    uv run pytest scripts/harness "$@"
+
 # Everything CI checks in the quality job, plus the compose file validation
-check: lint typecheck arch plans-lint test
+check: lint typecheck arch plans-lint harness-check (test "--ignore=scripts/harness") test-harness
     {{ compose }} config --quiet

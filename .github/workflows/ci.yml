@@ -36,8 +36,12 @@ jobs:
         run: uv run lint-imports
       - name: Plans are well formed (plans-lint)
         run: uv run just plans-lint
-      - name: Unit tests (tooling, plan tooling, hooks, API)
-        run: uv run pytest
+      - name: Generated agent/skill adapters match their source (harness-check)
+        run: uv run just harness-check
+      - name: Unit tests (tooling, plan tooling, API)
+        run: uv run pytest --ignore=scripts/harness
+      - name: Guard hooks and adapter generator (test-harness)
+        run: uv run just test-harness
 
   commits:
     name: Commit messages
