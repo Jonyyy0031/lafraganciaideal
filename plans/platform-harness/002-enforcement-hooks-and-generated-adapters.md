@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: platform
 min_implementer: high
 depends_on: ["001"]
@@ -179,6 +179,55 @@ turns roles into tool-specific adapters with `~/codes/web-rh/scripts/harness/ada
 | integration | no      |                                                                |
 
 ## Deviations
+
+Format: said / reality / done.
+
+1. **Steps 1–4 written before this phase.** Said: implement steps in order once 002 is
+   `implementing`. Reality: the hooks (`.claude/hooks/*.py`), `.claude/settings.json`,
+   `scripts/harness/__init__.py` and `scripts/harness/test_hooks.py` (335 tests) were written by
+   a subagent while plan 001 was still open (untracked, hooks already live). Done: reviewed them
+   against web-rh's guards; no real defect found, kept as is. Its intentional differences from
+   web-rh, recorded here:
+   - `2>&1`, `>&2`, `2>/dev/null` allowed (fd duplication writes no file; `/dev/null` is a
+     checked literal target).
+   - Extra wrappers blocked: `nohup`, `nice`, `timeout`, `time`, `stdbuf`.
+   - Forced refspecs (`git push origin +branch`) blocked like `--force`.
+   - NUL in a command blocked (fail closed).
+   - `uv run` treated as transparent: its flags are skipped, `-m` is checked as `python -m`,
+     `--directory`/`--project` move the checked cwd.
+   - `just db-reset` allowed only as exactly `db-reset --test`.
+   - psql SQL checks also apply to `docker … psql`; DELETE-without-WHERE is checked per
+     statement.
+   - `format_file` runs `ruff check --fix` before `ruff format` (fixes can leave blank lines),
+     both with `--force-exclude`.
+   - The `scripts/…db reset` rule was not ported: this repo has no such script.
+2. **`pyproject.toml` unchanged.** Said: step 4 modifies it. Reality: `S101`/`S603`/`S607` were
+   already ignored for `scripts/**/test_*.py` and `testpaths` already covers `scripts`. Done:
+   nothing to change.
+3. **`check` does not run the harness tests twice.** Said: `test-harness` part of `check`.
+   Reality: `uv run pytest` already collects `scripts/harness`. Done: `check` runs
+   `harness-check`, `(test "--ignore=scripts/harness")` and `test-harness`; CI quality does the
+   same (`pytest --ignore=scripts/harness`, `just harness-check`, `just test-harness`).
+4. **Plan-002 markers outside the listed docs.** Said: steps 5/10 touch `HARNESS.md`,
+   `security.md`, `workflow.md`, `AGENTS.md`, `CLAUDE.md`. Reality: plan 001 also left
+   "plan 002" markers in `docs/harness/roles/reviewer.md` (checklist line) and
+   `docs/harness/conventions/testing.md` (two lines). Done: removed those markers only (wording,
+   no rule change); `plans-scope --base HEAD` reports exactly these two files as extra.
+5. **Generator details.** `sync.py` runs as `PYTHONPATH=scripts uv run python -m harness.sync`
+   (like the plans recipes) and also rejects `'''` in a profile description, not only in the
+   body; unknown arguments exit 2. Codex model names and fragments are web-rh's, with the
+   destructive fragment adapted to Alembic/`db-reset --test`/docker volumes and the findings
+   path `plans/findings/`. The verbatim web-rh trust-boundary lines were reflowed to the
+   100-column ruff limit.
+6. **Recipe skills are short pointers** (`docs/recipes/*.md`, `apps/api/README.md`, the
+   catalog files) rather than web-rh's long inline recipes, so the recipe docs stay the single
+   source.
+7. Step 10's adapter diagram and "how to change a role" already existed in `HARNESS.md` and
+   `CLAUDE.md` from plan 001; only the "arrives with 002" caveats were removed and the hook
+   registration/Codex note added.
+
+Not verified here (manual, e2e layer): a fresh Claude Code session listing the skills and
+subagents; Codex listing the profiles.
 
 ## Test coverage
 

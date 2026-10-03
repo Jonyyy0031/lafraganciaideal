@@ -2,8 +2,6 @@
 
 ## Claude Code specifics
 
-Skills, subagents and hooks below _(arrives with plan platform-harness/002)_.
-
 - **Pipeline skills** (generated from `docs/harness/`; never edited by hand):
   - `plan` — architect: writes a plan in `plans/` (does not touch code).
   - `implement` — implementer, inline, for an approved plan.
@@ -19,7 +17,8 @@ Skills, subagents and hooks below _(arrives with plan platform-harness/002)_.
 - **Active hooks** (`.claude/settings.json`): `guard_bash`, `guard_files` and `guard_read` block
   destructive actions and secret reads; when one blocks you, read the reason and use the
   suggested alternative — never try to get around it. `format_file` runs ruff after each edit
-  of a `.py` file.
+  of a `.py` file. Hooks run only when Claude Code loads the project settings, and Codex runs
+  none; `uv run just test-harness` tests them with inert payloads.
 - To change a subagent or pipeline skill: edit `docs/harness/roles/*.md` or
   `scripts/harness/adapters.py` and run `uv run just harness-sync`.
 - Personal preferences that must not be versioned: `CLAUDE.local.md` or

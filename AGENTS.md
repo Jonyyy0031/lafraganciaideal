@@ -86,15 +86,13 @@ pyproject.toml   uv workspace root: repo tooling + dev tools; apps/api is a memb
 | Start / stop services (keeps data)      | `uv run just up` / `uv run just down`                      |
 | Run the API / the worker                | `uv run just api` (port 8100) / `uv run just worker`        |
 | **Full verification (mandatory)**       | `uv run just check`                                        |
-| Unit / integration / hook tests         | `uv run just test` / `test-integration` / `test-harness` (002) |
+| Unit / integration / hook tests         | `uv run just test` / `test-integration` / `test-harness` |
 | Types / architecture rules              | `uv run just typecheck` / `uv run just arch`               |
 | Regenerate the committed OpenAPI        | `uv run just openapi` (after any contract change)          |
 | Migrations                              | `uv run just db-migrate [--test]` · `db-revision "msg"`    |
 | SQL shell                               | `uv run just psql [-d fragancia_test]`                     |
 | Plans: status / lint / scope            | `uv run just plans-status` / `plans-lint` / `plans-scope <plan>` |
-| Regenerate agents and skills            | `uv run just harness-sync` (`harness-check` in `check`) (002) |
-
-Entries marked (002) _(arrives with plan platform-harness/002)_.
+| Regenerate agents and skills            | `uv run just harness-sync` (`harness-check` in `check`)    |
 
 `just` comes from the uv environment (`rust-just` dev dependency). Python dependencies:
 `uv add [--dev] <pkg>` (never `pip install`, never npm/yarn/npx; pnpm only for the web app in

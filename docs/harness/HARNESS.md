@@ -47,8 +47,9 @@ The generator is `scripts/harness/sync.py`. `just check` runs `just harness-chec
 different `~`, obsolete `-`). To change an adapter, edit the role doc or
 `scripts/harness/adapters.py` and run `uv run just harness-sync`. Hand-written recipe skills —
 `new-module`, `new-use-case`, `db-change` — are not generated; they load
-[docs/recipes/](../recipes/) and are conventions detail, not roles. (Hooks and adapters arrive
-with `plans/platform-harness/002`; until it is `done`, treat them as planned.)
+[docs/recipes/](../recipes/) and are conventions detail, not roles. `.codex/config.toml`
+(subagent limits) is hand-written too. The generated paths are also write-protected by the
+`guard_files` hook, so a Claude session cannot hand-edit them by accident.
 
 There is no runtime orchestrator. **Orchestration is a protocol, not a process**: any
 session, any tool, any model, or a human reads a plan's `status:` and the routing table in
@@ -61,17 +62,18 @@ session, any tool, any model, or a human reads a plan's `status:` and the routin
 | Layer and module boundaries                                                 | `just arch` (import-linter, `apps/api/.importlinter`) |
 | Plans are well-formed, statuses coherent                                    | `just plans-lint` (in `just check`)               |
 | Diff stays inside the plan's file list                                      | `just plans-scope <plan>` (reviewer runs it)      |
-| Adapters match their role docs                                              | `just harness-check` (in `just check`; plan 002)  |
+| Adapters match their role docs                                              | `just harness-check` (in `just check` and CI)     |
 | Known destructive shell/git/db/docker forms (registered Claude hook only)   | `.claude/hooks/guard_bash.py` (+ its tests)       |
 | Protected paths through registered edit hooks (not arbitrary programs)      | `.claude/hooks/guard_files.py`                    |
 | Secrets not read through the registered Read hook                           | `.claude/hooks/guard_read.py`                     |
 | Formatting of edited Python files                                           | `.claude/hooks/format_file.py` (ruff), pre-commit |
 | Commit format, registry scopes, no AI attribution, no generic subjects      | `scripts/commits.py` (`commit-msg` hook + CI `commits` job) |
 | Explicit staging only (no `git add -A` / `.` / `-u` / `commit -a`)          | `.claude/hooks/guard_bash.py`                     |
-| Hook programs keep blocking what they must block                            | `just test-harness` (in `just check`; plan 002)   |
+| Hook programs keep blocking what they must block                            | `just test-harness` (in `just check` and CI)      |
 
-Codex does not run Claude hooks. That is why its generated profiles carry the destructive
-rules as text. `just test-harness` tests guard behavior with inert payloads; it does not
+The hooks are registered in `.claude/settings.json` (with its allow/ask/deny permissions) and
+run only when Claude Code loads the project settings. Codex does not run Claude hooks. That is
+why its generated profiles carry the destructive rules as text. `just test-harness` tests guard behavior with inert payloads; it does not
 register hooks in Codex or prove live enforcement. Host sandbox/permissions remain essential.
 See [security.md](security.md).
 
