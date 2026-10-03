@@ -32,7 +32,7 @@ TYPES = {
     "chore",
     "revert",
 }
-CROSS_CUTTING_SCOPES = {"api", "web", "infra", "ci", "deps", "docs", "repo"}
+CROSS_CUTTING_SCOPES = {"api", "web", "infra", "ci", "deps", "docs", "repo", "harness"}
 MAX_HEADER = 100
 
 HEADER = re.compile(

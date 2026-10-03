@@ -17,6 +17,7 @@ dev = [
     "psycopg[binary]>=3.3.6",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pyyaml>=6.0.3",
     "ruff>=0.16.10",
     "rust-just>=1.58.0",
 ]
@@ -33,6 +34,8 @@ fragancia-api = { workspace = true }
 [tool.ruff]
 line-length = 100
 target-version = "py314"
+# The Claude Code hooks run on the system python3: keep their syntax valid on Python 3.10+.
+per-file-target-version = { ".claude/hooks/*.py" = "py310" }
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S"]
@@ -41,7 +44,7 @@ select = ["E", "F", "I", "B", "UP", "S"]
 known-first-party = ["bootstrap", "commits", "infra", "fragancia_api"]
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/test_*.py" = ["S101"]
+"scripts/**/test_*.py" = ["S101", "S603", "S607"]
 "apps/api/tests/**" = ["S101", "S105", "S106"]
 
 [tool.pytest.ini_options]

@@ -7,7 +7,8 @@
 # ⚠️  `docker compose down -v` DELETES all data. Never run it without explicit intent.
 #
 # Ports bind to 127.0.0.1 only and default to values that do not clash with ~/codes/web-rh,
-# so both environments can run side by side. Override them in the root .env.
+# so both environments can run side by side. There is no env file for compose (as in web-rh):
+# override a default by exporting it, e.g. `POSTGRES_PORT=5544 uv run just up`.
 # Images are pinned by digest; see README.md → "Updating infrastructure images".
 name: fragancia
 
@@ -20,13 +21,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-fragancia}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fragancia-dev}
       POSTGRES_DB: ${POSTGRES_DB:-fragancia}
-      POSTGRES_TEST_DB: ${POSTGRES_TEST_DB:-fragancia_test}
       TZ: UTC
     ports:
       - '127.0.0.1:${POSTGRES_PORT:-5433}:5432'
     volumes:
       - postgres-data:/var/lib/postgresql
-      - ./postgres/01-create-test-db.sh:/docker-entrypoint-initdb.d/01-create-test-db.sh:ro
+      - ./postgres/01-create-test-db.sql:/docker-entrypoint-initdb.d/01-create-test-db.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 5s

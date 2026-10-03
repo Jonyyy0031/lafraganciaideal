@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(uv run just check)",
+      "Bash(uv run just lint)",
+      "Bash(uv run just test)",
+      "Bash(uv run just test *)",
+      "Bash(uv run just typecheck)",
+      "Bash(uv run just arch)",
+      "Bash(uv run just openapi)",
+      "Bash(uv run just test-integration)",
+      "Bash(uv run just test-harness)",
+      "Bash(uv run just plans-lint)",
+      "Bash(uv run just plans-status *)",
+      "Bash(uv run just plans-scope *)",
+      "Bash(uv run just harness-sync)",
+      "Bash(uv run just harness-check)",
+      "Bash(uv run just ps)",
+      "Bash(uv run just logs *)",
+      "Bash(uv sync)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch)",
+      "Bash(git switch -c *)",
+      "Bash(git add *)",
+      "Bash(docker compose -f infra/docker/compose.yaml ps)",
+      "Bash(docker compose -f infra/docker/compose.yaml logs *)"
+    ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(uv add *)",
+      "Bash(uv remove *)",
+      "Bash(uv run just db-migrate *)",
+      "Bash(uv run just db-reset *)",
+      "Bash(docker *)",
+      "Bash(gh *)"
+    ],
+    "deny": [
+      "Read(./**/.env)",
+      "Read(./**/.env.local)",
+      "Read(./**/.env.production)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_bash.py",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_files.py",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_read.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/format_file.py",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

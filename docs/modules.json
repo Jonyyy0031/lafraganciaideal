@@ -1,5 +1,5 @@
 {
-  "$comment": "Module registry. A plan's `module:` and a commit's scope must be one of these names (or a cross-cutting scope from scripts/commits.py). `planned` modules may be created by a plan; nothing may assume they exist until that plan is done.",
+  "$comment": "Module registry. A plan's `module:` and a commit's scope must be one of these names (or a cross-cutting scope from scripts/commits.py). `planned` modules may be created by a plan; nothing may assume they exist until that plan is done. Validated by `uv run just plans-lint`; see docs/harness/HARNESS.md → Module registry. Hot file: append-only edits.",
   "modules": [
     { "name": "platform", "status": "active", "description": "Cross-cutting infrastructure, tooling and CI" },
     { "name": "web", "status": "active", "description": "Angular storefront and admin panel (phase 3)" },

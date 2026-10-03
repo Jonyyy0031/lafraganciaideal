@@ -23,7 +23,7 @@ Requirements: **Docker** (with Compose v2), **[uv](https://docs.astral.sh/uv/)**
 `uv.lock`), so nothing else is installed system-wide:
 
 ```bash
-uv run just bootstrap   # .env files, services, migrations, S3 bucket and git hooks
+uv run just bootstrap   # apps/api/.env, services, migrations, S3 bucket and git hooks
 uv run just api         # API on http://127.0.0.1:8100/api/v1/docs
 uv run just worker      # background worker (outbox relay)
 ```
@@ -31,20 +31,24 @@ uv run just worker      # background worker (outbox relay)
 The commands below are written as `just …`. Run them as `uv run just …`, or activate the
 environment once per shell (`source .venv/bin/activate`, `.venv/bin/activate.fish` for fish).
 
-Bootstrap is idempotent: run it as often as you like. It never overwrites an existing `.env`
-and never deletes data.
+Bootstrap is idempotent: run it as often as you like. It never overwrites `apps/api/.env` (it
+only appends settings added to `.env.example` later) and never deletes data. There is a single
+env file, `apps/api/.env`; compose needs none (its defaults are inline, as in web-rh).
 
 ## Local services
 
 All ports bind to `127.0.0.1` only. Defaults differ from other local projects so they can run
-side by side; override them in `.env`.
+side by side; override one by exporting it, e.g. `POSTGRES_PORT=5544 uv run just up`. Compose
+reads only the exported variables: when you move PostgreSQL, Valkey or S3 to another port,
+update the matching URLs in `apps/api/.env` too (`DATABASE_URL`, `DATABASE_URL_TEST`,
+`VALKEY_URL`, `S3_ENDPOINT_URL`) — the API, Alembic and bootstrap read them from there.
 
 | Service    | Address                                    | Notes                                            |
 | ---------- | ------------------------------------------ | ------------------------------------------------ |
 | PostgreSQL | `127.0.0.1:5433`                           | databases `fragancia` and `fragancia_test`       |
 | Valkey     | `127.0.0.1:6380`                           | job queues                                       |
 | S3 API     | `http://127.0.0.1:9100`                    | bucket `fragancia-media` (product photos)        |
-| S3 console | [localhost:9101](http://localhost:9101)    | user/password from `.env` (`S3_ACCESS_KEY`/`…_SECRET_KEY`) |
+| S3 console | [localhost:9101](http://localhost:9101)    | user `fragancia`, password `fragancia-dev` |
 | Mailpit    | [localhost:8026](http://localhost:8026)    | SMTP on `127.0.0.1:1026`; captures every email   |
 
 ## Commands

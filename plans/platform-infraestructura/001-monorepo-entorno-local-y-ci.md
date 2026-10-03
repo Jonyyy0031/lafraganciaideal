@@ -228,6 +228,14 @@ None
 8. **Extra commit** — `fix(repo): show the rejected commit header as plain text` (the error
    printed a Python list) found during verification.
 
+## Test coverage
+
+Not applicable: completed before the harness existed (2026-10-02); tests and review evidence are recorded in Verification.
+
+## Review findings
+
+Not applicable: completed before the harness existed (2026-10-02); tests and review evidence are recorded in Verification.
+
 ## Verification
 
 Run on 2026-10-02 with web-rh's environment running in parallel (`rrhh-*` containers on

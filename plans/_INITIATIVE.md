@@ -1,6 +1,9 @@
 # <module>-<topic> — <Title>
 
-<!-- Initiative index: one directory per initiative, plans numbered 001, 002… English only. -->
+<!-- Initiative index: one directory per initiative (`plans/<module>-<topic>/`, kebab-case,
+     English), plans numbered 001, 002… and never renumbered. Rules:
+     docs/harness/conventions/plans.md → "The initiative README".
+     Status is NOT tracked here: run `uv run just plans-status <this-directory>`. -->
 
 ## Goal
 
