@@ -491,3 +491,39 @@ keeps non-string `status` invalid. None found.
 All passed → `status: verify`.
 
 ## Verification
+
+Verifier pass, 2026-10-02, branch `feat/platform-harness`, real Docker stack (project `fragancia`).
+
+- `uv run just check`: `plans OK (6 plans, 0 findings)`, import-linter `7 kept, 0 broken`,
+  `573 passed, 3 skipped, 15 deselected`, `docker compose config --quiet` clean.
+- `uv run just test-integration`: `15 passed, 75 deselected`.
+- Bootstrap run twice, both exit 0. Second run: `= apps/api/.env already exists`,
+  `= fragancia_test already exists`, `= bucket fragancia-media already exists`. A root `.env`
+  exists locally (not read, not deleted), so the run printed `! the root .env is no longer used`;
+  the "no root `.env`" precondition was therefore not reproduced (tooling test covers it).
+- Fresh volume: throwaway container (postgres image digest from compose, the `.sql` mounted
+  read-only into `/docker-entrypoint-initdb.d/`); `psql \l` listed `fragancia` and
+  `fragancia_test`; container stopped (`--rm`). Project volumes untouched.
+- `uv run just psql -d fragancia_test -c 'select 1'` returned `1`. `echo nope | just db-reset --test`:
+  `Aborted: nothing was changed.`, exit 1.
+- `docs/harness/`: HARNESS, workflow, security, 5 roles, 5 conventions (+ `frontend.md`) present.
+  `plans-lint`: OK. `plans-status`: 002 (approved) before 001 (verify), 4 done hidden; `--all`
+  lists them.
+- `plans-scope <this plan> --base origin/main`: exit 1; outside: `.claude/*`, `scripts/harness/*`,
+  plan 002, and `scripts/plans/conftest.py` + `test_lib.py` (Deviation 8); 50 declared, 63 changed.
+- Commit hook: `commits.py --file` accepted `docs(harness): ...` and rejected `wip stuff`.
+- PR template has the six sections in order. Lint failure on an `approved` plan without Out of
+  scope content: covered by `test_lint.py -k "out_of_scope or evidence"` (6 passed), not re-run on
+  a real broken plan.
+- Default stack still on `127.0.0.1:5433`.
+
+NOT VERIFIED:
+
+- `POSTGRES_PORT=5544 just up` publishing on 5544: the guard hook blocks `VAR=` prefixes in agent
+  shells; not worked around. Default stack unchanged.
+- `just db-reset --bogus` exits 2 with usage: the guard hook blocks any `db-reset` except
+  `--test` for agents; covered only by the tooling regression test.
+- "This initiative's PR uses the template": no PR exists yet.
+- CI green: not exercised.
+
+Status left at `verify`.
