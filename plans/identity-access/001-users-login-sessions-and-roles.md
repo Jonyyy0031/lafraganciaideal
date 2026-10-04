@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: identity
 min_implementer: high
 depends_on: []
@@ -1109,3 +1109,7 @@ Acceptance criteria: 20/21 verified; 1 partial.
 - NOT VERIFIED: a real `apps/api/.env` containing `ADMIN_DEV_TOKEN` (the file must not be read); simulated through the process environment instead.
 - NOT VERIFIED: the `Secure` flag in production (unit test only).
 - `plans-scope` still lists 4 out-of-scope files (already documented: `main/http.py`, `tests/unit/test_settings_bounds.py`, and two from `310fe2b`).
+
+Accepted by the user on 2026-10-04 (status `done`): the three NOT VERIFIED items above and the
+four out-of-scope files (`main/http.py`, `tests/unit/test_settings_bounds.py`, and the separate
+harness fix `310fe2b`).

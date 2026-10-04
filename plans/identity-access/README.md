@@ -50,6 +50,12 @@ them, and only the owner may invite or deactivate. Until 002, every account is c
 
 ## Delivered
 
+- **001** (2026-10-04): `identity` module with owner and staff users (argon2id, hashing off the
+  event loop); opaque sessions in `identity.sessions` sent as an httpOnly `SameSite=Strict`
+  cookie; login and password-change throttle in PostgreSQL; `POST /auth/login` and
+  `/admin/auth/{logout,me,password,sessions}`; `just create-owner`; `ADMIN_DEV_TOKEN` removed;
+  ADR 0009. Two review rounds; verified 20/21 (Scalar in the browser not verified).
+
 ## Considered and discarded
 
 - **JWT access + refresh tokens**: a stolen or deactivated user's token stays valid until it
