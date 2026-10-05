@@ -61,8 +61,9 @@ def test_schema_names_are_readable(spec: dict[str, Any]) -> None:
 
 def test_document_describes_the_api(spec: dict[str, Any]) -> None:
     assert spec["info"]["title"] == "La Fragancia Ideal API"
-    assert "Bearer" in spec["info"]["description"]
-    assert spec["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
+    assert "session cookie" in spec["info"]["description"]
+    scheme = spec["components"]["securitySchemes"]["APIKeyCookie"]
+    assert (scheme["in"], scheme["name"]) == ("cookie", "fragancia_session")
 
 
 async def test_scalar_reference_is_served_with_a_pinned_script() -> None:

@@ -48,8 +48,8 @@ E2E infrastructure must be added by a plan before any plan may require the e2e l
 - Platform fakes: `fragancia_api.shared.infrastructure.in_memory` (`FixedClock`,
   `InMemoryTransactionRunner`, `RecordingEventPublisher`). Module in-memory adapters:
   `<module>/infrastructure/in_memory.py`.
-- Helpers: `apps/api/tests/support.py` (`make_settings`, `ADMIN_HEADERS`,
-  `assert_admin_routes_are_protected`).
+- Helpers: `apps/api/tests/support.py` (`make_settings`, `ADMIN_HEADERS` (a session cookie
+  for `TestActorResolver`), `assert_admin_routes_are_protected`).
 - Integration: `apps/api/tests/integration/conftest.py` binds to `DATABASE_URL_TEST`;
   `Settings` refuses a test URL whose database name does not end in `_test`.
 - Composition: `tests/unit/test_container.py` proves the real container resolves; a new

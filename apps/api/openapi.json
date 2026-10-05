@@ -3,7 +3,7 @@
   "info": {
     "title": "La Fragancia Ideal API",
     "version": "1.0.0",
-    "description": "Online perfume store and back office. Admin routes (`/api/v1/admin/*`) need `Authorization: Bearer <token>`. Errors always have the shape `{code, message, details?}`."
+    "description": "Online perfume store and back office. Admin routes (`/api/v1/admin/*`) need the `fragancia_session` session cookie set by `POST /api/v1/auth/login`. Errors always have the shape `{code, message, details?}`."
   },
   "paths": {
     "/api/v1/health/live": {
@@ -60,6 +60,386 @@
         }
       }
     },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Log In",
+        "description": "Sign in to the back office. Sets the httpOnly session cookie; the token is never in the\nbody. 401 `IDENTITY_INVALID_CREDENTIALS` for a wrong email or password, 429\n`IDENTITY_TOO_MANY_ATTEMPTS` when the email or IP made too many attempts.",
+        "operationId": "log_in",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/auth/logout": {
+      "post": {
+        "tags": [
+          "identity · admin"
+        ],
+        "summary": "Log Out",
+        "description": "Sign out: revoke the current session and clear the cookie.",
+        "operationId": "log_out",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/auth/me": {
+      "get": {
+        "tags": [
+          "identity · admin"
+        ],
+        "summary": "Get My Account",
+        "description": "The signed-in user with their role and permissions.",
+        "operationId": "get_my_account",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminMe"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/auth/password": {
+      "put": {
+        "tags": [
+          "identity · admin"
+        ],
+        "summary": "Change My Password",
+        "description": "Change my password; every other session of mine is closed. 422\n`IDENTITY_PASSWORD_TOO_WEAK` if the new password breaks the rules, 422\n`IDENTITY_CURRENT_PASSWORD_WRONG` if the current one is not correct, 429\n`IDENTITY_TOO_MANY_ATTEMPTS` after too many wrong current passwords.",
+        "operationId": "change_my_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/auth/sessions": {
+      "get": {
+        "tags": [
+          "identity · admin"
+        ],
+        "summary": "List My Sessions",
+        "description": "My open sessions, most recently seen first; `current` marks this one.",
+        "operationId": "list_my_sessions",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminSession"
+                  },
+                  "type": "array",
+                  "title": "Response List My Sessions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "identity · admin"
+        ],
+        "summary": "Close My Other Sessions",
+        "description": "Close every session of mine except the current one.",
+        "operationId": "close_my_other_sessions",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/auth/sessions/{session_id}": {
+      "delete": {
+        "tags": [
+          "identity · admin"
+        ],
+        "summary": "Close My Session",
+        "description": "Close one of my sessions. 404 `IDENTITY_SESSION_NOT_FOUND` if it is not an open\nsession of mine.",
+        "operationId": "close_my_session",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/brands": {
       "get": {
         "tags": [
@@ -96,7 +476,7 @@
         "operationId": "create_brand",
         "security": [
           {
-            "HTTPBearer": []
+            "APIKeyCookie": []
           }
         ],
         "requestBody": {
@@ -121,7 +501,7 @@
             }
           },
           "401": {
-            "description": "Missing or unknown token",
+            "description": "Missing or unknown session",
             "content": {
               "application/json": {
                 "schema": {
@@ -171,7 +551,7 @@
         "operationId": "list_all_brands",
         "security": [
           {
-            "HTTPBearer": []
+            "APIKeyCookie": []
           }
         ],
         "parameters": [
@@ -211,7 +591,7 @@
             }
           },
           "401": {
-            "description": "Missing or unknown token",
+            "description": "Missing or unknown session",
             "content": {
               "application/json": {
                 "schema": {
@@ -318,6 +698,131 @@
         "title": "AdminBrandPage",
         "description": "One page of the admin brand list."
       },
+      "AdminMe": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "staff"
+            ],
+            "title": "Role"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions",
+            "description": "Sorted permission names"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "name",
+          "role",
+          "permissions"
+        ],
+        "title": "AdminMe",
+        "description": "The signed-in back-office user."
+      },
+      "AdminSession": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Seen At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "user_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Agent"
+          },
+          "ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip"
+          },
+          "current": {
+            "type": "boolean",
+            "title": "Current"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "last_seen_at",
+          "expires_at",
+          "user_agent",
+          "ip",
+          "current"
+        ],
+        "title": "AdminSession",
+        "description": "One of my open sessions."
+      },
+      "ChangePasswordRequest": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Current Password"
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "New Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "ChangePasswordRequest"
+      },
       "CreateBrandRequest": {
         "properties": {
           "name": {
@@ -391,6 +896,48 @@
         "type": "object",
         "title": "Liveness"
       },
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 320,
+            "title": "Email",
+            "examples": [
+              "owner@example.test"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest"
+      },
+      "LoginResponse": {
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/AdminMe"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user",
+          "expires_at"
+        ],
+        "title": "LoginResponse",
+        "description": "The signed-in user and when the session expires at the latest. The session token\ntravels only in the httpOnly cookie."
+      },
       "PublicBrand": {
         "properties": {
           "id": {
@@ -447,10 +994,11 @@
       }
     },
     "securitySchemes": {
-      "HTTPBearer": {
-        "type": "http",
-        "description": "Admin token",
-        "scheme": "bearer"
+      "APIKeyCookie": {
+        "type": "apiKey",
+        "description": "Session cookie set by POST /api/v1/auth/login",
+        "in": "cookie",
+        "name": "fragancia_session"
       }
     }
   }

@@ -7,6 +7,8 @@ from fragancia_api.shared.kernel.errors import (
     DomainError,
     InvalidValueError,
     NotFoundError,
+    RateLimitedError,
+    UnauthenticatedError,
 )
 from fragancia_api.shared.kernel.events import DomainEvent
 from fragancia_api.shared.kernel.ids import new_id
@@ -24,6 +26,8 @@ __all__ = [
     "Money",
     "NotFoundError",
     "Ok",
+    "RateLimitedError",
     "Result",
+    "UnauthenticatedError",
     "new_id",
 ]

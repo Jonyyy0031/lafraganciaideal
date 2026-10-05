@@ -17,8 +17,6 @@ def reference_router(*, openapi_url: str, title: str) -> APIRouter:
             openapi_url=openapi_url,
             title=title,
             scalar_js_url=SCALAR_JS_URL,
-            authentication={"preferredSecurityScheme": "HTTPBearer"},
-            persist_auth=True,  # development convenience: the dev token survives reloads
         )
 
     return router

@@ -15,7 +15,6 @@ from fragancia_api.shared.application.actor import Actor, ActorResolver
 from fragancia_api.shared.http import admin_router, public_router, require_admin, unwrap
 from fragancia_api.shared.http.health import HealthChecks
 from fragancia_api.shared.http.services import ServiceRegistry
-from fragancia_api.shared.infrastructure.dev_token_actor_resolver import DevTokenActorResolver
 from fragancia_api.shared.kernel import (
     BusinessRuleViolationError,
     ConflictError,
@@ -25,7 +24,7 @@ from fragancia_api.shared.kernel import (
 )
 from tests.support import (
     ADMIN_HEADERS,
-    ADMIN_TOKEN,
+    TestActorResolver,
     admin_operations,
     assert_admin_routes_are_protected,
     make_settings,
@@ -84,7 +83,7 @@ def make_app(
     *, checks: HealthChecks | None = None, resolver: ActorResolver | None = None, docs: bool = True
 ) -> FastAPI:
     services = ServiceRegistry()
-    services.add(ActorResolver, resolver or DevTokenActorResolver(ADMIN_TOKEN))  # type: ignore[type-abstract]
+    services.add(ActorResolver, resolver or TestActorResolver())  # type: ignore[type-abstract]
     services.add(HealthChecks, checks or HealthChecks(database=_ok, valkey=_ok))
     return build_app(services, _routers(), docs=docs)
 
@@ -172,26 +171,26 @@ async def test_admin_route_without_token_is_401(client: AsyncClient) -> None:
     response = await client.get("/api/v1/admin/probe/whoami")
     assert response.status_code == 401
     assert response.json()["code"] == "AUTHENTICATION_REQUIRED"
-    assert response.headers["WWW-Authenticate"] == "Bearer"
+    assert "WWW-Authenticate" not in response.headers
 
 
 async def test_admin_route_with_unknown_token_is_401(client: AsyncClient) -> None:
     response = await client.get(
-        "/api/v1/admin/probe/whoami", headers={"Authorization": "Bearer wrong"}
+        "/api/v1/admin/probe/whoami", headers={"Cookie": "fragancia_session=wrong"}
     )
     assert response.status_code == 401
 
 
 async def test_admin_route_with_admin_token(client: AsyncClient) -> None:
     response = await client.get("/api/v1/admin/probe/whoami", headers=ADMIN_HEADERS)
-    assert (response.status_code, response.json()) == (200, {"id": "dev-admin"})
+    assert (response.status_code, response.json()) == (200, {"id": "test-admin"})
 
 
 async def test_admin_route_for_a_non_admin_is_403() -> None:
     app = make_app(resolver=CustomerResolver())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         response = await c.get(
-            "/api/v1/admin/probe/whoami", headers={"Authorization": "Bearer customer"}
+            "/api/v1/admin/probe/whoami", headers={"Cookie": "fragancia_session=customer"}
         )
     assert (response.status_code, response.json()["code"]) == (403, "FORBIDDEN")
 
@@ -208,7 +207,7 @@ async def test_docs_are_served_outside_production(client: AsyncClient) -> None:
 
 
 async def test_production_app_hides_the_docs() -> None:
-    container = build_container(make_settings(app_env="production", admin_dev_token=None))
+    container = build_container(make_settings(app_env="production"))
     app = create_app(container)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         assert (await c.get("/api/v1/docs")).status_code == 404

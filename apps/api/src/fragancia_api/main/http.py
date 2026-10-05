@@ -19,8 +19,9 @@ from fragancia_api.shared.infrastructure.logging import configure_logging
 API_PREFIX = "/api/v1"
 TITLE = "La Fragancia Ideal API"
 DESCRIPTION = (
-    "Online perfume store and back office. Admin routes (`/api/v1/admin/*`) need "
-    "`Authorization: Bearer <token>`. Errors always have the shape `{code, message, details?}`."
+    "Online perfume store and back office. Admin routes (`/api/v1/admin/*`) need the "
+    "`fragancia_session` session cookie set by `POST /api/v1/auth/login`. Errors always have "
+    "the shape `{code, message, details?}`."
 )
 
 

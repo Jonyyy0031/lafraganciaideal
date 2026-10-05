@@ -11,13 +11,8 @@ def test_valid_settings() -> None:
     assert not settings.is_production
 
 
-def test_production_refuses_the_development_admin_token() -> None:
-    with pytest.raises(ValidationError, match="ADMIN_DEV_TOKEN is for development only"):
-        make_settings(app_env="production")
-
-
-def test_production_without_the_token_is_valid() -> None:
-    assert make_settings(app_env="production", admin_dev_token=None).is_production
+def test_production_settings_are_valid() -> None:
+    assert make_settings(app_env="production").is_production
 
 
 def test_test_database_name_must_end_in_test() -> None:

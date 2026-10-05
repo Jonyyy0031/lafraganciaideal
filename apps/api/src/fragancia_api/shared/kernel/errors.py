@@ -38,3 +38,13 @@ class InvalidValueError(DomainError):
 @dataclass(frozen=True)
 class BusinessRuleViolationError(DomainError):
     """A valid request that a business rule forbids, e.g. shipping an unpaid order (HTTP 422)."""
+
+
+@dataclass(frozen=True)
+class UnauthenticatedError(DomainError):
+    """The caller could not be identified, e.g. wrong credentials (HTTP 401)."""
+
+
+@dataclass(frozen=True)
+class RateLimitedError(DomainError):
+    """Too many attempts; try again later (HTTP 429)."""

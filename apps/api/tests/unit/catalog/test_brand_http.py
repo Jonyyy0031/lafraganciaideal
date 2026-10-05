@@ -14,13 +14,12 @@ from fragancia_api.modules.catalog.infrastructure.in_memory import InMemoryBrand
 from fragancia_api.shared.application.actor import ActorResolver
 from fragancia_api.shared.http.health import HealthChecks
 from fragancia_api.shared.http.services import ServiceRegistry
-from fragancia_api.shared.infrastructure.dev_token_actor_resolver import DevTokenActorResolver
 from fragancia_api.shared.infrastructure.in_memory import (
     FixedClock,
     InMemoryTransactionRunner,
     RecordingEventPublisher,
 )
-from tests.support import ADMIN_HEADERS, ADMIN_TOKEN, assert_admin_routes_are_protected
+from tests.support import ADMIN_HEADERS, TestActorResolver, assert_admin_routes_are_protected
 
 BRANDS = "/api/v1/brands"
 ADMIN_BRANDS = "/api/v1/admin/brands"
@@ -34,7 +33,7 @@ def store() -> InMemoryBrands:
 @pytest.fixture
 async def client(store: InMemoryBrands) -> AsyncIterator[AsyncClient]:
     services = ServiceRegistry()
-    services.add(ActorResolver, DevTokenActorResolver(ADMIN_TOKEN))  # type: ignore[type-abstract]
+    services.add(ActorResolver, TestActorResolver())  # type: ignore[type-abstract]
     services.add(HealthChecks, HealthChecks())
     services.add(
         CreateBrand,
@@ -68,7 +67,7 @@ async def test_create_brand_returns_201_with_the_id(
 async def test_create_brand_requires_an_admin(client: AsyncClient) -> None:
     no_token = await client.post(ADMIN_BRANDS, json={"name": "Dior"})
     wrong_token = await client.post(
-        ADMIN_BRANDS, json={"name": "Dior"}, headers={"Authorization": "Bearer nope"}
+        ADMIN_BRANDS, json={"name": "Dior"}, headers={"Cookie": "fragancia_session=nope"}
     )
     assert (no_token.status_code, no_token.json()["code"]) == (401, "AUTHENTICATION_REQUIRED")
     assert wrong_token.status_code == 401

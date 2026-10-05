@@ -71,7 +71,11 @@ def fixture_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
     versions = root / "apps" / "api" / "migrations" / "versions"
     versions.mkdir(parents=True)
     (versions / "0001_initial.py").write_text("revision = '0001'\n")
-    subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)  # noqa: S607
+    subprocess.run(
+        ["git", "add", "tracked.txt", "apps/api/migrations/versions/0001_initial.py"],  # noqa: S607
+        cwd=root,
+        check=True,
+    )
     return root
 
 
@@ -709,6 +713,32 @@ def test_guard_files_checks_every_edit_of_a_multiedit_not_only_the_first() -> No
 def test_guard_files_blocks_a_secret_in_edits_even_when_the_parent_path_is_fine() -> None:
     assert edit({"file_path": "README.md", "edits": [{"file_path": ".env"}]}) == 2
     assert edit({"notebook_path": "n.ipynb", "edits": [{"notebook_path": "uv.lock"}]}) == 2
+
+
+def test_guard_files_allows_reviewing_a_migration_git_has_never_seen(fixture_repo: Path) -> None:
+    # `just db-revision` writes the file; the recipe then asks for a hand review
+    # (CREATE SCHEMA, formatting). Once git knows the file, it is history and stays blocked.
+    generated = fixture_repo / "apps" / "api" / "migrations" / "versions" / "0004_generated.py"
+    generated.write_text("revision = '0004'\n")
+    try:
+        assert edit({"file_path": str(generated)}, fixture_repo) == 0
+        subprocess.run(["git", "add", str(generated)], cwd=fixture_repo, check=True)  # noqa: S607
+        assert edit({"file_path": str(generated)}, fixture_repo) == 2
+    finally:
+        subprocess.run(  # noqa: S607
+            ["git", "rm", "-q", "--cached", "--ignore-unmatch", str(generated)],
+            cwd=fixture_repo,
+            check=True,
+        )
+        generated.unlink()
+    assert edit({"file_path": "apps/api/migrations/versions/0001_initial.py"}, fixture_repo) == 2
+
+
+def test_guard_files_blocks_an_untracked_migration_outside_a_git_repo(tmp_path: Path) -> None:
+    versions = tmp_path / "apps" / "api" / "migrations" / "versions"
+    versions.mkdir(parents=True)
+    (versions / "0001_x.py").write_text("revision = '0001'\n")
+    assert edit({"file_path": "apps/api/migrations/versions/0001_x.py"}, tmp_path) == 2
 
 
 def test_guard_files_blocks_a_symlinked_new_migration(fixture_repo: Path) -> None:
