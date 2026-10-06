@@ -1113,3 +1113,6 @@ Acceptance criteria: 20/21 verified; 1 partial.
 Accepted by the user on 2026-10-04 (status `done`): the three NOT VERIFIED items above and the
 four out-of-scope files (`main/http.py`, `tests/unit/test_settings_bounds.py`, and the separate
 harness fix `310fe2b`).
+
+2026-10-06: the user verified Scalar in the browser by hand (`log_in` then `get_my_account`
+with no manual auth), which closes the first NOT VERIFIED item.
