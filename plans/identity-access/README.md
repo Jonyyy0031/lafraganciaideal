@@ -65,7 +65,15 @@ them, and only the owner may invite or deactivate. Until 002, every account is c
   event loop); opaque sessions in `identity.sessions` sent as an httpOnly `SameSite=Strict`
   cookie; login and password-change throttle in PostgreSQL; `POST /auth/login` and
   `/admin/auth/{logout,me,password,sessions}`; `just create-owner`; `ADMIN_DEV_TOKEN` removed;
-  ADR 0009. Two review rounds; verified 20/21 (Scalar in the browser not verified).
+  ADR 0009. Two review rounds; verified 20/21 (Scalar in the browser later verified by the user).
+- **002** (2026-10-07): owners invite staff by email (72 h single-use link), password reset by
+  email (60 min single-use link that closes every session), owners list, deactivate and
+  reactivate users; `/auth/invitations/accept`, `/auth/password-reset[/confirm]`,
+  `/admin/users…` and `/admin/invitations…` gated by `users:manage`; the shared `EmailSender`
+  port with an SMTP adapter, links minted by the outbox subscriber (ADR 0010); migration 0004;
+  the login race closed with a row lock. Three review rounds (lost updates and lock order);
+  verified 14/14. A follow-up fast-lane fix keeps a password change from undoing a concurrent
+  reset.
 
 ## Considered and discarded
 
