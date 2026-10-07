@@ -85,8 +85,8 @@ of its names, and every name is also a commit scope.
 - **Reference**: `catalog` — the canonical pattern. New modules imitate it by name
   (`apps/api/src/fragancia_api/modules/catalog/...`, recipe
   [new-module.md](../recipes/new-module.md)).
-- **Active**: `platform` (cross-cutting work), `web`, `catalog`.
-- **Planned**: `inventory`, `orders`, `payments`, `identity`, `notifications`, `shipping` — a
+- **Active**: `platform` (cross-cutting work), `web`, `catalog`, `identity`.
+- **Planned**: `inventory`, `orders`, `payments`, `notifications`, `shipping` — a
   plan may create them; nothing may assume they exist until that plan is `done`.
 
 ## Shared hot files (append-only)

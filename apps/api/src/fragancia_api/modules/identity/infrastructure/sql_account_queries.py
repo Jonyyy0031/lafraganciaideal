@@ -3,9 +3,14 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from fragancia_api.modules.identity.contracts import AdminMe, AdminSession
+from fragancia_api.modules.identity.contracts import (
+    AdminInvitation,
+    AdminMe,
+    AdminSession,
+    AdminUser,
+)
 from fragancia_api.modules.identity.domain.user import ROLE_PERMISSIONS, Role
-from fragancia_api.modules.identity.infrastructure.tables import sessions, users
+from fragancia_api.modules.identity.infrastructure.tables import invitations, sessions, users
 from fragancia_api.shared.infrastructure.database import Database
 
 
@@ -55,3 +60,36 @@ class SqlAccountQueries:
             AdminSession.model_validate({**row, "current": row["id"] == current_session_id})
             for row in rows
         ]
+
+    async def users(self) -> list[AdminUser]:
+        statement = select(
+            users.c.id,
+            users.c.email,
+            users.c.name,
+            users.c.role,
+            users.c.is_active,
+            users.c.created_at,
+        ).order_by(users.c.created_at, users.c.id)
+        async with self._database.reader() as session:
+            rows = (await session.execute(statement)).mappings().all()
+        return [AdminUser.model_validate(dict(row)) for row in rows]
+
+    async def pending_invitations(self, now: datetime) -> list[AdminInvitation]:
+        statement = (
+            select(
+                invitations.c.id,
+                invitations.c.email,
+                invitations.c.name,
+                invitations.c.created_at,
+                invitations.c.expires_at,
+            )
+            .where(
+                invitations.c.accepted_at.is_(None),
+                invitations.c.revoked_at.is_(None),
+                invitations.c.expires_at > now,
+            )
+            .order_by(invitations.c.created_at.desc(), invitations.c.id.desc())
+        )
+        async with self._database.reader() as session:
+            rows = (await session.execute(statement)).mappings().all()
+        return [AdminInvitation.model_validate(dict(row)) for row in rows]

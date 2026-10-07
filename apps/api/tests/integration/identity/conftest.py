@@ -23,7 +23,10 @@ IDLE = timedelta(minutes=120)
 async def clean_identity(container: Container) -> None:
     async with container.database.engine.begin() as connection:
         await connection.execute(
-            text("TRUNCATE identity.sessions, identity.users, identity.login_throttle")
+            text(
+                "TRUNCATE identity.sessions, identity.invitations, identity.password_resets, "
+                "identity.users, identity.login_throttle"
+            )
         )
 
 

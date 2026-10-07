@@ -1,7 +1,8 @@
 ---
-status: open # open → deferred | planned | resolved | discarded (the user decides)
+status: resolved # open → deferred | planned | resolved | discarded (the user decides)
 module: platform
 found: 2026-10-03
+plan: identity-access/001
 ---
 
 # HARNESS.md's module registry summary still lists identity as planned
@@ -27,3 +28,9 @@ becomes active.
 
 A docs-only fast-lane change: either add `identity` to Active, or drop the per-status lists and
 point to `docs/modules.json` (so the summary cannot drift again).
+
+## Decision
+
+2026-10-07: resolved as a docs-only fast-lane change approved by the user: `identity` moved
+from Planned to Active in HARNESS.md. Linked to identity-access/001, the plan that made the
+module active.

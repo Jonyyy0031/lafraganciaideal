@@ -34,3 +34,47 @@ def test_for_tests_points_at_the_test_database() -> None:
 def test_for_tests_requires_a_test_database() -> None:
     with pytest.raises(ValueError, match="DATABASE_URL_TEST is required"):
         make_settings(database_url_test=None).for_tests()
+
+
+def test_account_email_defaults() -> None:
+    settings = make_settings()
+    assert (settings.invitation_ttl_hours, settings.password_reset_ttl_minutes) == (72, 60)
+    assert settings.admin_web_url == "http://localhost:4200"
+    assert (settings.smtp_host, settings.smtp_port) == ("127.0.0.1", 1026)
+    assert (settings.smtp_username, settings.smtp_password) == (None, None)
+    assert settings.smtp_starttls is False
+    assert settings.mail_from == "La Fragancia Ideal <no-reply@lafraganciaideal.test>"
+
+
+@pytest.mark.parametrize(
+    "url", ["localhost:4200", "ftp://x", "//x", "http://x/", "https://admin.example.test/", ""]
+)
+def test_admin_web_url_needs_a_scheme_and_no_trailing_slash(url: str) -> None:
+    with pytest.raises(ValidationError, match="ADMIN_WEB_URL must start with http"):
+        make_settings(admin_web_url=url)
+
+
+@pytest.mark.parametrize("url", ["http://x", "https://admin.example.test", "http://localhost:4200"])
+def test_admin_web_url_accepts_a_base_url(url: str) -> None:
+    assert make_settings(admin_web_url=url).admin_web_url == url
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"invitation_ttl_hours": 0},
+        {"password_reset_ttl_minutes": 0},
+        {"smtp_port": 0},
+        {"smtp_port": 65536},
+    ],
+)
+def test_account_email_numbers_are_bounded(override: dict[str, int]) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**override)
+
+
+def test_the_smtp_password_is_a_secret_that_does_not_show_in_the_repr() -> None:
+    settings = make_settings(smtp_password="s3cret-value")
+    assert settings.smtp_password is not None
+    assert settings.smtp_password.get_secret_value() == "s3cret-value"
+    assert "s3cret-value" not in repr(settings)

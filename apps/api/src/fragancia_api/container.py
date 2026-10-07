@@ -22,6 +22,7 @@ from fragancia_api.shared.infrastructure.outbox import (
     OutboxEventPublisher,
     OutboxRelay,
 )
+from fragancia_api.shared.infrastructure.smtp_email_sender import SmtpEmailSender
 from fragancia_api.shared.infrastructure.tables import metadata
 from fragancia_api.shared.infrastructure.valkey import ValkeyHealth
 from fragancia_api.shared.module import AppModule, Platform
@@ -52,6 +53,16 @@ def build_container(settings: Settings, modules: Sequence[AppModule] = MODULES) 
         database=database,
         transactions=SqlTransactionRunner(database),
         events=OutboxEventPublisher(database),
+        email=SmtpEmailSender(
+            host=settings.smtp_host,
+            port=settings.smtp_port,
+            username=settings.smtp_username,
+            password=(
+                settings.smtp_password.get_secret_value() if settings.smtp_password else None
+            ),
+            starttls=settings.smtp_starttls,
+            sender=settings.mail_from,
+        ),
         subscriptions=bus,
         clock=SystemClock(),
         settings=settings,

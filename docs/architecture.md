@@ -56,7 +56,7 @@ Modules (✔ = built; `catalog` is the **reference module** — see [recipes/new
 | `inventory`     | Stock per size; reserve on checkout, release on cancellation, commit on payment       |
 | `orders`        | Cart → order; the `Order` aggregate and its state machine                             |
 | `payments`      | `PaymentGateway` port → Mercado Pago adapter (Checkout Pro); idempotent webhooks      |
-| `identity`      | ✔ Back-office users (owner, staff), opaque sessions in a cookie, login throttle        |
+| `identity`      | ✔ Back-office users (owner, staff), opaque sessions in a cookie, login throttle, invitations, password reset by email, deactivation |
 | `notifications` | Order emails first; WhatsApp (Cloud API) later; driven by events                      |
 | `shipping`      | `CarrierGateway` port (quotes, labels, tracking) — later                              |
 

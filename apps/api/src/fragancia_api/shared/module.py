@@ -7,6 +7,7 @@ from fastapi import APIRouter
 
 from fragancia_api.config import Settings
 from fragancia_api.shared.application.clock import Clock
+from fragancia_api.shared.application.email import EmailSender
 from fragancia_api.shared.application.events import EventPublisher, EventSubscriptions
 from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.http.services import ServiceRegistry
@@ -21,6 +22,7 @@ class Platform:
     database: Database
     transactions: TransactionRunner
     events: EventPublisher
+    email: EmailSender
     subscriptions: EventSubscriptions
     clock: Clock
     settings: Settings

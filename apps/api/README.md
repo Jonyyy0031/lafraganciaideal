@@ -8,13 +8,15 @@ Commands run from the repository root with `uv run just <recipe>`.
 ```bash
 uv run just bootstrap        # once: services, apps/api/.env, migrations on both databases
 uv run just api              # http://127.0.0.1:8100/api/v1/docs (Scalar, auto-reload)
-uv run just worker           # background jobs: relays the outbox every 2 seconds
+uv run just worker           # background jobs: relays the outbox every 2 seconds, sends account emails
 ```
 
 Admin endpoints (`/api/v1/admin/*`) need a session cookie. Create an owner once with
 `uv run just create-owner --email <email> --name <name>` (it asks for a 12+ character
 password), then sign in with `POST /api/v1/auth/login`; the response sets the httpOnly
-`fragancia_session` cookie that later admin calls send.
+`fragancia_session` cookie that later admin calls send. After the first owner, invite staff
+with `POST /api/v1/admin/invitations`; the email arrives in Mailpit (`http://127.0.0.1:8026`)
+while the worker runs.
 
 ## Layout
 
@@ -27,9 +29,10 @@ src/fragancia_api/
 │   └── worker.py      arq WorkerSettings (outbox relay cron)
 ├── shared/
 │   ├── kernel/        Pure: Result, DomainError categories, AggregateRoot, DomainEvent, Money, ids
-│   ├── application/   Ports: TransactionRunner, EventPublisher, EventSubscriptions, ActorResolver
+│   ├── application/   Ports: TransactionRunner, EventPublisher, EventSubscriptions, ActorResolver,
+│   │                  EmailSender
 │   ├── infrastructure/ Database + ContextVar session, SqlTransactionRunner, outbox + relay,
-│   │                  dev token resolver, Valkey health, logging, shared MetaData
+│   │                  SMTP email sender, Valkey health, logging, shared MetaData
 │   ├── http/          Error mapping, declared access, health, request id, ServiceRegistry/provide
 │   └── module.py      AppModule + Platform: what a module receives and hands back
 ├── shared/contracts/ Shared response shapes (Page)

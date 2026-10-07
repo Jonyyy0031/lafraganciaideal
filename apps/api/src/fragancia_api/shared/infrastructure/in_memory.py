@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 
+from fragancia_api.shared.application.email import EmailMessage
 from fragancia_api.shared.kernel import DomainEvent, Result
 
 
@@ -19,6 +20,17 @@ class RecordingEventPublisher:
 
     async def publish(self, events: Sequence[DomainEvent]) -> None:
         self.published.extend(events)
+
+
+class RecordingEmailSender:
+    def __init__(self) -> None:
+        self.sent: list[EmailMessage] = []
+        self.fail = False
+
+    async def send(self, message: EmailMessage) -> None:
+        if self.fail:
+            raise ConnectionError("smtp down")
+        self.sent.append(message)
 
 
 class FixedClock:

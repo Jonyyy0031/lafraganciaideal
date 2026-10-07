@@ -43,7 +43,14 @@ class ResolveSessionActor:
             if now - session.last_seen_at >= TOUCH_INTERVAL:
                 session.touch(now)
                 await self._sessions.save(session)
-            return Ok(Actor(id=str(user.id), is_admin=True, session_id=session.id))
+            return Ok(
+                Actor(
+                    id=str(user.id),
+                    is_admin=True,
+                    session_id=session.id,
+                    permissions=user.permissions,
+                )
+            )
 
         match await self._transactions.run(work):
             case Ok(actor):

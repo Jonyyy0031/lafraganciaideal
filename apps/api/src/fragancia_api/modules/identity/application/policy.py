@@ -14,3 +14,19 @@ class AuthPolicy:
     throttle_window: timedelta
     email_max_attempts: int
     ip_max_attempts: int
+
+
+@dataclass(frozen=True, slots=True)
+class AccountLinks:
+    """Where emailed links point and how long they live (built from settings by `module.py`).
+    The token goes in the URL fragment so it never reaches access logs or `Referer`."""
+
+    admin_web_url: str
+    invitation_ttl: timedelta
+    reset_ttl: timedelta
+
+    def invitation_url(self, token: str) -> str:
+        return f"{self.admin_web_url}/admin/activar-cuenta#token={token}"
+
+    def reset_url(self, token: str) -> str:
+        return f"{self.admin_web_url}/admin/restablecer-contrasena#token={token}"

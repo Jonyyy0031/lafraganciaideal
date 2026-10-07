@@ -5,6 +5,7 @@ cookie (`fragancia_session`, set by `POST /api/v1/auth/login`) through the `Acto
 port. A test walks every route to check that nothing under `/admin` escapes this dependency.
 """
 
+from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
@@ -39,6 +40,16 @@ async def require_admin(
     return actor
 
 
+def require_permission(permission: str) -> Callable[[Request], None]:
+    """Router dependency for admin routes that need a permission (after require_admin)."""
+
+    def check(request: Request) -> None:
+        if permission not in request.state.actor.permissions:
+            raise Forbidden
+
+    return check
+
+
 def public_router(**kwargs: Any) -> APIRouter:
     """Routes anyone can call (the storefront)."""
     return APIRouter(**kwargs)
@@ -46,7 +57,10 @@ def public_router(**kwargs: Any) -> APIRouter:
 
 ADMIN_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorResponse, "description": "Missing or unknown session"},
-    403: {"model": ErrorResponse, "description": "The actor is not an admin"},
+    403: {
+        "model": ErrorResponse,
+        "description": "The actor is not an admin or lacks the permission",
+    },
 }
 
 
