@@ -47,3 +47,41 @@ class AdminSession(BaseModel):
     user_agent: str | None
     ip: str | None
     current: bool
+
+
+class InviteUserRequest(BaseModel):
+    email: str = Field(max_length=320, examples=["staff@example.test"])
+    name: str = Field(max_length=200)
+
+
+class AdminInvitation(BaseModel):
+    """A pending invitation (always for a staff account)."""
+
+    id: UUID
+    email: str
+    name: str
+    created_at: datetime
+    expires_at: datetime
+
+
+class AdminUser(BaseModel):
+    id: UUID
+    email: str
+    name: str
+    role: Literal["owner", "staff"]
+    is_active: bool
+    created_at: datetime
+
+
+class AcceptInvitationRequest(BaseModel):
+    token: str = Field(max_length=128)
+    password: str = Field(max_length=1024)
+
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(max_length=320)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(max_length=128)
+    new_password: str = Field(max_length=1024)

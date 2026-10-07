@@ -2,7 +2,11 @@ from uuid import UUID
 
 from fragancia_api.modules.identity.application.policy import AuthPolicy
 from fragancia_api.modules.identity.application.ports import LoginThrottle, PasswordHasher
-from fragancia_api.modules.identity.domain.errors import CurrentPasswordWrong, TooManyAttempts
+from fragancia_api.modules.identity.domain.errors import (
+    ActorInactive,
+    CurrentPasswordWrong,
+    TooManyAttempts,
+)
 from fragancia_api.modules.identity.domain.repositories import SessionRepository, UserRepository
 from fragancia_api.modules.identity.domain.user import PlainPassword, User
 from fragancia_api.shared.application.clock import Clock
@@ -72,8 +76,13 @@ class ChangePassword:
 
         async def work() -> Result[None, DomainError]:
             now = self._clock.now()
-            user.change_password(new_hash, now=now)
-            await self._users.save(user)
+            # Re-read under a row lock: `save` writes `is_active`, so saving the object loaded
+            # before the slow hash could undo a deactivation committed meanwhile.
+            locked = await self._users.get_for_update(user_id)
+            if locked is None or not locked.is_active:
+                return Err(ActorInactive())
+            locked.change_password(new_hash, now=now)
+            await self._users.save(locked)
             await self._sessions.revoke_all_for_user(user_id, except_id=session_id, now=now)
             await self._throttle.clear(throttle_key)
             return Ok(None)

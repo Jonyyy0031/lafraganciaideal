@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 API_ROOT = Path(__file__).resolve().parents[2]
@@ -59,6 +59,23 @@ class Settings(DatabaseSettings):
     login_email_max_attempts: int = Field(default=5, ge=1)
     login_ip_max_attempts: int = Field(default=50, ge=1)
     login_window_minutes: int = Field(default=15, ge=1)
+    # Account emails (identity) and SMTP.
+    invitation_ttl_hours: int = Field(default=72, ge=1)
+    password_reset_ttl_minutes: int = Field(default=60, ge=1)
+    admin_web_url: str = "http://localhost:4200"
+    smtp_host: str = "127.0.0.1"
+    smtp_port: int = Field(default=1026, ge=1, le=65535)
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_starttls: bool = False
+    mail_from: str = "La Fragancia Ideal <no-reply@lafraganciaideal.test>"
+
+    @model_validator(mode="after")
+    def _check_admin_web_url(self) -> Self:
+        url = self.admin_web_url
+        if not url.startswith(("http://", "https://")) or url.endswith("/"):
+            raise ValueError("ADMIN_WEB_URL must start with http:// or https:// and not end with /")
+        return self
 
     @cached_property
     def cors_origin_list(self) -> list[str]:

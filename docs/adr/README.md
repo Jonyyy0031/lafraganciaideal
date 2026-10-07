@@ -14,3 +14,4 @@ supersedes the old one. Copy [0000-template.md](0000-template.md).
 | [0007](0007-sqlalchemy-core-and-mappers.md) | SQLAlchemy Core tables + explicit mappers (no ORM mapping) |
 | [0008](0008-result-type-and-manual-composition-root.md) | `Result` for expected errors; manual composition root |
 | [0009](0009-opaque-sessions-in-postgres.md) | Opaque back-office sessions in PostgreSQL, carried by an httpOnly cookie |
+| [0010](0010-account-links-minted-at-send-time.md) | Emailed account links: token minted at send time, only its digest stored |

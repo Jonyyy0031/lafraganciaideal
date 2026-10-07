@@ -3,8 +3,15 @@
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from fragancia_api.modules.identity.contracts import AdminMe, AdminSession
+from fragancia_api.modules.identity.contracts import (
+    AdminInvitation,
+    AdminMe,
+    AdminSession,
+    AdminUser,
+)
 from fragancia_api.modules.identity.domain.errors import EmailTaken
+from fragancia_api.modules.identity.domain.invitation import Invitation
+from fragancia_api.modules.identity.domain.password_reset import PasswordReset
 from fragancia_api.modules.identity.domain.session import Session
 from fragancia_api.modules.identity.domain.user import Email, User
 from fragancia_api.shared.kernel import Err, Ok, Result
@@ -18,6 +25,9 @@ class InMemoryUsers:
 
     async def get(self, user_id: UUID) -> User | None:
         return self.by_id.get(user_id)
+
+    async def get_for_update(self, user_id: UUID) -> User | None:
+        return await self.get(user_id)
 
     async def get_by_email(self, email: Email) -> User | None:
         return next((u for u in self.by_id.values() if u.email == email), None)
@@ -81,12 +91,98 @@ class InMemoryLoginThrottle:
             self.counts[key] = (max(attempts - 1, 0), started)
 
 
+class InMemoryInvitations:
+    """The invitation repository over a dict."""
+
+    def __init__(self, *invitations: Invitation) -> None:
+        self.by_id: dict[UUID, Invitation] = {i.id: i for i in invitations}
+
+    async def add(self, invitation: Invitation) -> None:
+        self.by_id[invitation.id] = invitation
+
+    async def get(self, invitation_id: UUID, *, for_update: bool = False) -> Invitation | None:
+        return self.by_id.get(invitation_id)
+
+    async def get_by_token_hash(
+        self, token_hash: str, *, for_update: bool = False
+    ) -> Invitation | None:
+        return next((i for i in self.by_id.values() if i.token_hash == token_hash), None)
+
+    async def save(self, invitation: Invitation) -> None:
+        self.by_id[invitation.id] = invitation
+
+    async def revoke_open_for_email(self, email: Email, *, now: datetime) -> None:
+        for invitation in self.by_id.values():
+            if invitation.email == email:
+                invitation.revoke(now)
+
+
+class InMemoryPasswordResets:
+    """The password-reset repository over a dict."""
+
+    def __init__(self, *resets: PasswordReset) -> None:
+        self.by_id: dict[UUID, PasswordReset] = {r.id: r for r in resets}
+
+    async def add(self, reset: PasswordReset) -> None:
+        self.by_id[reset.id] = reset
+
+    async def get(self, reset_id: UUID, *, for_update: bool = False) -> PasswordReset | None:
+        return self.by_id.get(reset_id)
+
+    async def get_by_token_hash(
+        self, token_hash: str, *, for_update: bool = False
+    ) -> PasswordReset | None:
+        return next((r for r in self.by_id.values() if r.token_hash == token_hash), None)
+
+    async def save(self, reset: PasswordReset) -> None:
+        self.by_id[reset.id] = reset
+
+    async def cancel_open_for_user(self, user_id: UUID, *, now: datetime) -> None:
+        for reset in self.by_id.values():
+            if reset.user_id == user_id and reset.used_at is None and reset.cancelled_at is None:
+                reset.cancelled_at = now
+
+
 class InMemoryAccountQueries:
     """The account queries over the in-memory repositories."""
 
-    def __init__(self, users: InMemoryUsers, sessions: InMemorySessions) -> None:
+    def __init__(
+        self,
+        users: InMemoryUsers,
+        sessions: InMemorySessions,
+        invitations: InMemoryInvitations | None = None,
+    ) -> None:
         self._users = users
         self._sessions = sessions
+        self._invitations = invitations or InMemoryInvitations()
+
+    async def users(self) -> list[AdminUser]:
+        ordered = sorted(self._users.by_id.values(), key=lambda u: (u.created_at, u.id))
+        return [
+            AdminUser(
+                id=u.id,
+                email=u.email.value,
+                name=u.name.value,
+                role=u.role.value,
+                is_active=u.is_active,
+                created_at=u.created_at,
+            )
+            for u in ordered
+        ]
+
+    async def pending_invitations(self, now: datetime) -> list[AdminInvitation]:
+        pending = [i for i in self._invitations.by_id.values() if i.is_pending(now)]
+        pending.sort(key=lambda i: (i.created_at, i.id), reverse=True)
+        return [
+            AdminInvitation(
+                id=i.id,
+                email=i.email.value,
+                name=i.name.value,
+                created_at=i.created_at,
+                expires_at=i.expires_at,
+            )
+            for i in pending
+        ]
 
     async def me(self, user_id: UUID) -> AdminMe | None:
         user = self._users.by_id.get(user_id)

@@ -45,6 +45,9 @@ class SqlUserRepository:
     async def get(self, user_id: UUID) -> User | None:
         return await self._one(select(users).where(users.c.id == user_id))
 
+    async def get_for_update(self, user_id: UUID) -> User | None:
+        return await self._one(select(users).where(users.c.id == user_id).with_for_update())
+
     async def get_by_email(self, email: Email) -> User | None:
         return await self._one(select(users).where(users.c.email == email.value))
 
@@ -64,7 +67,11 @@ class SqlUserRepository:
         await self._database.session.execute(
             update(users)
             .where(users.c.id == user.id)
-            .values(password_hash=user.password_hash, password_changed_at=user.password_changed_at)
+            .values(
+                password_hash=user.password_hash,
+                password_changed_at=user.password_changed_at,
+                is_active=user.is_active,
+            )
         )
 
     async def _one(self, statement: Any) -> User | None:

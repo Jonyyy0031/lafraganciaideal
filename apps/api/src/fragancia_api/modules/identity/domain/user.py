@@ -3,7 +3,8 @@
 Rules: an email is trimmed and lowercased, has at most 254 characters, no whitespace, exactly
 one `@`, a non-empty local part and a domain with an inner `.`. A display name is trimmed with
 inner whitespace collapsed and has 2–80 characters. A password has 12–128 characters, kept
-exactly as typed. Permissions come from the role; new users are active.
+exactly as typed. Permissions come from the role; new users are active; an owner may
+deactivate and reactivate them.
 """
 
 from dataclasses import dataclass
@@ -130,3 +131,9 @@ class User(AggregateRoot):
     def change_password(self, new_hash: str, *, now: datetime) -> None:
         self.password_hash = new_hash
         self.password_changed_at = now
+
+    def deactivate(self) -> None:
+        self.is_active = False
+
+    def reactivate(self) -> None:
+        self.is_active = True

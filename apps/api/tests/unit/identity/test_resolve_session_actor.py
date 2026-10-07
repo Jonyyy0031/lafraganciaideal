@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from fragancia_api.modules.identity.application.policy import TOUCH_INTERVAL
 from fragancia_api.modules.identity.domain.session import Session
+from fragancia_api.modules.identity.domain.user import Role
 from fragancia_api.shared.application.actor import Actor
 from tests.unit.identity.conftest import Identity
 
@@ -19,7 +20,9 @@ async def test_a_valid_token_resolves_to_its_active_user_as_an_admin(identity: I
 
     actor = await identity.resolver.resolve(login.token)
 
-    assert actor == Actor(id=str(user.id), is_admin=True, session_id=session.id)
+    assert actor == Actor(
+        id=str(user.id), is_admin=True, session_id=session.id, permissions=user.permissions
+    )
 
 
 async def test_an_unknown_token_resolves_to_nobody(identity: Identity) -> None:
@@ -118,3 +121,25 @@ async def test_activity_extends_the_idle_deadline(identity: Identity) -> None:
     identity.clock.current += identity.policy.session_idle - timedelta(minutes=1)
 
     assert await identity.resolver.resolve(login.token) is not None
+
+
+async def test_a_staff_session_resolves_with_staff_permissions_only(identity: Identity) -> None:
+    identity.add_user("staff@example.test", role=Role.STAFF)
+    login = await identity.sign_in("staff@example.test")
+
+    actor = await identity.resolver.resolve(login.token)
+
+    assert actor is not None
+    assert actor.permissions == frozenset({"catalog:manage"})
+
+
+async def test_an_owner_session_resolves_with_the_users_manage_permission(
+    identity: Identity,
+) -> None:
+    identity.add_user()
+    login = await identity.sign_in()
+
+    actor = await identity.resolver.resolve(login.token)
+
+    assert actor is not None
+    assert actor.permissions == frozenset({"catalog:manage", "users:manage"})

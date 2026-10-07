@@ -122,6 +122,131 @@
         }
       }
     },
+    "/api/v1/auth/invitations/accept": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Accept Invitation",
+        "description": "Create the staff account of an emailed invitation link. 422 `IDENTITY_LINK_INVALID` for\nan unknown, used, revoked or expired link, 422 `IDENTITY_PASSWORD_TOO_WEAK`, 409\n`IDENTITY_EMAIL_TAKEN`. The web app then sends the user to the login page.",
+        "operationId": "accept_invitation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptInvitationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/password-reset": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Request Password Reset",
+        "description": "Ask for a password-reset email. Always 202 with no body, whether or not the account\nexists. 429 `IDENTITY_TOO_MANY_ATTEMPTS` when the email or IP asked too often.",
+        "operationId": "request_password_reset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response"
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/password-reset/confirm": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Reset Password",
+        "description": "Set a new password with an emailed link; closes every session of the user. 422\n`IDENTITY_LINK_INVALID`, 422 `IDENTITY_PASSWORD_TOO_WEAK`.",
+        "operationId": "reset_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/auth/logout": {
       "post": {
         "tags": [
@@ -145,7 +270,7 @@
             }
           },
           "403": {
-            "description": "The actor is not an admin",
+            "description": "The actor is not an admin or lacks the permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -192,7 +317,7 @@
             }
           },
           "403": {
-            "description": "The actor is not an admin",
+            "description": "The actor is not an admin or lacks the permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -215,7 +340,7 @@
           "identity · admin"
         ],
         "summary": "Change My Password",
-        "description": "Change my password; every other session of mine is closed. 422\n`IDENTITY_PASSWORD_TOO_WEAK` if the new password breaks the rules, 422\n`IDENTITY_CURRENT_PASSWORD_WRONG` if the current one is not correct, 429\n`IDENTITY_TOO_MANY_ATTEMPTS` after too many wrong current passwords.",
+        "description": "Change my password; every other session of mine is closed. 401\n`IDENTITY_ACTOR_INACTIVE` if I was deactivated meanwhile, 422\n`IDENTITY_PASSWORD_TOO_WEAK` if the new password breaks the rules, 422\n`IDENTITY_CURRENT_PASSWORD_WRONG` if the current one is not correct, 429\n`IDENTITY_TOO_MANY_ATTEMPTS` after too many wrong current passwords.",
         "operationId": "change_my_password",
         "requestBody": {
           "content": {
@@ -242,7 +367,7 @@
             }
           },
           "403": {
-            "description": "The actor is not an admin",
+            "description": "The actor is not an admin or lacks the permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -313,7 +438,7 @@
             }
           },
           "403": {
-            "description": "The actor is not an admin",
+            "description": "The actor is not an admin or lacks the permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -351,7 +476,7 @@
             }
           },
           "403": {
-            "description": "The actor is not an admin",
+            "description": "The actor is not an admin or lacks the permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -408,7 +533,400 @@
             }
           },
           "403": {
-            "description": "The actor is not an admin",
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users": {
+      "get": {
+        "tags": [
+          "identity · users"
+        ],
+        "summary": "List Users",
+        "description": "Every back-office user. Needs `users:manage`.",
+        "operationId": "list_users",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminUser"
+                  },
+                  "type": "array",
+                  "title": "Response List Users"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/deactivate": {
+      "post": {
+        "tags": [
+          "identity · users"
+        ],
+        "summary": "Deactivate User",
+        "description": "Deactivate a user and close all their sessions. 401 `IDENTITY_ACTOR_INACTIVE` (the caller\nwas deactivated meanwhile), 404 `IDENTITY_USER_NOT_FOUND`, 422\n`IDENTITY_CANNOT_DEACTIVATE_SELF`.",
+        "operationId": "deactivate_user",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{user_id}/reactivate": {
+      "post": {
+        "tags": [
+          "identity · users"
+        ],
+        "summary": "Reactivate User",
+        "description": "Let a deactivated user sign in again. 404 `IDENTITY_USER_NOT_FOUND`.",
+        "operationId": "reactivate_user",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/invitations": {
+      "get": {
+        "tags": [
+          "identity · users"
+        ],
+        "summary": "List Invitations",
+        "description": "Pending invitations, newest first.",
+        "operationId": "list_invitations",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminInvitation"
+                  },
+                  "type": "array",
+                  "title": "Response List Invitations"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "identity · users"
+        ],
+        "summary": "Invite User",
+        "description": "Invite someone to become staff; the email is sent by the worker. 409\n`IDENTITY_EMAIL_TAKEN`, 422 `IDENTITY_EMAIL_INVALID` / `IDENTITY_NAME_INVALID`. Inviting the\nsame email again revokes the earlier invitation.",
+        "operationId": "invite_user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminInvitation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/invitations/{invitation_id}": {
+      "delete": {
+        "tags": [
+          "identity · users"
+        ],
+        "summary": "Revoke Invitation",
+        "description": "Cancel a pending invitation. 404 `IDENTITY_INVITATION_NOT_FOUND`.",
+        "operationId": "revoke_invitation",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "invitation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Invitation Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -511,7 +1029,7 @@
             }
           },
           "403": {
-            "description": "The actor is not an admin",
+            "description": "The actor is not an admin or lacks the permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -601,7 +1119,7 @@
             }
           },
           "403": {
-            "description": "The actor is not an admin",
+            "description": "The actor is not an admin or lacks the permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -626,6 +1144,26 @@
   },
   "components": {
     "schemas": {
+      "AcceptInvitationRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 128,
+            "title": "Token"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "password"
+        ],
+        "title": "AcceptInvitationRequest"
+      },
       "AdminBrand": {
         "properties": {
           "id": {
@@ -697,6 +1235,43 @@
         ],
         "title": "AdminBrandPage",
         "description": "One page of the admin brand list."
+      },
+      "AdminInvitation": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "name",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "AdminInvitation",
+        "description": "A pending invitation (always for a staff account)."
       },
       "AdminMe": {
         "properties": {
@@ -803,6 +1378,50 @@
         "title": "AdminSession",
         "description": "One of my open sessions."
       },
+      "AdminUser": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "staff"
+            ],
+            "title": "Role"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "name",
+          "role",
+          "is_active",
+          "created_at"
+        ],
+        "title": "AdminUser"
+      },
       "ChangePasswordRequest": {
         "properties": {
           "current_password": {
@@ -884,6 +1503,29 @@
         ],
         "title": "ErrorResponse"
       },
+      "InviteUserRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 320,
+            "title": "Email",
+            "examples": [
+              "staff@example.test"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "name"
+        ],
+        "title": "InviteUserRequest"
+      },
       "Liveness": {
         "properties": {
           "status": {
@@ -938,6 +1580,20 @@
         "title": "LoginResponse",
         "description": "The signed-in user and when the session expires at the latest. The session token\ntravels only in the httpOnly cookie."
       },
+      "PasswordResetRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 320,
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "PasswordResetRequest"
+      },
       "PublicBrand": {
         "properties": {
           "id": {
@@ -991,6 +1647,26 @@
           "checks"
         ],
         "title": "Readiness"
+      },
+      "ResetPasswordRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 128,
+            "title": "Token"
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "New Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "title": "ResetPasswordRequest"
       }
     },
     "securitySchemes": {

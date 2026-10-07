@@ -2,7 +2,12 @@ from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
-from fragancia_api.modules.identity.contracts import AdminMe, AdminSession
+from fragancia_api.modules.identity.contracts import (
+    AdminInvitation,
+    AdminMe,
+    AdminSession,
+    AdminUser,
+)
 
 
 class PasswordHasher(Protocol):
@@ -20,7 +25,7 @@ class PasswordHasher(Protocol):
 
 
 class SessionTokens(Protocol):
-    """Opaque session tokens: only their digest is stored."""
+    """Opaque random tokens (sessions and emailed links): only their digest is stored."""
 
     def new(self) -> str:
         """A new URL-safe random token."""
@@ -55,4 +60,12 @@ class AccountQueries(Protocol):
         self, user_id: UUID, *, current_session_id: UUID, now: datetime, idle: timedelta
     ) -> list[AdminSession]:
         """The user's valid sessions, most recently seen first."""
+        ...
+
+    async def users(self) -> list[AdminUser]:
+        """Every user, `created_at` ascending, then `id`."""
+        ...
+
+    async def pending_invitations(self, now: datetime) -> list[AdminInvitation]:
+        """Invitations that are not accepted, not revoked and not expired, newest first."""
         ...

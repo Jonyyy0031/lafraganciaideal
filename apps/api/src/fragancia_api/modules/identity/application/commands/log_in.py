@@ -18,7 +18,7 @@ from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 
 
-def _email_key(email: str) -> str:
+def email_throttle_key(email: str) -> str:
     """The throttle key of an email, normalized as `Email` does. Lowercasing can make a string
     longer, so a result longer than any valid email (which belongs to no account) is keyed by
     its SHA-256 instead: the key always fits the throttle table."""
@@ -40,7 +40,8 @@ class LogIn:
 
     The attempt is counted (per email and per IP) BEFORE the password is checked, so parallel
     bursts cannot slip past the limit. A missing user is checked against a dummy hash, so the
-    answer takes as long as for a real one.
+    answer takes as long as for a real one. The final transaction re-reads the user under a row
+    lock, so a deactivation or password reset that commits during the check wins.
     """
 
     def __init__(
@@ -67,7 +68,7 @@ class LogIn:
     async def execute(
         self, email: str, password: str, *, ip: str | None, user_agent: str | None
     ) -> Result[LoginResult, DomainError]:
-        email_key = _email_key(email)
+        email_key = email_throttle_key(email)
         ip_key = f"ip:{ip or 'unknown'}"
 
         async def count() -> Result[tuple[int, int], DomainError]:
@@ -106,6 +107,13 @@ class LogIn:
         signed_in = user
 
         async def open_session() -> Result[LoginResult, DomainError]:
+            current = await self._users.get_for_update(signed_in.id)
+            if (
+                current is None
+                or not current.is_active
+                or current.password_hash != signed_in.password_hash
+            ):
+                return Err(InvalidCredentials())  # the attempt stays counted
             await self._throttle.clear(email_key)
             await self._throttle.give_back(ip_key)
             token = self._tokens.new()

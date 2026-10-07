@@ -44,4 +44,32 @@ login_throttle = Table(
     schema=SCHEMA,
 )
 
+invitations = Table(
+    "invitations",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("email", String(254), nullable=False, index=True),
+    Column("name", String(80), nullable=False),
+    Column("invited_by", Uuid, ForeignKey(f"{SCHEMA}.users.id"), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("token_hash", String(64), nullable=True, unique=True),
+    Column("accepted_at", DateTime(timezone=True), nullable=True),
+    Column("revoked_at", DateTime(timezone=True), nullable=True),
+    schema=SCHEMA,
+)
+
+password_resets = Table(
+    "password_resets",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("user_id", Uuid, ForeignKey(f"{SCHEMA}.users.id"), nullable=False, index=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("token_hash", String(64), nullable=True, unique=True),
+    Column("used_at", DateTime(timezone=True), nullable=True),
+    Column("cancelled_at", DateTime(timezone=True), nullable=True),
+    schema=SCHEMA,
+)
+
 USER_EMAIL_UNIQUE = "uq_users_email"

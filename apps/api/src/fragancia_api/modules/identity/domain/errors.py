@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from fragancia_api.shared.kernel import (
+    BusinessRuleViolationError,
     ConflictError,
     InvalidValueError,
     NotFoundError,
@@ -55,3 +56,33 @@ class TooManyAttempts(RateLimitedError):
 class SessionNotFound(NotFoundError):
     code: str = "IDENTITY_SESSION_NOT_FOUND"
     message: str = "Session not found"
+
+
+@dataclass(frozen=True)
+class LinkInvalid(InvalidValueError):
+    code: str = "IDENTITY_LINK_INVALID"
+    message: str = "This link is invalid or has expired"
+
+
+@dataclass(frozen=True)
+class UserNotFound(NotFoundError):
+    code: str = "IDENTITY_USER_NOT_FOUND"
+    message: str = "User not found"
+
+
+@dataclass(frozen=True)
+class InvitationNotFound(NotFoundError):
+    code: str = "IDENTITY_INVITATION_NOT_FOUND"
+    message: str = "Invitation not found"
+
+
+@dataclass(frozen=True)
+class CannotDeactivateSelf(BusinessRuleViolationError):
+    code: str = "IDENTITY_CANNOT_DEACTIVATE_SELF"
+    message: str = "You cannot deactivate your own account"
+
+
+@dataclass(frozen=True)
+class ActorInactive(UnauthenticatedError):
+    code: str = "IDENTITY_ACTOR_INACTIVE"
+    message: str = "Your account is no longer active"

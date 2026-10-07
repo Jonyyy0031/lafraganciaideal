@@ -244,6 +244,9 @@ async def test_every_identity_admin_operation_is_declared_and_protected(
     }
     assert operations == {
         ("POST", "/api/v1/auth/login"),
+        ("POST", "/api/v1/auth/invitations/accept"),
+        ("POST", "/api/v1/auth/password-reset"),
+        ("POST", "/api/v1/auth/password-reset/confirm"),
         ("POST", "/api/v1/admin/auth/logout"),
         ("GET", "/api/v1/admin/auth/me"),
         ("PUT", "/api/v1/admin/auth/password"),
