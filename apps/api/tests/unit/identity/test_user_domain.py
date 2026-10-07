@@ -132,3 +132,15 @@ def test_changing_the_password_replaces_the_hash_and_stamps_the_time() -> None:
         later,
         NOW,
     )
+
+
+def test_deactivating_and_reactivating_flip_is_active_and_are_idempotent() -> None:
+    user = _user()
+
+    user.deactivate()
+    user.deactivate()
+    assert user.is_active is False
+
+    user.reactivate()
+    user.reactivate()
+    assert user.is_active is True
