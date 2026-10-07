@@ -157,6 +157,25 @@ async def test_a_refused_password_change_closes_no_session_and_clears_no_throttl
     assert identity.throttle.counts[f"password:{user.id}"][0] == 1
 
 
+async def test_a_password_reset_that_commits_while_changing_the_password_is_kept() -> None:
+    transactions = RacingTransactions("work")
+    identity = Identity(transactions=transactions)
+    user = identity.add_user()
+    current = await _open_session(identity)
+    reset_hash = identity.hasher.encode("the emailed reset passphrase")
+
+    async def reset_meanwhile() -> None:
+        user.change_password(reset_hash, now=identity.clock.now())
+
+    transactions.before = reset_meanwhile
+
+    result = await identity.change_password.execute(user.id, current, PASSWORD, NEW_PASSWORD)
+
+    assert isinstance(result, Err)
+    assert result.error.code == "IDENTITY_CURRENT_PASSWORD_WRONG"
+    assert identity.users.by_id[user.id].password_hash == reset_hash
+
+
 async def test_an_unchanged_user_changes_the_password_through_the_locked_re_read() -> None:
     transactions = RacingTransactions("work")
     identity = Identity(transactions=transactions)

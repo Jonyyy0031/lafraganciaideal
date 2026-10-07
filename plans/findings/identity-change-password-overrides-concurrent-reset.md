@@ -1,7 +1,8 @@
 ---
-status: deferred # open → deferred | planned | resolved | discarded (the user decides)
+status: resolved # open → deferred | planned | resolved | discarded (the user decides)
 module: identity
 found: 2026-10-06
+plan: identity-access/002
 ---
 
 # A password change in flight can override a password reset that commits meanwhile
@@ -42,3 +43,8 @@ test. Or accept and close.
 
 2026-10-06: the user wants this planned after identity-access/002 closes. It stays `deferred`
 until that plan exists (`planned` requires an existing plan).
+
+2026-10-07: resolved through the fast lane (the user agreed it is a bug fix, not a plan).
+`ChangePassword` keeps the hash it verified and, in its final transaction, refuses with 422
+`IDENTITY_CURRENT_PASSWORD_WRONG` when the locked row's hash differs. Regression test:
+`tests/unit/identity/test_account_lock_races.py::test_a_password_reset_that_commits_while_changing_the_password_is_kept`.
