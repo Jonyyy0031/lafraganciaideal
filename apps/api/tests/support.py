@@ -16,13 +16,18 @@ ADMIN_HEADERS = {"Cookie": f"{SESSION_COOKIE}={ADMIN_SESSION}"}
 
 
 class TestActorResolver:
-    """An admin for the `ADMIN_SESSION` cookie, nobody for anything else."""
+    """An admin with `catalog:manage` for the `ADMIN_SESSION` cookie, nobody for anything else."""
 
     __test__ = False  # not a pytest test class
 
     async def resolve(self, token: str) -> Actor | None:
         if token == ADMIN_SESSION:
-            return Actor(id="test-admin", is_admin=True, session_id=UUID(int=1))
+            return Actor(
+                id="test-admin",
+                is_admin=True,
+                session_id=UUID(int=1),
+                permissions=frozenset({"catalog:manage"}),
+            )
         return None
 
 

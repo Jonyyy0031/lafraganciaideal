@@ -52,7 +52,7 @@ Modules (✔ = built; `catalog` is the **reference module** — see [recipes/new
 
 | Module          | Responsibility                                                                        |
 | --------------- | ------------------------------------------------------------------------------------- |
-| `catalog`       | ✔ Brands. Next: perfumes, sizes (ml), prices, photos, availability: in stock / made to order |
+| `catalog`       | ✔ Brands (create, rename, archive), olfactory families. Next: perfumes, sizes (ml), prices, photos, availability: in stock / made to order |
 | `inventory`     | Stock per size; reserve on checkout, release on cancellation, commit on payment       |
 | `orders`        | Cart → order; the `Order` aggregate and its state machine                             |
 | `payments`      | `PaymentGateway` port → Mercado Pago adapter (Checkout Pro); idempotent webhooks      |
@@ -125,6 +125,7 @@ pending_payment ───────────────────▶ pai
 POST /api/v1/admin/brands
  → RequestContextMiddleware: request id (X-Request-ID), bound to every log line
  → admin_router dependency require_admin: session cookie → ActorResolver → 401 / 403
+ → router dependency require_permission("catalog:manage"): missing permission → 403
  → FastAPI validates the body with the Pydantic contract (422 VALIDATION_ERROR)
  → router: use_case = provide(CreateBrand) from the ServiceRegistry; no logic here
  → CreateBrand.execute() → TransactionRunner.run(work):
