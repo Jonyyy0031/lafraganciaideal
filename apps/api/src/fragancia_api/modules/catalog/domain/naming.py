@@ -1,7 +1,8 @@
 """Name rules shared by the catalog aggregates (brands, olfactory families).
 
 A name is trimmed with inner whitespace collapsed, has 2-80 characters and a non-empty slug
-(lowercase ASCII words joined by hyphens), which is what identifies it.
+(lowercase ASCII words joined by hyphens), which is what identifies it. The slug has at most
+100 characters: NFKD can expand one character into several ("Ⅷ" → "viii").
 """
 
 import re
@@ -9,6 +10,7 @@ import unicodedata
 
 NAME_MIN_LENGTH = 2
 NAME_MAX_LENGTH = 80
+SLUG_MAX_LENGTH = 100  # the slug columns are String(100)
 _NOT_ALPHANUMERIC = re.compile(r"[^a-z0-9]+")
 
 
@@ -21,6 +23,8 @@ def slugify(text: str) -> str:
 def clean_name(raw: str) -> str | None:
     """The normalized name, or None when it breaks the length or character rules."""
     value = " ".join(raw.split())
-    if not NAME_MIN_LENGTH <= len(value) <= NAME_MAX_LENGTH or not slugify(value):
+    if not NAME_MIN_LENGTH <= len(value) <= NAME_MAX_LENGTH:
+        return None
+    if not 0 < len(slugify(value)) <= SLUG_MAX_LENGTH:
         return None
     return value

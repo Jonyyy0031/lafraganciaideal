@@ -1,7 +1,8 @@
 ---
-status: open
+status: resolved
 module: catalog
 found: 2026-10-08
+plan: catalog-perfumes/001
 ---
 
 # A valid catalog name can produce a slug longer than the 100-character slug column
@@ -34,3 +35,16 @@ and only with unusual input.
 
 Fast-lane fix: `clean_name` should also reject a name whose slug is longer than the column
 (100), with a regression test in the domain tests. Or accept and close.
+
+## Resolution
+
+2026-10-08, fast-lane fix after plan 001 was done.
+
+- **Reproduced** against the running API: an 80 × "Ⅷ" name gave 500 `INTERNAL_ERROR` on
+  `POST /admin/brands` and on `POST /admin/olfactory-families`.
+- **Fix:** `clean_name` now also rejects a name whose slug is longer than `SLUG_MAX_LENGTH =
+  100`, so the name is refused before it reaches the database.
+- **Regression test:**
+  `tests/unit/catalog/test_olfactory_family_domain.py::test_clean_name_rejects_a_name_whose_slug_outgrows_the_slug_column`.
+- **Verified:** the same requests, and a family rename, now return 422
+  `CATALOG_*_NAME_INVALID`. `uv run just check` is green (706 passed).

@@ -42,6 +42,13 @@ def test_clean_name_rejects_bad_lengths_and_names_without_letters_or_digits(raw:
     assert clean_name(raw) is None
 
 
+def test_clean_name_rejects_a_name_whose_slug_outgrows_the_slug_column() -> None:
+    # NFKD expands "Ⅷ" to "viii": 80 characters of name become a 320-character slug, which
+    # the String(100) slug column refused with a 500 instead of a 422.
+    assert clean_name("Ⅷ" * 80) is None
+    assert clean_name("Ⅷ" * 25) == "Ⅷ" * 25  # exactly 100 characters of slug
+
+
 def test_slugify_is_still_importable_from_the_brand_module() -> None:
     assert brand_module.slugify is slugify
     assert brand_module.slugify("Éclat d'Arpège") == "eclat-d-arpege"
