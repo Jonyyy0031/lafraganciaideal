@@ -125,6 +125,7 @@ pending_payment ───────────────────▶ pai
 POST /api/v1/admin/brands
  → RequestContextMiddleware: request id (X-Request-ID), bound to every log line
  → admin_router dependency require_admin: session cookie → ActorResolver → 401 / 403
+ → router dependency require_permission("catalog:manage"): missing permission → 403
  → FastAPI validates the body with the Pydantic contract (422 VALIDATION_ERROR)
  → router: use_case = provide(CreateBrand) from the ServiceRegistry; no logic here
  → CreateBrand.execute() → TransactionRunner.run(work):

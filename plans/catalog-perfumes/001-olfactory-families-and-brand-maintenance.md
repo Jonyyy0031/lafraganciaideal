@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: catalog
 min_implementer: mid
 depends_on: []
@@ -286,6 +286,11 @@ None
      stock / made to order".
    - Observable result: the row matches what was built.
 
+9. **Tests (tester phase)** — added after review, see "Resolution" under Review findings
+   - Files: `apps/api/tests/unit/catalog/` (create), `apps/api/tests/integration/catalog/` (create)
+   - Do: the layers in "Test layers required".
+   - Observable result: `uv run just check` and `uv run just test-integration` green.
+
 ## Acceptance criteria
 
 - [ ] After migrating, `GET /api/v1/olfactory-families` returns the nine seeded families
@@ -371,5 +376,105 @@ is order-independent.
 Closing run: see the final report of the tester run (commands and results below).
 
 ## Review findings
+
+Reviewed 2026-10-08 against `git diff main...HEAD` (95f6089 implementation, 3d66e2d tests).
+The worktree was clean. No PR exists yet.
+
+**Checklist: 13/14 applicable items pass. FAILED: plans-scope.** (The PR-body item does not
+apply because there is no PR yet.)
+
+- [ ] `uv run just plans-scope` — **FAILS (exit 1).** Five test files are out of scope:
+      `apps/api/tests/unit/catalog/test_olfactory_family_domain.py`,
+      `test_catalog_maintenance_commands.py`, `test_catalog_maintenance_http.py`, and
+      `apps/api/tests/integration/catalog/test_sql_brand_maintenance.py`,
+      `test_sql_olfactory_families.py`. Also "declared but unchanged": `create_brand.py`,
+      which matches the Deviations note and is fine. No hot files changed.
+- [x] `uv run just check` green: 705 passed and 3 skipped (unit); 684 passed (harness); lint,
+      types, arch, plans-lint and adapter drift all pass.
+- [x] `uv run just test-integration` green.
+- [x] Business rules are in `domain/` (`naming.py`, `brand.py`, `olfactory_family.py`). The
+      routers, mappers and queries contain none.
+- [x] CQRS-lite. Commands run inside `transactions.run` and return `Result`. Queries go
+      through `OlfactoryFamilyQueries` and `reader()`. The repositories have no
+      screen-specific methods.
+- [x] Contracts are in `contracts.py`. `openapi.json` is regenerated (`test_openapi`
+      checks for drift) and has 9 new operations. The plan's step 7 says "10", but its own
+      list adds up to 9, so the plan text is wrong.
+- [x] Error codes are `CATALOG_BRAND_NOT_FOUND`, `CATALOG_FAMILY_NAME_INVALID`,
+      `CATALOG_FAMILY_ALREADY_EXISTS` and `CATALOG_FAMILY_NOT_FOUND`, all as `Err` subclasses.
+- [x] No money is involved. `created_at` comes from `Clock`, and ids come from `new_id()`.
+      The migration seed uses `uuid.uuid7()` and `datetime.now(UTC)`, as the plan specified.
+- [x] Migration 0005 is new and `down_revision` is 0004. It has no drops beyond its own
+      table and no cross-schema foreign keys. On `fragancia_test`, `downgrade 0004` and then
+      `upgrade head` both succeeded, and `alembic check` reported "No new upgrade operations
+      detected".
+- [x] Routes use `public_router`/`admin_router`. Both admin routers carry
+      `require_permission("catalog:manage")` (`http/router.py:55-65`), and tests cover 401
+      and 403.
+- [x] Wiring in `module.py` resolves (`test_container` green). The module is registered once,
+      and adapters are created only in `module.py`.
+- [x] No secrets or personal data.
+- [x] Deviations are honest. I spot-checked the claims that `create_brand.py` is unchanged
+      and that `InMemoryBrands.by_id` is now `dict[UUID, Brand]`; both are true.
+- [x] Docs: the `docs/architecture.md:55` row is updated (see Low 2 for one stale line).
+- [-] PR body: N/A, no PR yet.
+
+### Blocking (process): test files not declared in the plan
+
+- `plans/catalog-perfumes/001-olfactory-families-and-brand-maintenance.md` `## Steps`: no
+  step has a `Files:` line for `apps/api/tests/unit/catalog/` or
+  `apps/api/tests/integration/catalog/`. The "Test layers required" table asks for tests in
+  four layers, and the tester wrote them in exactly those directories. So the content is
+  expected; the gap is that the plan never declared those paths. The result is that
+  `plans-scope` exits 1, and the reviewer may not approve while a checklist item fails. No
+  product code needs to change. The main session (with the user) needs to amend the plan:
+  either a `Files:` line declaring `apps/api/tests/unit/catalog/` and
+  `apps/api/tests/integration/catalog/`, as identity-access 001/002 did, or a recorded
+  deviation. Then `plans-scope` needs to be re-run. After that, this review can be
+  re-confirmed without another bug hunt.
+
+### Bug hunt (correctness)
+
+I traced each flow end to end, from validation through the use case, domain, SQL, `unwrap`
+and the HTTP status. Rename validates first, then locks the row (`get_for_update`), then
+runs `exists_with_slug(except_id)`, then saves inside a savepoint. When two brands are renamed
+to the same name concurrently, the second UPDATE waits on the unique index, then raises
+`uq_*_slug`, which is mapped to `Err` and returned as 409. The runner rolls back on `Err`.
+Archive and restore are idempotent under the row lock. The public family list filters on
+`is_active`. Admin routes are gated by both the session and `catalog:manage`. I found no
+critical or high issues.
+
+- **Low 1 (uncertain, not reproduced at runtime).** `domain/naming.py:59-64` bounds the
+  name, not the slug, and the slug column is `String(100)` (`infrastructure/tables.py:26`).
+  NFKD expands compatibility characters, so 80 × "Ⅷ" gives a 320-character slug. PostgreSQL
+  then raises `StringDataRightTruncation`, which is a `DataError` that `save`/`add` do not
+  catch. The response is 500 instead of 422 on family create and rename and on brand rename.
+  The same gap already existed for brand create on `main`. Only admins can reach it, and
+  only with unusual input. Logged as `plans/findings/catalog-slug-longer-than-column.md`. It
+  is not a blocker for this plan, because the rule was "move the brand rules unchanged".
+- **Low 2 (docs).** `docs/architecture.md:124-127` ("A request, end to end", `POST
+  /api/v1/admin/brands`) lists only `require_admin` → 401/403. That route now also passes
+  through `require_permission("catalog:manage")` → 403. This is a reference trace and is
+  now incomplete. One line would fix it. The plan's step 8 did not list this line.
+- **Info.** `## Test coverage` ends with "Closing run: see the final report of the tester run
+  (commands and results below)", but nothing follows it. The tester's closing commands and
+  results are not recorded in the plan. My own runs (above) cover the gap for review
+  purposes.
+
+Status stays `review`. The scope gap is a plan amendment, not a code repair. Low 2 is
+optional, and if it is fixed, `docs/architecture.md` is already declared.
+
+### Resolution (main session, 2026-10-08)
+
+- **Blocking (scope):** the architect's omission. The plan now has step 9, which declares
+  `apps/api/tests/unit/catalog/` and `apps/api/tests/integration/catalog/`. These are the
+  layers the approved plan already required; no new scope. `plans-scope` re-run: clean.
+- **Low 1:** left as the open finding `plans/findings/catalog-slug-longer-than-column.md`, for
+  the user to triage. It already existed on `main` for brand create.
+- **Low 2:** fixed. The request trace in `docs/architecture.md` now shows the
+  `require_permission` → 403 step.
+- **Info:** step 7 says "10 new operations" but there are 9; the review count is right.
+
+Review passed → `verify`.
 
 ## Verification
