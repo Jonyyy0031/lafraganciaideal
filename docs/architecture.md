@@ -52,7 +52,7 @@ Modules (✔ = built; `catalog` is the **reference module** — see [recipes/new
 
 | Module          | Responsibility                                                                        |
 | --------------- | ------------------------------------------------------------------------------------- |
-| `catalog`       | ✔ Brands. Next: perfumes, sizes (ml), prices, photos, availability: in stock / made to order |
+| `catalog`       | ✔ Brands (create, rename, archive), olfactory families. Next: perfumes, sizes (ml), prices, photos, availability: in stock / made to order |
 | `inventory`     | Stock per size; reserve on checkout, release on cancellation, commit on payment       |
 | `orders`        | Cart → order; the `Order` aggregate and its state machine                             |
 | `payments`      | `PaymentGateway` port → Mercado Pago adapter (Checkout Pro); idempotent webhooks      |

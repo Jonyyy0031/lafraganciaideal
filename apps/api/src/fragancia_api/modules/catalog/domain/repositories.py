@@ -1,15 +1,49 @@
 from typing import Protocol
+from uuid import UUID
 
 from fragancia_api.modules.catalog.domain.brand import Brand
-from fragancia_api.modules.catalog.domain.errors import BrandAlreadyExists
+from fragancia_api.modules.catalog.domain.errors import BrandAlreadyExists, FamilyAlreadyExists
+from fragancia_api.modules.catalog.domain.olfactory_family import OlfactoryFamily
 from fragancia_api.shared.kernel import Result
 
 
 class BrandRepository(Protocol):
     """Write side. Joins the active transaction. No "for a screen" methods: see BrandQueries."""
 
-    async def exists_with_slug(self, slug: str) -> bool: ...
+    async def exists_with_slug(self, slug: str, *, except_id: UUID | None = None) -> bool:
+        """Whether a brand has the slug, ignoring the brand with `except_id`."""
+        ...
 
     async def add(self, brand: Brand) -> Result[None, BrandAlreadyExists]:
         """Err when another brand already has the slug (also under concurrent inserts)."""
+        ...
+
+    async def get_for_update(self, brand_id: UUID) -> Brand | None:
+        """The brand, with its row locked until the transaction ends."""
+        ...
+
+    async def save(self, brand: Brand) -> Result[None, BrandAlreadyExists]:
+        """Persist name, slug and active flag. Err when another brand has the slug (also under
+        concurrent renames)."""
+        ...
+
+
+class OlfactoryFamilyRepository(Protocol):
+    """Write side. Joins the active transaction. No "for a screen" methods: see the queries."""
+
+    async def exists_with_slug(self, slug: str, *, except_id: UUID | None = None) -> bool:
+        """Whether a family has the slug, ignoring the family with `except_id`."""
+        ...
+
+    async def add(self, family: OlfactoryFamily) -> Result[None, FamilyAlreadyExists]:
+        """Err when another family already has the slug (also under concurrent inserts)."""
+        ...
+
+    async def get_for_update(self, family_id: UUID) -> OlfactoryFamily | None:
+        """The family, with its row locked until the transaction ends."""
+        ...
+
+    async def save(self, family: OlfactoryFamily) -> Result[None, FamilyAlreadyExists]:
+        """Persist name, slug and active flag. Err when another family has the slug (also under
+        concurrent renames)."""
         ...

@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: catalog
 min_implementer: mid
 depends_on: []
@@ -325,6 +325,11 @@ None
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+None. Notes (not deviations): `create_brand.py` needed no change (the positional
+`exists_with_slug` call type-checks). `InMemoryBrands.by_id` is now typed `dict[UUID, Brand]`
+(was `dict[object, Brand]`). The development database was at 0003 when the work began, so
+`just db-migrate` first applied 0004 (existing migration) before `db-revision` could run.
 
 ## Test coverage
 

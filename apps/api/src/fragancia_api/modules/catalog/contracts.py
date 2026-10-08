@@ -13,6 +13,11 @@ class CreateBrandRequest(BaseModel):
     name: str = Field(max_length=200, examples=["Maison Margiela"])
 
 
+class RenameBrandRequest(BaseModel):
+    # Business rules (length, characters) live in the domain; this only bounds the payload.
+    name: str = Field(max_length=200, examples=["Dior"])
+
+
 class CreatedResponse(BaseModel):
     id: UUID
 
@@ -37,3 +42,37 @@ class AdminBrand(BaseModel):
 
 class AdminBrandPage(Page[AdminBrand]):
     """One page of the admin brand list."""
+
+
+class CreateOlfactoryFamilyRequest(BaseModel):
+    """Payload to register an olfactory family."""
+
+    name: str = Field(max_length=200, examples=["Amaderada"])
+
+
+class RenameOlfactoryFamilyRequest(BaseModel):
+    """Payload to rename an olfactory family."""
+
+    name: str = Field(max_length=200, examples=["Amaderada"])
+
+
+class PublicOlfactoryFamily(BaseModel):
+    """An olfactory family as customers see it (active families only)."""
+
+    id: UUID
+    name: str
+    slug: str
+
+
+class AdminOlfactoryFamily(BaseModel):
+    """An olfactory family as the back office sees it."""
+
+    id: UUID
+    name: str
+    slug: str
+    is_active: bool
+    created_at: datetime
+
+
+class AdminOlfactoryFamilyPage(Page[AdminOlfactoryFamily]):
+    """One page of the admin olfactory family list."""
