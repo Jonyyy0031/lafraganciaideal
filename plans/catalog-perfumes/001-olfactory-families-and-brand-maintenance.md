@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: mid
 depends_on: []
@@ -332,6 +332,43 @@ None. Notes (not deviations): `create_brand.py` needed no change (the positional
 `just db-migrate` first applied 0004 (existing migration) before `db-revision` could run.
 
 ## Test coverage
+
+Baseline (before writing tests): `uv run just check` green (614 passed, 3 skipped unit; 684
+harness), `uv run just test-integration` green (82 passed, 2 skipped). No GAP and no NOT
+CONFIRMED items: every plan promise checked here is implemented. Files:
+`tests/unit/catalog/test_olfactory_family_domain.py` (domain),
+`tests/unit/catalog/test_catalog_maintenance_commands.py` (application),
+`tests/unit/catalog/test_catalog_maintenance_http.py` (http),
+`tests/integration/catalog/test_sql_brand_maintenance.py` and
+`tests/integration/catalog/test_sql_olfactory_families.py` (integration). The DB-backed families
+tests empty the table through a fixture that restores the seed rows afterwards, so the seed test
+is order-independent.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| `clean_name` trims, collapses, bounds 2-80, needs a slug | `naming.py:21-26` | domain | `test_olfactory_family_domain.py::test_clean_name_*` | CONFIRMED |
+| `slugify` still importable from `brand` | `brand.py:23` | domain | `::test_slugify_is_still_importable_from_the_brand_module` | CONFIRMED |
+| Family name rules, slug identity, error code/details | `olfactory_family.py:25-38` | domain | `::test_family_names_are_normalized_and_slugged`, `::test_names_with_the_same_slug_are_the_same_family`, `::test_invalid_family_names` | CONFIRMED |
+| Family create (active, no event), rename (slug follows), archive/restore idempotent | `olfactory_family.py:55-66` | domain | `::test_new_families_are_active_*`, `::test_renaming_a_family_*`, `::test_family_archive_and_restore_*` | CONFIRMED |
+| Brand rename/archive/restore, no events | `brand.py:68-75` | domain | `::test_renaming_a_brand_*`, `::test_brand_archive_and_restore_*` | CONFIRMED |
+| RenameBrand: slug follows, same slug ok, conflict (active and archived), invalid, not found, save Err passed on | `rename_brand.py:17-32` | application | `test_catalog_maintenance_commands.py::test_renam*_brand_*`, `::test_rename_passes_on_a_conflict_found_when_saving` | CONFIRMED |
+| Archive/Restore brand idempotent, not found | `brand_status.py:16-42` | application | `::test_archives_and_restores_a_brand_idempotently`, `::test_archiving_or_restoring_an_unknown_brand_is_not_found` | CONFIRMED |
+| CreateOlfactoryFamily: active, duplicate (also archived), invalid | `create_olfactory_family.py:25-40` | application | `::test_creates_an_active_family`, `::test_a_family_name_with_the_same_slug_is_a_conflict`, `::test_re_adding_an_archived_family_is_a_conflict`, `::test_an_invalid_family_name_creates_nothing` | CONFIRMED |
+| Rename/Archive/Restore family incl. not found, conflict | `rename_olfactory_family.py`, `olfactory_family_status.py` | application | `::test_renam*_family_*`, `::test_archives_and_restores_a_family_idempotently`, `::test_archiving_or_restoring_an_unknown_family_is_not_found` | CONFIRMED |
+| Family public/admin list queries (order, active filter, pagination) | `list_olfactory_families.py` | application | `::test_public_family_list_*`, `::test_admin_family_list_*` | CONFIRMED |
+| Every new admin route: 401 without session | `router.py:100-209` | http | `test_catalog_maintenance_http.py::test_new_admin_routes_return_401_without_a_session` | CONFIRMED |
+| Every new admin route (and existing brand ones): 403 for an admin without `catalog:manage` | `router.py:52-65` | http | `::test_new_admin_routes_return_403_*`, `::test_existing_brand_admin_routes_also_require_catalog_manage` | CONFIRMED |
+| Brand PATCH 204/409/404/422, payload `max_length`, bad id | `router.py:100-117` | http | `::test_rename_brand_*` | CONFIRMED |
+| Brand archive/restore 204, idempotent, hide/show, 404 | `router.py:120-135` | http | `::test_archive_hides_a_brand_*`, `::test_archiving_or_restoring_an_unknown_brand_is_404` | CONFIRMED |
+| Family POST 201/409/422, payload bounds | `router.py:156-167` | http | `::test_create_family_*`, `::test_duplicate_family_is_409`, `::test_invalid_family_name_is_422_*`, `::test_family_payload_is_bounded_and_required` | CONFIRMED |
+| Family PATCH, archive/restore, public list only active, admin list paged | `router.py:138-209` | http | `::test_rename_family_*`, `::test_family_archive_hides_*`, `::test_public_family_list_*`, `::test_admin_family_list_*` | CONFIRMED |
+| Migration seeds the nine families, ordered by name | `0005_catalog_olfactory_families.py` | integration | `test_sql_olfactory_families.py::test_migration_seeds_the_nine_starting_families` | CONFIRMED (against `fragancia_test`) |
+| Unique slug on `olfactory_families` (also archived), concurrent create | `tables.py`, `sql_olfactory_family_repository.py:47-57` | integration | `::test_the_slug_is_unique_in_the_table`, `::test_duplicate_family_is_a_conflict_*`, `::test_concurrent_creation_*` | CONFIRMED |
+| `exists_with_slug(except_id=)`, `get_for_update` mapping, `save` clash to Err with usable tx | `sql_*_repository.py` | integration | `::test_exists_with_slug_*`, `::test_get_for_update_*`, `::test_save_maps_a_slug_clash_*` (families and brands) | CONFIRMED |
+| Two concurrent renames to one name: one Ok, one 409-Err, no exception | `sql_*_repository.py` `save` | integration | `::test_concurrent_renames_to_the_same_name_*` (families and brands) | CONFIRMED (at use-case level; HTTP status mapping covered in http layer) |
+| Queries order/pagination; brand and family archive hides from the public list | `sql_*_queries.py` | integration | `::test_queries_order_by_name_*`, `::test_archive_*` | CONFIRMED |
+
+Closing run: see the final report of the tester run (commands and results below).
 
 ## Review findings
 
