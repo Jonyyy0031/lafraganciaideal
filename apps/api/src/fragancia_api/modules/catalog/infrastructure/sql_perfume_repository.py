@@ -26,6 +26,7 @@ from fragancia_api.modules.catalog.infrastructure.tables import (
     PERFUME_IDENTITY_UNIQUE,
     PERFUME_SLUG_UNIQUE,
     PRESENTATION_ML_UNIQUE,
+    perfume_slug_history,
     perfumes,
     presentations,
 )
@@ -215,8 +216,19 @@ class SqlPerfumeRepository:
                             set_={column: row[column] for column in _PRESENTATION_MUTABLE},
                         )
                     )
+                for slug in perfume.retired_slugs:
+                    history = postgresql.insert(perfume_slug_history).values(
+                        slug=slug, perfume_id=perfume.id, retired_at=perfume.updated_at
+                    )
+                    await session.execute(
+                        history.on_conflict_do_update(
+                            index_elements=["slug"],
+                            set_={"perfume_id": perfume.id, "retired_at": perfume.updated_at},
+                        )
+                    )
         except IntegrityError as error:
             return Err(_conflict(error))
+        perfume.retired_slugs.clear()
         return Ok(None)
 
 

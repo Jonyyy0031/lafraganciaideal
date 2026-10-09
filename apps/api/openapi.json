@@ -2215,6 +2215,228 @@
         }
       }
     },
+    "/api/v1/perfumes": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "List Public Perfumes",
+        "description": "Published perfumes of active brands, filtered (`brand`, `family` and `gender` are\nrepeatable; prices filter the \"from\" price), searched (`q`, accent and case insensitive over\nname, brand and notes) and sorted (default: brand, then name).",
+        "operationId": "list_public_perfumes",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "name": "brand",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": [],
+              "title": "Brand"
+            }
+          },
+          {
+            "name": "family",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": [],
+              "title": "Family"
+            }
+          },
+          {
+            "name": "gender",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "women",
+                  "men",
+                  "unisex"
+                ],
+                "type": "string"
+              },
+              "default": [],
+              "title": "Gender"
+            }
+          },
+          {
+            "name": "min_price_cents",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Price Cents"
+            }
+          },
+          {
+            "name": "max_price_cents",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Price Cents"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "name",
+                "price_asc",
+                "price_desc",
+                "newest"
+              ],
+              "type": "string",
+              "default": "name",
+              "title": "Sort"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 48,
+              "minimum": 1,
+              "default": 24,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicPerfumePage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/perfumes/{slug}": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Get Public Perfume",
+        "description": "A perfume with its active presentations. An old slug still finds it: the answer carries\nthe current `slug`, and the web redirects when it differs from the requested one. 404\n`CATALOG_PERFUME_NOT_FOUND` for an unknown or non-visible perfume.",
+        "operationId": "get_public_perfume",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 240,
+              "title": "Slug"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicPerfume"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/perfumes": {
       "get": {
         "tags": [
@@ -4516,6 +4738,311 @@
         ],
         "title": "PublicOlfactoryFamily",
         "description": "An olfactory family as customers see it (active families only)."
+      },
+      "PublicPerfume": {
+        "properties": {
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "women",
+              "men",
+              "unisex"
+            ],
+            "title": "Gender"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "brand": {
+            "$ref": "#/components/schemas/PublicPerfumeBrand"
+          },
+          "concentration": {
+            "$ref": "#/components/schemas/PublicPerfumeConcentration"
+          },
+          "family": {
+            "$ref": "#/components/schemas/PublicPerfumeFamily"
+          },
+          "top_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Top Notes"
+          },
+          "heart_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Heart Notes"
+          },
+          "base_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Base Notes"
+          },
+          "presentations": {
+            "items": {
+              "$ref": "#/components/schemas/PublicPresentation"
+            },
+            "type": "array",
+            "title": "Presentations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slug",
+          "name",
+          "gender",
+          "description",
+          "brand",
+          "concentration",
+          "family",
+          "top_notes",
+          "heart_notes",
+          "base_notes",
+          "presentations"
+        ],
+        "title": "PublicPerfume",
+        "description": "A perfume of the public catalog; the web redirects when `slug` differs from the one\nrequested (the perfume was renamed)."
+      },
+      "PublicPerfumeBrand": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "slug"
+        ],
+        "title": "PublicPerfumeBrand",
+        "description": "The brand of a perfume in the public catalog."
+      },
+      "PublicPerfumeCard": {
+        "properties": {
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "women",
+              "men",
+              "unisex"
+            ],
+            "title": "Gender"
+          },
+          "brand": {
+            "$ref": "#/components/schemas/PublicPerfumeBrand"
+          },
+          "concentration": {
+            "$ref": "#/components/schemas/PublicPerfumeConcentration"
+          },
+          "family": {
+            "$ref": "#/components/schemas/PublicPerfumeFamily"
+          },
+          "price_from_cents": {
+            "type": "integer",
+            "title": "Price From Cents"
+          },
+          "on_sale": {
+            "type": "boolean",
+            "title": "On Sale"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slug",
+          "name",
+          "gender",
+          "brand",
+          "concentration",
+          "family",
+          "price_from_cents",
+          "on_sale"
+        ],
+        "title": "PublicPerfumeCard",
+        "description": "One perfume of the public list, with its lowest current price."
+      },
+      "PublicPerfumeConcentration": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "abbreviation": {
+            "type": "string",
+            "title": "Abbreviation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "abbreviation"
+        ],
+        "title": "PublicPerfumeConcentration",
+        "description": "The concentration of a perfume in the public catalog."
+      },
+      "PublicPerfumeFamily": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "slug"
+        ],
+        "title": "PublicPerfumeFamily",
+        "description": "The olfactory family of a perfume in the public catalog."
+      },
+      "PublicPerfumePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PublicPerfumeCard"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size"
+        ],
+        "title": "PublicPerfumePage",
+        "description": "One page of the public perfume list."
+      },
+      "PublicPresentation": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "ml": {
+            "type": "integer",
+            "title": "Ml"
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "in_stock",
+              "made_to_order"
+            ],
+            "title": "Availability"
+          },
+          "lead_time_min_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Min Days"
+          },
+          "lead_time_max_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Max Days"
+          },
+          "price_cents": {
+            "type": "integer",
+            "title": "Price Cents"
+          },
+          "regular_price_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regular Price Cents"
+          },
+          "sale_ends_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale Ends At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "ml",
+          "availability",
+          "lead_time_min_days",
+          "lead_time_max_days",
+          "price_cents",
+          "regular_price_cents",
+          "sale_ends_at"
+        ],
+        "title": "PublicPresentation",
+        "description": "An active presentation with its current (effective) price."
       },
       "Readiness": {
         "properties": {

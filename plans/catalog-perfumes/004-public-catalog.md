@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: catalog
 min_implementer: mid
 depends_on: ["003"]
@@ -300,6 +300,11 @@ All checked against `uv run just api`, with data created through the admin route
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+- Step 4, `list_public`: the search haystack uses `concat_ws(' ', name, brand, array_to_string(top), array_to_string(heart), array_to_string(base))` instead of `||` over the concatenated arrays. Same result, and no NULL or array-concat operator handling. Cosmetic.
+- Step 4/6: `list_public` inner-joins the active-presentation subquery, so a visible perfume with no active presentation is not listed (it has no "from" price). Documented in the port docstring.
+- Step 8 (tests) skipped on purpose: it belongs to the tester phase.
+- Smoke test against the running API covered only an empty catalog (no admin session used): routes, validation (`size=49` -> 422), 404 code and SQL execution including `unaccent`. Acceptance criteria on real data are NOT yet verified.
 
 ## Test coverage
 

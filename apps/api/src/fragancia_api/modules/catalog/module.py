@@ -54,7 +54,9 @@ from fragancia_api.modules.catalog.application.queries.list_olfactory_families i
 )
 from fragancia_api.modules.catalog.application.queries.perfumes import (
     GetAdminPerfume,
+    GetPublicPerfume,
     ListAdminPerfumes,
+    ListPublicPerfumes,
 )
 from fragancia_api.modules.catalog.http.perfume_router import perfume_routers
 from fragancia_api.modules.catalog.http.router import routers
@@ -174,6 +176,8 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         )
     services.add(ListAdminPerfumes, ListAdminPerfumes(perfume_queries))
     services.add(GetAdminPerfume, GetAdminPerfume(perfume_queries))
+    services.add(ListPublicPerfumes, ListPublicPerfumes(perfume_queries, platform.clock))
+    services.add(GetPublicPerfume, GetPublicPerfume(perfume_queries, platform.clock))
 
 
 module = AppModule(name="catalog", register=register, routers=(*routers, *perfume_routers))

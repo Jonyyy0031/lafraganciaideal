@@ -40,6 +40,13 @@ Presentation fields and rules:
   (min <= max).
 - `is_active`, `created_at`.
 
+Effective price: a sale is active at `now` when `starts_at <= now < ends_at` (the start is
+inclusive, the end exclusive, and a missing bound never limits). The effective price of a
+presentation is the sale price while the sale is active, the regular price otherwise.
+
+Slug history: `update` records the slug it replaces in `retired_slugs`, which the repository
+persists so old URLs keep finding the perfume.
+
 Presentation operations: adding or updating to an ml another presentation has is a conflict.
 Archiving the last active presentation of a published perfume is a conflict (hide the perfume
 first). Archiving and restoring a presentation are idempotent. Nothing is ever deleted.
@@ -201,6 +208,12 @@ class Sale:
             return Err(PresentationSaleInvalid())
         return Ok(cls(Money(price_cents), starts_at, ends_at))
 
+    def is_active(self, now: datetime) -> bool:
+        """Start inclusive, end exclusive; a missing bound never limits."""
+        return (self.starts_at is None or self.starts_at <= now) and (
+            self.ends_at is None or now < self.ends_at
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class Availability:
@@ -256,6 +269,12 @@ class Presentation:
         self.is_active = is_active
         self.created_at = created_at
 
+    def effective_price(self, now: datetime) -> Money:
+        """The sale price while the sale is active, the regular price otherwise."""
+        if self.sale is not None and self.sale.is_active(now):
+            return self.sale.price
+        return self.price.amount
+
 
 class Perfume(AggregateRoot):
     def __init__(
@@ -293,6 +312,7 @@ class Perfume(AggregateRoot):
         self.created_at = created_at
         self.updated_at = updated_at
         self.presentations = presentations
+        self.retired_slugs: list[str] = []
 
     @property
     def name_slug(self) -> str:
@@ -351,6 +371,8 @@ class Perfume(AggregateRoot):
         self.concentration_id = concentration_id
         self.family_id = family_id
         self.name = name
+        if slug != self.slug:
+            self.retired_slugs.append(self.slug)
         self.slug = slug
         self.gender = gender
         self.description = description
