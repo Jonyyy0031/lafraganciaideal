@@ -19,16 +19,19 @@ and orders come in later initiatives.
 | ---- | ----- | ---------- | ------- |
 | 001  | Olfactory families, and renaming and archiving brands | — | Editable `OlfactoryFamily` list (create, rename, archive, restore; public and admin lists); brands gain rename, archive and restore; catalog admin routes require `catalog:manage` |
 | 002  | Editable concentrations | 001 | `Concentration` list with a name and an abbreviation (create, update, archive, restore; public and admin lists), seeded with the five classic concentrations |
-| 003  | Perfumes, presentations and the public catalog | 001, 002 | `Perfume` aggregate with presentations (price, sale window, availability); admin CRUD, publish/hide, archive; public list with filters (brand, gender, family, text, effective price range), sorting and detail by slug |
-| 004  | Perfume photos on S3 | 003 | Up to 3 photos per perfume in RustFS/S3: upload, order, remove; public URLs in the catalog responses |
-| 005  | Excel import | 003, 004 | Downloadable `.xlsx` template; validate the whole file into a per-row report; all-or-nothing confirm that upserts perfumes and presentations and downloads image URLs to S3 |
+| 003  | Perfumes and presentations in the back office | 001, 002 | `Perfume` aggregate with its presentations (price, sale window, availability); admin create, edit, publish/hide, archive/restore, add/edit/archive presentations; admin list and detail |
+| 004  | The public catalog | 003 | Storefront list with filters (brand, gender, family, text, effective price range), sorting, "from" price, and detail by slug |
+| 005  | Perfume photos on S3 | 003 | Up to 3 photos per perfume in RustFS/S3: upload, order, remove; public URLs in the catalog responses |
+| 006  | Excel import | 003, 005 | Downloadable `.xlsx` template; validate the whole file into a per-row report; all-or-nothing confirm that upserts perfumes and presentations and downloads image URLs to S3 |
 
 ## Dependency notes
 
-003 references brands, families (001) and concentrations (002) by id. 005 creates perfumes,
-presentations and photos, so it needs the write side of 003 and the photo storage of 004.
+003 references brands, families (001) and concentrations (002) by id. 004 reads what 003
+writes. 006 creates perfumes, presentations and photos, so it needs the write side of 003 and
+the photo storage of 005.
 
-Plans 002–005 were renumbered on 2026-10-09 (decision 21), before any of their files existed.
+Plans 002–005 were renumbered on 2026-10-09 (decision 21), and plans 003–006 again on the
+same day (decision 35). Both times, none of their files existed yet.
 
 ## Decisions with the user
 
@@ -120,6 +123,22 @@ Plans 002–005 were renumbered on 2026-10-09 (decision 21), before any of their
 33. (2026-10-09) When a **concentration** is archived, its perfumes **stay visible**, as with
     families: archiving "EDT" must not hide half the catalog.
 34. (2026-10-09) Plan 002 approved by the user.
+35. (2026-10-09) The perfume plan is **split in two**:
+    - **003** is the back office: perfumes and presentations.
+    - **004** is the public catalog: filters, search, sorting, "from" price and detail.
+
+    Photos move to 005 and the import to 006.
+36. (2026-10-09) Archiving the **last active presentation of a published perfume** is
+    refused (409): the perfume has to be hidden first. A published perfume always has
+    something to sell (decision 24), and nothing changes behind the admin's back.
+37. (2026-10-09) **Stable perfume URLs.** The slug is computed when the perfume is created or
+    edited, and then stored. Renaming its brand or concentration does not change existing
+    URLs, which keeps SEO and shared links intact. Editing the perfume recomputes the slug.
+38. (2026-10-09) The storefront's **"newest" sort uses the first publication date**, not the
+    creation date.
+39. (2026-10-09) The user approved plan 003, including two rules it proposes:
+    - An **archived perfume is read-only** except restore and hide.
+    - The **description is optional**. An empty note is invalid, and duplicate notes are kept.
 
 ## Delivered
 
