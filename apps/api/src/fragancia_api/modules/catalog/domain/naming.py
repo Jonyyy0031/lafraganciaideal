@@ -28,3 +28,18 @@ def clean_name(raw: str) -> str | None:
     if not 0 < len(slugify(value)) <= SLUG_MAX_LENGTH:
         return None
     return value
+
+
+ABBREVIATION_MIN_LENGTH = 2
+ABBREVIATION_MAX_LENGTH = 12
+ABBREVIATION_SLUG_MAX_LENGTH = 20  # the abbreviation slug column is String(20)
+
+
+def clean_abbreviation(raw: str) -> str | None:
+    """The normalized abbreviation, or None when it breaks the length or character rules."""
+    value = " ".join(raw.split())
+    if not ABBREVIATION_MIN_LENGTH <= len(value) <= ABBREVIATION_MAX_LENGTH:
+        return None
+    if not 0 < len(slugify(value)) <= ABBREVIATION_SLUG_MAX_LENGTH:
+        return None
+    return value

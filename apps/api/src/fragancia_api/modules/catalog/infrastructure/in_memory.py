@@ -5,13 +5,22 @@ from uuid import UUID
 from fragancia_api.modules.catalog.contracts import (
     AdminBrand,
     AdminBrandPage,
+    AdminConcentration,
+    AdminConcentrationPage,
     AdminOlfactoryFamily,
     AdminOlfactoryFamilyPage,
     PublicBrand,
+    PublicConcentration,
     PublicOlfactoryFamily,
 )
 from fragancia_api.modules.catalog.domain.brand import Brand
-from fragancia_api.modules.catalog.domain.errors import BrandAlreadyExists, FamilyAlreadyExists
+from fragancia_api.modules.catalog.domain.concentration import Concentration
+from fragancia_api.modules.catalog.domain.errors import (
+    BrandAlreadyExists,
+    ConcentrationAbbreviationTaken,
+    ConcentrationAlreadyExists,
+    FamilyAlreadyExists,
+)
 from fragancia_api.modules.catalog.domain.olfactory_family import OlfactoryFamily
 from fragancia_api.shared.kernel import Err, Ok, Result
 
@@ -114,3 +123,77 @@ class InMemoryOlfactoryFamilies:
             for f in chunk
         ]
         return AdminOlfactoryFamilyPage(items=items, total=len(everything), page=page, size=size)
+
+
+class InMemoryConcentrations:
+    """Both the repository and the queries over one shared store."""
+
+    def __init__(self, *concentrations: Concentration) -> None:
+        self.by_id: dict[UUID, Concentration] = {c.id: c for c in concentrations}
+
+    async def exists_with_slug(self, slug: str, *, except_id: UUID | None = None) -> bool:
+        return any(c.slug == slug and c.id != except_id for c in self.by_id.values())
+
+    async def exists_with_abbreviation(
+        self, abbreviation_slug: str, *, except_id: UUID | None = None
+    ) -> bool:
+        return any(
+            c.abbreviation_slug == abbreviation_slug and c.id != except_id
+            for c in self.by_id.values()
+        )
+
+    async def _conflict(
+        self, concentration: Concentration
+    ) -> ConcentrationAlreadyExists | ConcentrationAbbreviationTaken | None:
+        if await self.exists_with_slug(concentration.slug, except_id=concentration.id):
+            return ConcentrationAlreadyExists()
+        if await self.exists_with_abbreviation(
+            concentration.abbreviation_slug, except_id=concentration.id
+        ):
+            return ConcentrationAbbreviationTaken()
+        return None
+
+    async def add(
+        self, concentration: Concentration
+    ) -> Result[None, ConcentrationAlreadyExists | ConcentrationAbbreviationTaken]:
+        conflict = await self._conflict(concentration)
+        if conflict is not None:
+            return Err(conflict)
+        self.by_id[concentration.id] = concentration
+        return Ok(None)
+
+    async def get_for_update(self, concentration_id: UUID) -> Concentration | None:
+        return self.by_id.get(concentration_id)
+
+    async def save(
+        self, concentration: Concentration
+    ) -> Result[None, ConcentrationAlreadyExists | ConcentrationAbbreviationTaken]:
+        return await self.add(concentration)
+
+    def _sorted(self) -> list[Concentration]:
+        return sorted(self.by_id.values(), key=lambda c: (c.name.value.lower(), c.id))
+
+    async def list_active(self) -> list[PublicConcentration]:
+        return [
+            PublicConcentration(
+                id=c.id, name=c.name.value, abbreviation=c.abbreviation.value, slug=c.slug
+            )
+            for c in self._sorted()
+            if c.is_active
+        ]
+
+    async def list_all(self, *, page: int, size: int) -> AdminConcentrationPage:
+        everything = self._sorted()
+        chunk = everything[(page - 1) * size : page * size]
+        items = [
+            AdminConcentration(
+                id=c.id,
+                name=c.name.value,
+                abbreviation=c.abbreviation.value,
+                slug=c.slug,
+                is_active=c.is_active,
+                created_at=c.created_at,
+            )
+            for c in chunk
+        ]
+        return AdminConcentrationPage(items=items, total=len(everything), page=page, size=size)

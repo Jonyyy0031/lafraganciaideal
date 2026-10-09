@@ -4,7 +4,14 @@ from fragancia_api.modules.catalog.application.commands.brand_status import (
     ArchiveBrand,
     RestoreBrand,
 )
+from fragancia_api.modules.catalog.application.commands.concentration_status import (
+    ArchiveConcentration,
+    RestoreConcentration,
+)
 from fragancia_api.modules.catalog.application.commands.create_brand import CreateBrand
+from fragancia_api.modules.catalog.application.commands.create_concentration import (
+    CreateConcentration,
+)
 from fragancia_api.modules.catalog.application.commands.create_olfactory_family import (
     CreateOlfactoryFamily,
 )
@@ -16,9 +23,16 @@ from fragancia_api.modules.catalog.application.commands.rename_brand import Rena
 from fragancia_api.modules.catalog.application.commands.rename_olfactory_family import (
     RenameOlfactoryFamily,
 )
+from fragancia_api.modules.catalog.application.commands.update_concentration import (
+    UpdateConcentration,
+)
 from fragancia_api.modules.catalog.application.queries.list_brands import (
     ListAdminBrands,
     ListPublicBrands,
+)
+from fragancia_api.modules.catalog.application.queries.list_concentrations import (
+    ListAdminConcentrations,
+    ListPublicConcentrations,
 )
 from fragancia_api.modules.catalog.application.queries.list_olfactory_families import (
     ListAdminOlfactoryFamilies,
@@ -27,6 +41,12 @@ from fragancia_api.modules.catalog.application.queries.list_olfactory_families i
 from fragancia_api.modules.catalog.http.router import routers
 from fragancia_api.modules.catalog.infrastructure.sql_brand_queries import SqlBrandQueries
 from fragancia_api.modules.catalog.infrastructure.sql_brand_repository import SqlBrandRepository
+from fragancia_api.modules.catalog.infrastructure.sql_concentration_queries import (
+    SqlConcentrationQueries,
+)
+from fragancia_api.modules.catalog.infrastructure.sql_concentration_repository import (
+    SqlConcentrationRepository,
+)
 from fragancia_api.modules.catalog.infrastructure.sql_olfactory_family_queries import (
     SqlOlfactoryFamilyQueries,
 )
@@ -77,6 +97,29 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     )
     services.add(ListPublicOlfactoryFamilies, ListPublicOlfactoryFamilies(family_queries))
     services.add(ListAdminOlfactoryFamilies, ListAdminOlfactoryFamilies(family_queries))
+
+    concentrations = SqlConcentrationRepository(platform.database)
+    concentration_queries = SqlConcentrationQueries(platform.database)
+    services.add(
+        CreateConcentration,
+        CreateConcentration(
+            concentrations=concentrations, transactions=platform.transactions, clock=platform.clock
+        ),
+    )
+    services.add(
+        UpdateConcentration,
+        UpdateConcentration(concentrations=concentrations, transactions=platform.transactions),
+    )
+    services.add(
+        ArchiveConcentration,
+        ArchiveConcentration(concentrations=concentrations, transactions=platform.transactions),
+    )
+    services.add(
+        RestoreConcentration,
+        RestoreConcentration(concentrations=concentrations, transactions=platform.transactions),
+    )
+    services.add(ListPublicConcentrations, ListPublicConcentrations(concentration_queries))
+    services.add(ListAdminConcentrations, ListAdminConcentrations(concentration_queries))
 
 
 module = AppModule(name="catalog", register=register, routers=routers)

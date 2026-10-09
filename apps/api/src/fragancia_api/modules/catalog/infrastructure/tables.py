@@ -30,3 +30,19 @@ olfactory_families = Table(
 )
 
 FAMILY_SLUG_UNIQUE = "uq_olfactory_families_slug"
+
+concentrations = Table(
+    "concentrations",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("name", String(80), nullable=False),
+    Column("slug", String(100), nullable=False, unique=True),
+    Column("abbreviation", String(12), nullable=False),
+    Column("abbreviation_slug", String(20), nullable=False, unique=True),
+    Column("is_active", Boolean, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    schema=SCHEMA,
+)
+
+CONCENTRATION_SLUG_UNIQUE = "uq_concentrations_slug"
+CONCENTRATION_ABBREVIATION_UNIQUE = "uq_concentrations_abbreviation_slug"
