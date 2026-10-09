@@ -53,10 +53,10 @@ async def empty_families(container: Container) -> AsyncIterator[None]:
     """Empties the table for the test and puts the migration's seed rows back afterwards."""
     async with container.database.engine.begin() as connection:
         saved = (await connection.execute(select(olfactory_families))).mappings().all()
-        await connection.execute(text("TRUNCATE catalog.olfactory_families"))
+        await connection.execute(text("TRUNCATE catalog.olfactory_families CASCADE"))
     yield
     async with container.database.engine.begin() as connection:
-        await connection.execute(text("TRUNCATE catalog.olfactory_families"))
+        await connection.execute(text("TRUNCATE catalog.olfactory_families CASCADE"))
         if saved:
             await connection.execute(insert(olfactory_families), [dict(row) for row in saved])
 

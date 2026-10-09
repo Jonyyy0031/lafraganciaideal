@@ -19,6 +19,20 @@ from fragancia_api.modules.catalog.application.commands.olfactory_family_status 
     ArchiveOlfactoryFamily,
     RestoreOlfactoryFamily,
 )
+from fragancia_api.modules.catalog.application.commands.perfumes import (
+    ArchivePerfume,
+    CreatePerfume,
+    HidePerfume,
+    PublishPerfume,
+    RestorePerfume,
+    UpdatePerfume,
+)
+from fragancia_api.modules.catalog.application.commands.presentations import (
+    AddPresentation,
+    ArchivePresentation,
+    RestorePresentation,
+    UpdatePresentation,
+)
 from fragancia_api.modules.catalog.application.commands.rename_brand import RenameBrand
 from fragancia_api.modules.catalog.application.commands.rename_olfactory_family import (
     RenameOlfactoryFamily,
@@ -38,6 +52,11 @@ from fragancia_api.modules.catalog.application.queries.list_olfactory_families i
     ListAdminOlfactoryFamilies,
     ListPublicOlfactoryFamilies,
 )
+from fragancia_api.modules.catalog.application.queries.perfumes import (
+    GetAdminPerfume,
+    ListAdminPerfumes,
+)
+from fragancia_api.modules.catalog.http.perfume_router import perfume_routers
 from fragancia_api.modules.catalog.http.router import routers
 from fragancia_api.modules.catalog.infrastructure.sql_brand_queries import SqlBrandQueries
 from fragancia_api.modules.catalog.infrastructure.sql_brand_repository import SqlBrandRepository
@@ -52,6 +71,10 @@ from fragancia_api.modules.catalog.infrastructure.sql_olfactory_family_queries i
 )
 from fragancia_api.modules.catalog.infrastructure.sql_olfactory_family_repository import (
     SqlOlfactoryFamilyRepository,
+)
+from fragancia_api.modules.catalog.infrastructure.sql_perfume_queries import SqlPerfumeQueries
+from fragancia_api.modules.catalog.infrastructure.sql_perfume_repository import (
+    SqlPerfumeRepository,
 )
 from fragancia_api.shared.http.services import ServiceRegistry
 from fragancia_api.shared.module import AppModule, Platform
@@ -121,5 +144,36 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     services.add(ListPublicConcentrations, ListPublicConcentrations(concentration_queries))
     services.add(ListAdminConcentrations, ListAdminConcentrations(concentration_queries))
 
+    perfumes = SqlPerfumeRepository(platform.database)
+    perfume_queries = SqlPerfumeQueries(platform.database)
+    for perfume_command in (CreatePerfume, UpdatePerfume):
+        services.add(
+            perfume_command,
+            perfume_command(
+                perfumes=perfumes,
+                brands=brands,
+                families=families,
+                concentrations=concentrations,
+                transactions=platform.transactions,
+                clock=platform.clock,
+            ),
+        )
+    for command in (
+        PublishPerfume,
+        HidePerfume,
+        ArchivePerfume,
+        RestorePerfume,
+        AddPresentation,
+        UpdatePresentation,
+        ArchivePresentation,
+        RestorePresentation,
+    ):
+        services.add(
+            command,
+            command(perfumes=perfumes, transactions=platform.transactions, clock=platform.clock),
+        )
+    services.add(ListAdminPerfumes, ListAdminPerfumes(perfume_queries))
+    services.add(GetAdminPerfume, GetAdminPerfume(perfume_queries))
 
-module = AppModule(name="catalog", register=register, routers=routers)
+
+module = AppModule(name="catalog", register=register, routers=(*routers, *perfume_routers))

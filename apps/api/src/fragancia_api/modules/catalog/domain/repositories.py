@@ -8,8 +8,11 @@ from fragancia_api.modules.catalog.domain.errors import (
     ConcentrationAbbreviationTaken,
     ConcentrationAlreadyExists,
     FamilyAlreadyExists,
+    PerfumeAlreadyExists,
+    PresentationAlreadyExists,
 )
 from fragancia_api.modules.catalog.domain.olfactory_family import OlfactoryFamily
+from fragancia_api.modules.catalog.domain.perfume import Perfume
 from fragancia_api.shared.kernel import Result
 
 
@@ -22,6 +25,10 @@ class BrandRepository(Protocol):
 
     async def add(self, brand: Brand) -> Result[None, BrandAlreadyExists]:
         """Err when another brand already has the slug (also under concurrent inserts)."""
+        ...
+
+    async def get(self, brand_id: UUID) -> Brand | None:
+        """The brand, without locking it."""
         ...
 
     async def get_for_update(self, brand_id: UUID) -> Brand | None:
@@ -43,6 +50,10 @@ class OlfactoryFamilyRepository(Protocol):
 
     async def add(self, family: OlfactoryFamily) -> Result[None, FamilyAlreadyExists]:
         """Err when another family already has the slug (also under concurrent inserts)."""
+        ...
+
+    async def get(self, family_id: UUID) -> OlfactoryFamily | None:
+        """The family, without locking it."""
         ...
 
     async def get_for_update(self, family_id: UUID) -> OlfactoryFamily | None:
@@ -75,6 +86,10 @@ class ConcentrationRepository(Protocol):
         concurrent inserts)."""
         ...
 
+    async def get(self, concentration_id: UUID) -> Concentration | None:
+        """The concentration, without locking it."""
+        ...
+
     async def get_for_update(self, concentration_id: UUID) -> Concentration | None:
         """The concentration, with its row locked until the transaction ends."""
         ...
@@ -84,4 +99,36 @@ class ConcentrationRepository(Protocol):
     ) -> Result[None, ConcentrationAlreadyExists | ConcentrationAbbreviationTaken]:
         """Persist name, slug, abbreviation, abbreviation slug and active flag. Err when another
         concentration has either slug (also under concurrent updates)."""
+        ...
+
+
+class PerfumeRepository(Protocol):
+    """Write side. Joins the active transaction. A perfume is saved with its presentations."""
+
+    async def exists_with_identity(
+        self,
+        brand_id: UUID,
+        name_slug: str,
+        concentration_id: UUID,
+        *,
+        except_id: UUID | None = None,
+    ) -> bool:
+        """Whether a perfume has this brand, name slug and concentration, ignoring `except_id`."""
+        ...
+
+    async def add(self, perfume: Perfume) -> Result[None, PerfumeAlreadyExists]:
+        """Err when another perfume has the identity or the slug (also under concurrent
+        inserts)."""
+        ...
+
+    async def get_for_update(self, perfume_id: UUID) -> Perfume | None:
+        """The perfume with every presentation (ordered by ml), with its row locked until the
+        transaction ends."""
+        ...
+
+    async def save(
+        self, perfume: Perfume
+    ) -> Result[None, PerfumeAlreadyExists | PresentationAlreadyExists]:
+        """Persist the perfume row and upsert every presentation by id. Err when another perfume
+        has the identity or the slug, or two presentations share an ml."""
         ...

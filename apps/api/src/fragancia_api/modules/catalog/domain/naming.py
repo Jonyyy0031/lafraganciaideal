@@ -1,8 +1,12 @@
-"""Name rules shared by the catalog aggregates (brands, olfactory families).
+"""Name rules shared by the catalog aggregates (brands, olfactory families, concentrations,
+perfumes).
 
 A name is trimmed with inner whitespace collapsed, has 2-80 characters and a non-empty slug
 (lowercase ASCII words joined by hyphens), which is what identifies it. The slug has at most
 100 characters: NFKD can expand one character into several ("Ⅷ" → "viii").
+
+A concentration abbreviation ("EDT") is trimmed with inner whitespace collapsed, has 2-12
+characters and a non-empty slug of at most 20 characters; it is kept as typed.
 """
 
 import re

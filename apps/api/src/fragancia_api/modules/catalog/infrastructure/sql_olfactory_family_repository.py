@@ -56,6 +56,11 @@ class SqlOlfactoryFamilyRepository:
             raise
         return Ok(None)
 
+    async def get(self, family_id: UUID) -> OlfactoryFamily | None:
+        statement = select(olfactory_families).where(olfactory_families.c.id == family_id)
+        row = (await self._database.session.execute(statement)).mappings().first()
+        return _to_family(row) if row is not None else None
+
     async def get_for_update(self, family_id: UUID) -> OlfactoryFamily | None:
         statement = (
             select(olfactory_families).where(olfactory_families.c.id == family_id).with_for_update()

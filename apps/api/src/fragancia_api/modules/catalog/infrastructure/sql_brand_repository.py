@@ -53,6 +53,11 @@ class SqlBrandRepository:
             raise
         return Ok(None)
 
+    async def get(self, brand_id: UUID) -> Brand | None:
+        statement = select(brands).where(brands.c.id == brand_id)
+        row = (await self._database.session.execute(statement)).mappings().first()
+        return _to_brand(row) if row is not None else None
+
     async def get_for_update(self, brand_id: UUID) -> Brand | None:
         statement = select(brands).where(brands.c.id == brand_id).with_for_update()
         row = (await self._database.session.execute(statement)).mappings().first()

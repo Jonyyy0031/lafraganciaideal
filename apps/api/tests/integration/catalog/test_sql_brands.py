@@ -20,7 +20,7 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(autouse=True)
 async def clean_brands(container: Container) -> None:
     async with container.database.engine.begin() as connection:
-        await connection.execute(text("TRUNCATE catalog.brands"))
+        await connection.execute(text("TRUNCATE catalog.brands CASCADE"))
 
 
 async def test_create_brand_persists_the_row_and_the_event_together(container: Container) -> None:
