@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: catalog
 min_implementer: high
 depends_on: ["001", "002"]
@@ -458,23 +458,23 @@ names, maps to the same 409.
 All checked against `uv run just api` as an owner. "Seeded" means the families and
 concentrations from migrations 0005 and 0006.
 
-- [ ] `POST /api/v1/admin/perfumes` with an active brand "Versace", the seeded EDT and
+- [x] `POST /api/v1/admin/perfumes` with an active brand "Versace", the seeded EDT and
       Aromática, name "Eros", gender `men` and notes → 201 `{id}`. `GET …/{id}` shows
       `slug: "versace-eros-edt"`, `is_published: false`, `first_published_at: null` and
       `presentations: []`.
-- [ ] Creating it again (same brand, "EROS", EDT) → 409 `CATALOG_PERFUME_ALREADY_EXISTS`. With
+- [x] Creating it again (same brand, "EROS", EDT) → 409 `CATALOG_PERFUME_ALREADY_EXISTS`. With
       EDP instead → 201 and slug `versace-eros-edp`.
-- [ ] An archived brand, family or concentration → 422 `CATALOG_PERFUME_*_UNAVAILABLE`, and
+- [x] An archived brand, family or concentration → 422 `CATALOG_PERFUME_*_UNAVAILABLE`, and
       an unknown id gives the same. 11 top notes, or a 41-character note → 422
       `CATALOG_PERFUME_NOTES_INVALID`. A 2,001-character description → 422
       `CATALOG_PERFUME_DESCRIPTION_TOO_LONG`.
-- [ ] `POST …/{id}/publish` with no presentations → 422 `CATALOG_PERFUME_NOTHING_TO_SELL`.
-- [ ] `POST …/{id}/presentations` adds the following:
+- [x] `POST …/{id}/publish` with no presentations → 422 `CATALOG_PERFUME_NOTHING_TO_SELL`.
+- [x] `POST …/{id}/presentations` adds the following:
       - `{ml:100, price_cents:250000, availability:"in_stock"}` → 201.
       - `{ml:200, price_cents:390000, sale_price_cents:350000, sale_ends_at:<future>,
         availability:"made_to_order", lead_time_min_days:7, lead_time_max_days:10}` → 201.
       - 100 ml again → 409 `CATALOG_PRESENTATION_ALREADY_EXISTS`.
-- [ ] Presentation validation:
+- [x] Presentation validation:
       - A sale price ≥ the price, or `sale_ends_at` ≤ `sale_starts_at` → 422
         `CATALOG_PRESENTATION_SALE_INVALID`.
       - `made_to_order` without lead days, or with min > max → 422
@@ -482,27 +482,27 @@ concentrations from migrations 0005 and 0006.
       - `in_stock` with lead days → 422 `..._AVAILABILITY_INVALID`.
       - ml 0 → 422 `..._ML_INVALID`.
       - Price 0 or 10,000,001 → 422 `..._PRICE_INVALID`.
-- [ ] `publish` → 204 and sets `first_published_at`. `hide`, then `publish` again, keeps
+- [x] `publish` → 204 and sets `first_published_at`. `hide`, then `publish` again, keeps
       the same `first_published_at`.
-- [ ] On the published perfume:
+- [x] On the published perfume:
       - Archiving the 200 ml presentation → 204.
       - Archiving the 100 ml one, now the last active, → 409
         `CATALOG_PERFUME_LAST_PRESENTATION`.
       - After `hide`, archiving it → 204.
-- [ ] `PUT …/{id}` renaming the perfume to "Eros Flame" → 204 with slug
+- [x] `PUT …/{id}` renaming the perfume to "Eros Flame" → 204 with slug
       `versace-eros-flame-edt`. Renaming the brand "Versace" afterwards does **not** change
       the perfume's slug.
-- [ ] Changing the family of a perfume whose current family is archived, to an active one →
+- [x] Changing the family of a perfume whose current family is archived, to an active one →
       204. Keeping the archived family unchanged on update → 204. Changing to an archived
       family → 422.
-- [ ] `archive` hides the perfume and moves it to `GET /admin/perfumes?archived=true`. While
+- [x] `archive` hides the perfume and moves it to `GET /admin/perfumes?archived=true`. While
       archived, `PUT`, `publish` and `POST …/presentations` → 422 `CATALOG_PERFUME_ARCHIVED`.
       `restore` → 204, and it stays hidden.
-- [ ] `GET /admin/perfumes` lists non-archived perfumes ordered by brand, then name, with
+- [x] `GET /admin/perfumes` lists non-archived perfumes ordered by brand, then name, with
       `active_presentations`. Every new route returns 401 without a session.
-- [ ] Two concurrent `POST …/presentations` with the same ml on one perfume: one 201 and one
+- [x] Two concurrent `POST …/presentations` with the same ml on one perfume: one 201 and one
       409, never a 500.
-- [ ] Migration 0007 applies on the development database. `openapi.json` is regenerated and
+- [x] Migration 0007 applies on the development database. `openapi.json` is regenerated and
       the drift check passes. The existing integration suites still pass.
 
 ## Test layers required
@@ -745,3 +745,95 @@ No action.
 level, so it should still be driven through HTTP against the running app.
 
 ## Verification
+
+Verified on 2026-10-09 by the main session, inline, on `feat/catalog-perfumes-back-office`
+at 7a0afe5.
+
+**Suites (each run once):**
+- `uv run just check`: ruff "All checks passed!", mypy "no issues found in 202 source
+  files", unit `1060 passed, 3 skipped`, harness `684 passed`.
+- `uv run just test-integration`: `168 passed, 2 skipped`.
+- `uv run just db-migrate` on the development database: clean, at 0007.
+
+**Running app.** The API ran on port 8100 with auto-reload; it was already up from the
+implementer's session and served the current code. I signed in as the synthetic owner
+`verifier@example.test`. The test data:
+- Brands "Verif Versace" (active) and "Verif Archivada" (archived first).
+- Families "Verif Fam Archivada" and "Verif Fam Viva".
+- The seeded EDT, EDP and Aromática.
+
+**Create:**
+- Eros, EDT, Aromática → 201. The detail shows `slug "verif-versace-eros-edt"`,
+  `is_published false`, `first_published_at null`, `presentations []`, the refs, and the
+  notes in order.
+- `"EROS"` with EDT → 409 `CATALOG_PERFUME_ALREADY_EXISTS`. With EDP → 201, slug
+  `verif-versace-eros-edp`.
+- Errors, all 422:
+  - Archived brand → `CATALOG_PERFUME_BRAND_UNAVAILABLE`.
+  - Unknown family id → `CATALOG_PERFUME_FAMILY_UNAVAILABLE`.
+  - 11 top notes, or a 41-character note → `CATALOG_PERFUME_NOTES_INVALID` with
+    `{"max_per_level":10,"max_length":40}`.
+  - A 2001-character description → `CATALOG_PERFUME_DESCRIPTION_TOO_LONG`.
+- `publish` with no presentations → 422 `CATALOG_PERFUME_NOTHING_TO_SELL`.
+
+**Presentations:**
+- 100 ml in stock → 201.
+- 200 ml with a sale of 350000 ending `2027-01-31T23:59:59-06:00`, made to order 7–10 days
+  → 201. Stored as `2027-02-01T05:59:59Z`.
+- 100 ml again → 409 `CATALOG_PRESENTATION_ALREADY_EXISTS`.
+- Validation errors, all 422 with their code:
+  - Sale equal to the price, or end before start → `SALE_INVALID`.
+  - Made to order without days, min greater than max, or in stock with days →
+    `AVAILABILITY_INVALID`.
+  - ml 0 → `ML_INVALID`.
+  - Price 0 or 10000001 → `PRICE_INVALID`.
+
+**State:**
+- `publish` → 204 and sets `first_published_at`. `hide`, then `publish` → the same
+  `first_published_at`.
+- While published:
+  - Archive the 200 ml presentation → 204.
+  - Archive the 100 ml one (the last active) → 409 `CATALOG_PERFUME_LAST_PRESENTATION`.
+  - After `hide`, archiving it → 204. `restore` of the presentation → 204.
+
+**Slug:**
+- `PUT` renaming to "Eros Flame" → 204, slug `verif-versace-eros-flame-edt`.
+- Renaming the brand to "Verif Versace Milano" left that slug unchanged.
+- The next edit of the EDP perfume recomputed its slug to `verif-versace-milano-eros-edp`.
+  That is decision 37, and the reviewer's informational note for plan 004.
+
+**References on update:**
+- Setting the family "Verif Fam Archivada", then archiving that family. A `PUT` that keeps
+  it → 204.
+- Changing to "Verif Fam Viva" → 204.
+- Changing back to the archived family → 422 `CATALOG_PERFUME_FAMILY_UNAVAILABLE`.
+
+**Archive the perfume:**
+- `archive` on a published perfume → 204, `is_published false, is_archived true`. It is
+  listed by `?archived=true`.
+- While archived, `PUT`, `publish` and `POST …/presentations` → 422
+  `CATALOG_PERFUME_ARCHIVED`.
+- `restore` → 204, and the perfume stays hidden.
+
+**Admin list:** non-archived perfumes are ordered by brand, then name ("Eros" before "Eros
+Flame"), with `active_presentations` 0 and 1.
+
+**Without a session:** `GET /admin/perfumes` and `POST …/publish` → 401.
+
+**Concurrency through HTTP** (`curl -Z`):
+- Three parallel adds of 100 ml → `201 409 409`.
+- Two parallel adds of 200 ml → `201 409`.
+- The perfume ends with exactly `[100, 200]`. No response was a 500.
+
+**Cleanup.** I counted first (2 perfumes, 4 presentations, 2 brands, 2 families, all
+"verif-%"), then deleted exactly those rows in FK order. I stopped the leftover API server.
+
+**NOT VERIFIED:**
+- Calls as a **staff** user. Only an owner can be created from the terminal; the http tests
+  cover the 403 without `catalog:manage`.
+- The server log. The API I used belonged to another process, so I could not read its log.
+  The absence of 500s rests on every response code observed.
+- The migration downgrade on the development database. The implementer and the tests
+  covered it on the test database.
+
+Every acceptance criterion passes. The plan is ready for the user to set `done`.
