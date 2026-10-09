@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: catalog
 min_implementer: high
 depends_on: ["001", "002"]
@@ -630,5 +630,118 @@ the two runs only the touched files were run, plus `uv run mypy` once after fixi
 errors in the new tests.
 
 ## Review findings
+
+Review, 2026-10-09 (reviewer subagent). Diff: `git diff main...HEAD` (commits `1e4a966`,
+`de7dc93`, `9ea8347`); worktree clean.
+
+### Pass 1: checklist (15/15 applicable items pass; 1 not applicable yet)
+
+- [x] `uv run just plans-scope`: 29 declared, 36 changed (the extra 7 are the plan, the
+      initiative README and the finding, all allowed), "every change inside the plan". No hot
+      file touched (`container.py`, `docs/modules.json` and `.importlinter` are unchanged).
+- [x] `uv run just check`: green (1060 unit passed, 3 skipped; 684 harness tests passed).
+- [x] `uv run just test-integration`: 168 passed, 2 skipped.
+- [x] Business rules live in `domain/perfume.py`. The reference checks sit in the use
+      cases, because the aggregate cannot see the other lists, as the plan says. Routers,
+      mappers and queries hold no rules.
+- [x] CQRS-lite: every command runs aggregate → `PerfumeRepository` inside
+      `transactions.run` and returns `Result`. Queries go through `PerfumeQueries`. The
+      repository has no screen-specific methods.
+- [x] Contracts live in `contracts.py`. `openapi.json` is regenerated, and the drift check
+      inside `check` passes.
+- [x] Every expected error is an `Err(DomainError)` with a stable `CATALOG_*` code.
+      `_conflict` re-raises unknown `IntegrityError`s.
+- [x] Prices use `Money` with integer cents, and there is no float anywhere. Times come from
+      `Clock`, and ids from `new_id()`.
+- [x] Migration 0007 is new and reviewed. It creates the tables, FKs, `pk_*`, `ix_*` and the
+      three unique constraints. The FKs stay inside the `catalog` schema. Its `downgrade`
+      drops presentations, then perfumes. The implementer ran the downgrade and the
+      re-upgrade on the test database.
+- [x] All 12 routes live in `admin_router` with `require_permission(CATALOG_MANAGE)`. The
+      HTTP tests check 401 and 403, and `assert_admin_routes_are_protected` passes.
+- [x] Wiring: the 12 use cases and 2 queries are registered in `module.py`, and
+      `test_container` is green. Adapters are created only in `module.py`.
+- [x] No secrets or real personal data appear in the code, tests or plan.
+- [x] `## Deviations` exists and is honest. I spot-checked deviation 2 (error details) and
+      deviation 4 (check order) against `domain/perfume.py:157,170,228` and
+      `commands/perfumes.py:147-188`. Both match.
+- [x] Docs: the `docs/architecture.md` row is updated. `apps/api/README.md`, the recipes and
+      `docs/modules.json` hold no stale perfume text.
+- [ ] PR body: **not applicable yet**. No PR exists, and the branch is not pushed. The main
+      session must write it with the six sections.
+
+### Rulings on the deviations
+
+- **Deviation 1 (sale dates without a sale price → 422 `CATALOG_PRESENTATION_SALE_INVALID`):
+  confirmed.** Decision 28 defines the dates as the window of a sale price, so dates without
+  a price are meaningless. Refusing them is better than dropping input silently. A request
+  with no price and no dates is still the way to remove a sale (`Sale.create` returns
+  `Ok(None)`, `domain/perfume.py:192-195`). The error message already starts "A sale needs a
+  price…", so it covers this case.
+- **Deviation 4 (on update, `UNAVAILABLE`/`ALREADY_EXISTS` can win over `ARCHIVED`):
+  accepted. No change needed.** It follows the step 4 order the plan fixed. Every outcome is
+  still a refusal and changes nothing. The only cost is an extra round trip for the admin:
+  fix the reference, then learn the perfume is archived. If the user prefers `ARCHIVED`
+  first, the fix is an early `if perfume.is_archived` right after `get_for_update` in
+  `UpdatePerfume` (`commands/perfumes.py:152-154`). That is a product choice, not a defect.
+- Deviations 2, 3 and 5–9 are cosmetic or fill gaps. I confirm them.
+
+### Pass 2: bug hunt
+
+I traced create, update, publish/hide/archive/restore, and the four presentation commands:
+request → use case → aggregate → `SqlPerfumeRepository` → response. Areas checked:
+
+- **Money:** price and sale stay in integer cents, and the sale must satisfy
+  `1 <= sale < price`. `update_presentation` always replaces the price and the sale together,
+  so no path can leave a sale ≥ the price.
+- **Bounds:** every unbounded `int` in the contract hits a domain range before reaching the
+  DB. The worst-case slug is 100 + 1 + 100 + 1 + 20 = 222 characters, which fits
+  `String(240)`.
+- **State transitions:**
+  - A published perfume can never end up with zero active presentations.
+    `archive_presentation` guards it, and nothing else changes `is_active`.
+  - `first_published_at` is never cleared.
+  - Archiving always hides, and restoring never publishes.
+- **Upsert** (`sql_perfume_repository.py:209-217`):
+  - The arbiter is `id`. `perfume_id` and `created_at` are excluded from `set_`.
+  - An ml clash with a sibling raises a violation of `uq_presentations_perfume_ml` inside the
+    savepoint, which maps to `Err`.
+  - A swap of mls is impossible in one command, since only one presentation changes per
+    command, so the non-deferrable constraint cannot fire falsely.
+- **Locking:** the default isolation is READ COMMITTED (`database.py`, no override).
+  `get_for_update` locks the perfume row first and only then reads the presentations, so a
+  waiter sees the winner's committed rows. The integration tests show this: concurrent
+  same-ml adds give 1 Ok + 4 conflicts, and concurrent updates are serialized. I checked the
+  lock order against brand, family and concentration commands (single `FOR UPDATE` on the
+  reference row vs. `FOR KEY SHARE` from the perfume FK) and found no cycle that could
+  deadlock.
+- **Authorization:** no public route was added.
+
+**Critical / High / Medium: none.**
+
+**Low (no code change required in this plan):**
+
+1. **The reference check is not locked**, at `commands/perfumes.py:92-100` and `157-168`.
+   The use cases read the brand, family and concentration with a plain `get` (no lock), as
+   the plan specifies. Scenario: admin A creates a perfume with brand X while admin B
+   archives X. A reads X as active, B commits the archive, and then A's INSERT goes through.
+   The perfume now has an archived brand, which decision 23 forbids for new assignments.
+   This is only reachable through a race of milliseconds. The resulting state (a perfume
+   with an archived brand) is one the system already supports, and decision 22 hides such
+   perfumes from the storefront. Recorded as an accepted risk. If it ever matters, `get`
+   could use `FOR SHARE`.
+2. **Informational, for plan 004.** Decision 37 means any edit recomputes the slug, so after
+   a brand or concentration rename, the next edit of a perfume (even of its description
+   alone) changes its URL (`commands/perfumes.py:181`). This is the behavior the user
+   decided. Plan 004 should decide whether old slugs need redirects.
+
+**Nit:** `ix_presentations_perfume_id` duplicates the leading column of
+`uq_presentations_perfume_ml`. The plan asked for it explicitly, and it costs only one index.
+No action.
+
+**Result: all checklist items pass and no finding requires a code change. Status →
+`verify`.** For the verifier: the plan's acceptance criterion "two concurrent `POST
+…/presentations` with the same ml → one 201 and one 409" is proven only at the use-case
+level, so it should still be driven through HTTP against the running app.
 
 ## Verification
