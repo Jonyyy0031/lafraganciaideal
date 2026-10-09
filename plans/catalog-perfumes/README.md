@@ -139,6 +139,19 @@ same day (decision 35). Both times, none of their files existed yet.
 39. (2026-10-09) The user approved plan 003, including two rules it proposes:
     - An **archived perfume is read-only** except restore and hide.
     - The **description is optional**. An empty note is invalid, and duplicate notes are kept.
+40. (2026-10-09) **Old perfume URLs redirect.** When a perfume's slug changes, the old slug is
+    kept in a history table and still finds the perfume. The response carries the current
+    slug, so the web answers a 301 to it. This protects SEO and links shared over WhatsApp.
+41. (2026-10-09) Text search is a **"contains" match with PostgreSQL `unaccent`**: "lanc"
+    finds "Lancôme" and "vain" finds "Vainilla". Typo tolerance (`pg_trgm`) can come later.
+42. (2026-10-09) The public detail shows **only active presentations**: the current price,
+    the regular price struck through while a sale is active (with its end date), the
+    availability and the delivery days.
+43. (2026-10-09) The public list shows **24 perfumes per page by default, 48 at most**. Both
+    divide evenly into 2-, 3- and 4-column grids.
+44. (2026-10-09) The user approved plan 004 as proposed, with two consequences:
+    - **No concentration filter**, since decision 12 doesn't list one.
+    - **No search or price indexes** until a measurement calls for them.
 
 ## Delivered
 
