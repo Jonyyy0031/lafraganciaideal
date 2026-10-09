@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: catalog
 min_implementer: mid
 depends_on: ["001"]
@@ -352,5 +352,66 @@ on every run), while the sequential path reports the name first (rule "The name 
 first"). Both are 409, never a 500. I asserted the set of the two codes for that case only.
 
 ## Review findings
+
+Reviewed 2026-10-09 against `git diff main...HEAD` (worktree clean; commits bad8405, b520c72,
+fe533b3).
+
+**Checklist: 15/16 passed, 1 not applicable, 0 failed.**
+
+- [x] `plans-scope`: "22 declared, 26 changed (base main) ✔ Every change is inside the plan".
+      No hot file touched (`container.py`, `docs/modules.json`, `.importlinter` unchanged).
+- [x] `uv run just check` green: ruff, format, pre-commit, mypy (187 files), import-linter
+      7/7 kept, plans-lint, harness-check, 803 passed / 3 skipped unit, 684 hook tests.
+- [x] `uv run just test-integration` green: 124 passed, 2 skipped.
+- [x] Business rules in `domain/` (`naming.py:clean_abbreviation`, `concentration.py`); the
+      router, mapper and queries carry none.
+- [x] CQRS-lite: the four commands run inside `transactions.run` and return `Result`; the
+      queries go through `ConcentrationQueries` and return contract models; the repository
+      has no screen methods.
+- [x] Contracts in `contracts.py`; `openapi.json` has the 6 new operation ids and the drift
+      test (`tests/unit/test_openapi.py`) passes.
+- [x] Errors are `Err(DomainError)` with the five codes of the plan's table, messages
+      verbatim; unknown integrity errors re-raise (`sql_concentration_repository.py:53`).
+- [x] `created_at` from `Clock`, id from `new_id()`; no money involved.
+- [x] Migration 0006 is new, `down_revision` 0005, `pk_`/both `uq_` names as planned, no
+      cross-schema FK, downgrade drops only the table; seed matches the plan's table
+      literally. Round trip on the test DB recorded by the tester.
+- [x] Routes on `public_router`/`admin_router`; admin router carries
+      `require_permission(CATALOG_MANAGE)`; 401/403 covered by tests.
+- [x] Wiring in `module.py` registers the six use cases with SQL adapters; container test
+      green; adapters created only in `module.py` (same as families).
+- [x] No secrets or personal data.
+- [x] `## Deviations` honest. Spot-check: "downgrade round trip not exercised by the
+      implementer" is consistent with the tester recording that run separately.
+- [x] Docs: `docs/architecture.md:55` updated as planned; `apps/api/README.md` and
+      `docs/modules.json` don't list catalog sub-lists (nothing stale).
+- [ ] N/A PR body: no PR exists yet for `feat/catalog-concentrations`. The main session must
+      write the six sections when it opens one.
+
+**Bug hunt.** I traced create and update from request → use case → domain → repository →
+response. Name is validated before abbreviation, then the name conflict is checked before the
+abbreviation conflict. `except_id` keeps a row's own slugs. Under concurrency, the unchecked
+race between `exists_*` and the write is caught: the savepoint maps either unique constraint
+to a 409, and integration covers the case. The row lock in `get_for_update` serializes
+updates to the same row. Archive and restore can't violate a unique constraint because the
+slugs don't change. Authorization is complete: no public route reaches admin data. No events,
+money or time windows are involved.
+
+**Findings**
+
+- Blocker / high / medium: none.
+- Nit (non-blocking, no change required for this plan):
+  `apps/api/src/fragancia_api/modules/catalog/domain/naming.py:1-5`. The module docstring
+  still says "Name rules shared by the catalog aggregates (brands, olfactory families)" and
+  only describes names. The file now also holds the abbreviation rules
+  (`ABBREVIATION_*`, `clean_abbreviation`, lines 44-56). Effect: a reader of `naming.py`
+  alone misses the abbreviation bounds; behavior is unaffected. It can be folded into plan 003
+  or a later touch of the file.
+- Observation, carried from the tester and confirmed by reading the code (not a defect): when
+  a concurrent insert clashes on both texts at once, the result can be
+  `..._ABBREVIATION_TAKEN` instead of the sequential "name first" order. That depends on which
+  index PostgreSQL checks first. It is still a 409, never a 500.
+
+All blocking checks passed → `status: verify`.
 
 ## Verification
