@@ -37,3 +37,35 @@ class FamilyAlreadyExists(ConflictError):
 class FamilyNotFound(NotFoundError):
     code: str = "CATALOG_FAMILY_NOT_FOUND"
     message: str = "Olfactory family not found"
+
+
+@dataclass(frozen=True)
+class ConcentrationNameInvalid(InvalidValueError):
+    code: str = "CATALOG_CONCENTRATION_NAME_INVALID"
+    message: str = "A concentration name needs 2 to 80 characters, including letters or digits"
+
+
+@dataclass(frozen=True)
+class ConcentrationAbbreviationInvalid(InvalidValueError):
+    code: str = "CATALOG_CONCENTRATION_ABBREVIATION_INVALID"
+    message: str = (
+        "A concentration abbreviation needs 2 to 12 characters, including letters or digits"
+    )
+
+
+@dataclass(frozen=True)
+class ConcentrationAlreadyExists(ConflictError):
+    code: str = "CATALOG_CONCENTRATION_ALREADY_EXISTS"
+    message: str = "A concentration with this name already exists"
+
+
+@dataclass(frozen=True)
+class ConcentrationAbbreviationTaken(ConflictError):
+    code: str = "CATALOG_CONCENTRATION_ABBREVIATION_TAKEN"
+    message: str = "Another concentration already uses this abbreviation"
+
+
+@dataclass(frozen=True)
+class ConcentrationNotFound(NotFoundError):
+    code: str = "CATALOG_CONCENTRATION_NOT_FOUND"
+    message: str = "Concentration not found"

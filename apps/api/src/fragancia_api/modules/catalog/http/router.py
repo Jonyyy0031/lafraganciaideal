@@ -7,7 +7,14 @@ from fragancia_api.modules.catalog.application.commands.brand_status import (
     ArchiveBrand,
     RestoreBrand,
 )
+from fragancia_api.modules.catalog.application.commands.concentration_status import (
+    ArchiveConcentration,
+    RestoreConcentration,
+)
 from fragancia_api.modules.catalog.application.commands.create_brand import CreateBrand
+from fragancia_api.modules.catalog.application.commands.create_concentration import (
+    CreateConcentration,
+)
 from fragancia_api.modules.catalog.application.commands.create_olfactory_family import (
     CreateOlfactoryFamily,
 )
@@ -19,9 +26,16 @@ from fragancia_api.modules.catalog.application.commands.rename_brand import Rena
 from fragancia_api.modules.catalog.application.commands.rename_olfactory_family import (
     RenameOlfactoryFamily,
 )
+from fragancia_api.modules.catalog.application.commands.update_concentration import (
+    UpdateConcentration,
+)
 from fragancia_api.modules.catalog.application.queries.list_brands import (
     ListAdminBrands,
     ListPublicBrands,
+)
+from fragancia_api.modules.catalog.application.queries.list_concentrations import (
+    ListAdminConcentrations,
+    ListPublicConcentrations,
 )
 from fragancia_api.modules.catalog.application.queries.list_olfactory_families import (
     ListAdminOlfactoryFamilies,
@@ -29,14 +43,18 @@ from fragancia_api.modules.catalog.application.queries.list_olfactory_families i
 )
 from fragancia_api.modules.catalog.contracts import (
     AdminBrandPage,
+    AdminConcentrationPage,
     AdminOlfactoryFamilyPage,
     CreateBrandRequest,
+    CreateConcentrationRequest,
     CreatedResponse,
     CreateOlfactoryFamilyRequest,
     PublicBrand,
+    PublicConcentration,
     PublicOlfactoryFamily,
     RenameBrandRequest,
     RenameOlfactoryFamilyRequest,
+    UpdateConcentrationRequest,
 )
 from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from fragancia_api.shared.http import (
@@ -60,6 +78,12 @@ admin = admin_router(
 public_families = public_router(prefix="/olfactory-families", tags=["catalog"])
 admin_families = admin_router(
     prefix="/olfactory-families",
+    tags=["catalog · admin"],
+    dependencies=[Depends(require_permission(CATALOG_MANAGE))],
+)
+public_concentrations = public_router(prefix="/concentrations", tags=["catalog"])
+admin_concentrations = admin_router(
+    prefix="/concentrations",
     tags=["catalog · admin"],
     dependencies=[Depends(require_permission(CATALOG_MANAGE))],
 )
@@ -209,4 +233,89 @@ async def restore_olfactory_family(
     unwrap(await use_case.execute(family_id))
 
 
-routers = (public, admin, public_families, admin_families)
+@public_concentrations.get("")
+async def list_concentrations(
+    use_case: Annotated[ListPublicConcentrations, Depends(provide(ListPublicConcentrations))],
+) -> list[PublicConcentration]:
+    """Active concentrations, ordered by name."""
+    return await use_case.execute()
+
+
+@admin_concentrations.get("")
+async def list_all_concentrations(
+    use_case: Annotated[ListAdminConcentrations, Depends(provide(ListAdminConcentrations))],
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+) -> AdminConcentrationPage:
+    """Every concentration (active or not), ordered by name."""
+    return await use_case.execute(page=page, size=size)
+
+
+@admin_concentrations.post(
+    "",
+    status_code=201,
+    responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+async def create_concentration(
+    body: CreateConcentrationRequest,
+    use_case: Annotated[CreateConcentration, Depends(provide(CreateConcentration))],
+) -> CreatedResponse:
+    """Register a concentration. 409 `CATALOG_CONCENTRATION_ALREADY_EXISTS` if its name slug is
+    taken, 409 `CATALOG_CONCENTRATION_ABBREVIATION_TAKEN` if its abbreviation slug is, 422
+    `CATALOG_CONCENTRATION_NAME_INVALID` or `CATALOG_CONCENTRATION_ABBREVIATION_INVALID` if a text
+    breaks the rules."""
+    return CreatedResponse(id=unwrap(await use_case.execute(body.name, body.abbreviation)))
+
+
+@admin_concentrations.patch(
+    "/{concentration_id}",
+    status_code=204,
+    responses={
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
+)
+async def update_concentration(
+    concentration_id: UUID,
+    body: UpdateConcentrationRequest,
+    use_case: Annotated[UpdateConcentration, Depends(provide(UpdateConcentration))],
+) -> None:
+    """Change name and abbreviation together; their slugs follow. 404
+    `CATALOG_CONCENTRATION_NOT_FOUND`, 409 `CATALOG_CONCENTRATION_ALREADY_EXISTS` or
+    `CATALOG_CONCENTRATION_ABBREVIATION_TAKEN` if another concentration has the slug, 422
+    `CATALOG_CONCENTRATION_NAME_INVALID` or `CATALOG_CONCENTRATION_ABBREVIATION_INVALID`."""
+    unwrap(await use_case.execute(concentration_id, body.name, body.abbreviation))
+
+
+@admin_concentrations.post(
+    "/{concentration_id}/archive", status_code=204, responses={404: {"model": ErrorResponse}}
+)
+async def archive_concentration(
+    concentration_id: UUID,
+    use_case: Annotated[ArchiveConcentration, Depends(provide(ArchiveConcentration))],
+) -> None:
+    """Hide a concentration from the storefront (idempotent). 404
+    `CATALOG_CONCENTRATION_NOT_FOUND`."""
+    unwrap(await use_case.execute(concentration_id))
+
+
+@admin_concentrations.post(
+    "/{concentration_id}/restore", status_code=204, responses={404: {"model": ErrorResponse}}
+)
+async def restore_concentration(
+    concentration_id: UUID,
+    use_case: Annotated[RestoreConcentration, Depends(provide(RestoreConcentration))],
+) -> None:
+    """Show an archived concentration again (idempotent). 404 `CATALOG_CONCENTRATION_NOT_FOUND`."""
+    unwrap(await use_case.execute(concentration_id))
+
+
+routers = (
+    public,
+    admin,
+    public_families,
+    admin_families,
+    public_concentrations,
+    admin_concentrations,
+)

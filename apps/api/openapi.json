@@ -1795,6 +1795,425 @@
           }
         }
       }
+    },
+    "/api/v1/concentrations": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "List Concentrations",
+        "description": "Active concentrations, ordered by name.",
+        "operationId": "list_concentrations",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PublicConcentration"
+                  },
+                  "type": "array",
+                  "title": "Response List Concentrations"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/concentrations": {
+      "get": {
+        "tags": [
+          "catalog · admin"
+        ],
+        "summary": "List All Concentrations",
+        "description": "Every concentration (active or not), ordered by name.",
+        "operationId": "list_all_concentrations",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminConcentrationPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "catalog · admin"
+        ],
+        "summary": "Create Concentration",
+        "description": "Register a concentration. 409 `CATALOG_CONCENTRATION_ALREADY_EXISTS` if its name slug is\ntaken, 409 `CATALOG_CONCENTRATION_ABBREVIATION_TAKEN` if its abbreviation slug is, 422\n`CATALOG_CONCENTRATION_NAME_INVALID` or `CATALOG_CONCENTRATION_ABBREVIATION_INVALID` if a text\nbreaks the rules.",
+        "operationId": "create_concentration",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConcentrationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/concentrations/{concentration_id}": {
+      "patch": {
+        "tags": [
+          "catalog · admin"
+        ],
+        "summary": "Update Concentration",
+        "description": "Change name and abbreviation together; their slugs follow. 404\n`CATALOG_CONCENTRATION_NOT_FOUND`, 409 `CATALOG_CONCENTRATION_ALREADY_EXISTS` or\n`CATALOG_CONCENTRATION_ABBREVIATION_TAKEN` if another concentration has the slug, 422\n`CATALOG_CONCENTRATION_NAME_INVALID` or `CATALOG_CONCENTRATION_ABBREVIATION_INVALID`.",
+        "operationId": "update_concentration",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "concentration_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Concentration Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConcentrationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/concentrations/{concentration_id}/archive": {
+      "post": {
+        "tags": [
+          "catalog · admin"
+        ],
+        "summary": "Archive Concentration",
+        "description": "Hide a concentration from the storefront (idempotent). 404\n`CATALOG_CONCENTRATION_NOT_FOUND`.",
+        "operationId": "archive_concentration",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "concentration_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Concentration Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/concentrations/{concentration_id}/restore": {
+      "post": {
+        "tags": [
+          "catalog · admin"
+        ],
+        "summary": "Restore Concentration",
+        "description": "Show an archived concentration again (idempotent). 404 `CATALOG_CONCENTRATION_NOT_FOUND`.",
+        "operationId": "restore_concentration",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "concentration_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Concentration Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1890,6 +2309,83 @@
         ],
         "title": "AdminBrandPage",
         "description": "One page of the admin brand list."
+      },
+      "AdminConcentration": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "abbreviation": {
+            "type": "string",
+            "title": "Abbreviation"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "abbreviation",
+          "slug",
+          "is_active",
+          "created_at"
+        ],
+        "title": "AdminConcentration",
+        "description": "A concentration as the back office sees it."
+      },
+      "AdminConcentrationPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminConcentration"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size"
+        ],
+        "title": "AdminConcentrationPage",
+        "description": "One page of the admin concentration list."
       },
       "AdminInvitation": {
         "properties": {
@@ -2186,6 +2682,33 @@
         ],
         "title": "CreateBrandRequest"
       },
+      "CreateConcentrationRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Name",
+            "examples": [
+              "Eau de Toilette"
+            ]
+          },
+          "abbreviation": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Abbreviation",
+            "examples": [
+              "EDT"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "abbreviation"
+        ],
+        "title": "CreateConcentrationRequest",
+        "description": "Payload to register a concentration."
+      },
       "CreateOlfactoryFamilyRequest": {
         "properties": {
           "name": {
@@ -2364,6 +2887,36 @@
         "title": "PublicBrand",
         "description": "A brand as customers see it (active brands only)."
       },
+      "PublicConcentration": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "abbreviation": {
+            "type": "string",
+            "title": "Abbreviation"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "abbreviation",
+          "slug"
+        ],
+        "title": "PublicConcentration",
+        "description": "A concentration as customers see it (active ones only); `slug` is the name slug."
+      },
       "PublicOlfactoryFamily": {
         "properties": {
           "id": {
@@ -2472,6 +3025,33 @@
           "new_password"
         ],
         "title": "ResetPasswordRequest"
+      },
+      "UpdateConcentrationRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Name",
+            "examples": [
+              "Eau de Toilette"
+            ]
+          },
+          "abbreviation": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Abbreviation",
+            "examples": [
+              "EDT"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "abbreviation"
+        ],
+        "title": "UpdateConcentrationRequest",
+        "description": "Payload to change both texts of a concentration (both required)."
       }
     },
     "securitySchemes": {

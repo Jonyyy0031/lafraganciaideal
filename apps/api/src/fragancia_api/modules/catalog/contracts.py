@@ -76,3 +76,43 @@ class AdminOlfactoryFamily(BaseModel):
 
 class AdminOlfactoryFamilyPage(Page[AdminOlfactoryFamily]):
     """One page of the admin olfactory family list."""
+
+
+class CreateConcentrationRequest(BaseModel):
+    """Payload to register a concentration."""
+
+    # Business rules (length, characters) live in the domain; this only bounds the payload.
+    name: str = Field(max_length=200, examples=["Eau de Toilette"])
+    abbreviation: str = Field(max_length=50, examples=["EDT"])
+
+
+class UpdateConcentrationRequest(BaseModel):
+    """Payload to change both texts of a concentration (both required)."""
+
+    # Business rules (length, characters) live in the domain; this only bounds the payload.
+    name: str = Field(max_length=200, examples=["Eau de Toilette"])
+    abbreviation: str = Field(max_length=50, examples=["EDT"])
+
+
+class PublicConcentration(BaseModel):
+    """A concentration as customers see it (active ones only); `slug` is the name slug."""
+
+    id: UUID
+    name: str
+    abbreviation: str
+    slug: str
+
+
+class AdminConcentration(BaseModel):
+    """A concentration as the back office sees it."""
+
+    id: UUID
+    name: str
+    abbreviation: str
+    slug: str
+    is_active: bool
+    created_at: datetime
+
+
+class AdminConcentrationPage(Page[AdminConcentration]):
+    """One page of the admin concentration list."""

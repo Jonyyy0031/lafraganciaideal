@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: catalog
 min_implementer: mid
 depends_on: ["001"]
@@ -294,6 +294,10 @@ Concentrations publish no events (nothing subscribes, the same as families).
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+None. Step 8 (tests) is left to the tester phase by instruction of the main session. The
+downgrade/upgrade round trip on the test database was not exercised by the implementer (only
+`db-migrate` and `db-migrate --test` upgrades).
 
 ## Test coverage
 
