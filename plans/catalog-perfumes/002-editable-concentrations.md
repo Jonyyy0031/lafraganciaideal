@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: mid
 depends_on: ["001"]
@@ -300,6 +300,56 @@ downgrade/upgrade round trip on the test database was not exercised by the imple
 `db-migrate` and `db-migrate --test` upgrades).
 
 ## Test coverage
+
+Files (all new): `apps/api/tests/unit/catalog/test_concentration_domain.py` (34 tests),
+`test_concentration_commands.py` (25), `test_concentration_http.py` (38) and
+`apps/api/tests/integration/catalog/test_sql_concentrations.py` (17). No GAP and no NOT CONFIRMED.
+
+Runs. Baseline: `just check` green (706 passed, 3 skipped); `just test-integration` green
+(107 passed, 2 skipped). Closing: `just check` green (803 passed, 3 skipped, +97 unit);
+`just test-integration` green (124 passed, 2 skipped, +17). The first closing run had two test
+errors of mine (a mypy `no-any-return` in the commands test and an over-specific concurrency
+assertion, see the last row); I fixed both and re-ran, so this phase used three full runs
+instead of two.
+
+Migration round trip, test database only (`alembic -x test=true`): `downgrade 0005` ran
+`0006 -> 0005` and `current` showed `0005`; `upgrade head` ran `0005 -> 0006` and `current`
+showed `0006 (head)`. The seed rows were then verified by
+`test_migration_seeds_the_five_starting_concentrations` (green in the closing integration run).
+CONFIRMED.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| `clean_abbreviation`: trims, collapses, keeps case; 2-12 bounds inclusive; needs a letter or digit | `domain/naming.py:clean_abbreviation` | domain | `test_concentration_domain.py::test_clean_abbreviation_*` | CONFIRMED |
+| Abbreviation slug above 20 characters rejected (NFKD expansion), exactly 20 accepted | `naming.py` (`ABBREVIATION_SLUG_MAX_LENGTH`) | domain | `::test_clean_abbreviation_rejects_a_slug_longer_than_20_characters` | CONFIRMED |
+| `ConcentrationName` / `Abbreviation`: normalized, slugged, error code and `details` `{min, max}` | `domain/concentration.py` | domain | `::test_invalid_concentration_names`, `::test_invalid_abbreviations`, `::test_abbreviations_are_kept_as_typed_and_slugged` | CONFIRMED |
+| `create` active, no event; `update` changes both texts and slugs, keeps id and flag; archive/restore idempotent | `domain/concentration.py` | domain | `::test_new_concentrations_*`, `::test_updating_*`, `::test_concentration_archive_and_restore_are_idempotent` | CONFIRMED |
+| Create: name conflict, abbreviation conflict, name reported first, archived rows still clash, invalid text first (name before abbreviation) | `create_concentration.py` | application | `test_concentration_commands.py::test_a_name_with_the_same_slug_*`, `::test_an_abbreviation_*`, `::test_a_clash_on_both_*`, `::test_re_adding_*`, `::test_an_invalid_text_creates_nothing` | CONFIRMED |
+| Create passes on an `add` Err (race) | `create_concentration.py` | application | `::test_create_passes_on_a_conflict_found_when_adding` | CONFIRMED |
+| Update: both texts and slugs follow; own slugs via `except_id`; name conflict, abbreviation conflict, name first, archived rows clash; invalid text; not found; invalid before not found | `update_concentration.py` | application | `::test_updates_both_texts_*`, `::test_updating_*`, `::test_an_update_clashing_on_both_*`, `::test_an_invalid_text_is_reported_before_an_unknown_id` | CONFIRMED |
+| Update passes on a `save` Err (race) | `update_concentration.py` | application | `::test_update_passes_on_a_conflict_found_when_saving` | CONFIRMED |
+| Archive/restore idempotent; not found; public list active only ordered by name; admin list paged with archived | `concentration_status.py`, `list_concentrations.py` | application | `::test_archives_and_restores_*`, `::test_archiving_or_restoring_an_unknown_*`, `::test_public_list_*`, `::test_admin_list_*` | CONFIRMED |
+| All 5 admin routes (list, create, patch, archive, restore): 401 without session, 403 without `catalog:manage` | `http/router.py:84-90,254-321` | http | `test_concentration_http.py::test_admin_routes_return_401_*`, `::test_admin_routes_return_403_*` | CONFIRMED |
+| Create 201 + public payload `{id,name,abbreviation,slug}`; 409 `..._ALREADY_EXISTS`; 409 `..._ABBREVIATION_TAKEN`; 422 name/abbreviation codes, message and details | `router.py` `create_concentration` | http | `::test_create_returns_201_*`, `::test_duplicate_*`, `::test_invalid_*` | CONFIRMED |
+| Payload `max_length` 200/50 and both fields required (create and update); malformed id | `contracts.py` | http | `::test_create_payload_is_bounded_*`, `::test_update_payload_is_bounded_*`, `::test_update_rejects_a_malformed_id` | CONFIRMED |
+| PATCH 204 and lists show new texts; same name slug 204; 404/409/409/422/422 | `router.py` `update_concentration` | http | `::test_update_returns_204_*`, `::test_update_keeping_the_name_slug_is_204`, `::test_update_error_cases` | CONFIRMED |
+| Archive/restore 204 idempotent, visibility in both lists, 404 | `router.py` | http | `::test_archive_hides_it_publicly_*`, `::test_archiving_or_restoring_an_unknown_*` | CONFIRMED |
+| Public list ordered, active only, no session; admin list paged and its bounds | `router.py` | http | `::test_public_list_*`, `::test_admin_list_*` | CONFIRMED |
+| Migration seeds the five rows (names, abbreviations, both slugs), ordered by name | `0006_catalog_concentrations.py` | integration | `test_sql_concentrations.py::test_migration_seeds_the_five_starting_concentrations` | CONFIRMED |
+| Both unique constraints exist in the table | `tables.py:47-48` | integration | `::test_both_slugs_are_unique_in_the_table` | CONFIRMED |
+| Create persists trimmed texts and slugs; duplicates (incl. archived) are conflicts | `sql_concentration_repository.py` | integration | `::test_create_persists_*`, `::test_duplicates_are_conflicts_including_archived_ones` | CONFIRMED |
+| `add` and `save` map each constraint to its Err and the transaction stays usable | `sql_concentration_repository.py` | integration | `::test_add_maps_each_unique_violation_*`, `::test_save_maps_each_unique_violation_*` | CONFIRMED |
+| `exists_*` honor `except_id`; `get_for_update` maps the row back | `sql_concentration_repository.py` | integration | `::test_exists_checks_can_ignore_one_row`, `::test_get_for_update_maps_*` | CONFIRMED |
+| Update persists both texts and slugs; error cases leave the row intact | `update_concentration.py` | integration | `::test_update_persists_*`, `::test_update_error_cases` | CONFIRMED |
+| Two concurrent updates to one abbreviation: one success, one `..._ABBREVIATION_TAKEN` (acceptance criterion); same for one name | `sql_concentration_repository.py` | integration | `::test_concurrent_updates_to_the_same_abbreviation_*`, `::test_concurrent_updates_to_the_same_name_*` | CONFIRMED |
+| Concurrent creates: one success, the rest 409 (same name with different abbreviations: all `..._ALREADY_EXISTS`) | `sql_concentration_repository.py` | integration | `::test_concurrent_creation_of_the_same_concentration_*` | CONFIRMED |
+| Concurrent creates clashing on both texts: one success, rest are a 409 of either code | `tables.py`, repository | integration | `::test_concurrent_creation_clashing_on_both_texts_*` | CONFIRMED (observation below) |
+| Queries order by name case-insensitive, active filter, pagination; archive/restore visibility | `sql_concentration_queries.py` | integration | `::test_queries_order_by_name_*`, `::test_archive_and_restore_change_visibility_*`, `::test_archive_and_restore_of_an_unknown_*` | CONFIRMED |
+
+Observation (not a defect, no finding): when a concurrent insert clashes on both texts at once,
+PostgreSQL reports the abbreviation index first (observed: `CATALOG_CONCENTRATION_ABBREVIATION_TAKEN`
+on every run), while the sequential path reports the name first (rule "The name is checked
+first"). Both are 409, never a 500. I asserted the set of the two codes for that case only.
 
 ## Review findings
 
