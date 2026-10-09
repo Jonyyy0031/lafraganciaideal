@@ -54,10 +54,10 @@ async def empty_concentrations(container: Container) -> AsyncIterator[None]:
     """Empties the table for the test and puts the migration's seed rows back afterwards."""
     async with container.database.engine.begin() as connection:
         saved = (await connection.execute(select(concentrations))).mappings().all()
-        await connection.execute(text("TRUNCATE catalog.concentrations"))
+        await connection.execute(text("TRUNCATE catalog.concentrations CASCADE"))
     yield
     async with container.database.engine.begin() as connection:
-        await connection.execute(text("TRUNCATE catalog.concentrations"))
+        await connection.execute(text("TRUNCATE catalog.concentrations CASCADE"))
         if saved:
             await connection.execute(insert(concentrations), [dict(row) for row in saved])
 

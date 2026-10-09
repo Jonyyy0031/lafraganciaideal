@@ -30,7 +30,7 @@ NOW = datetime(2026, 1, 1, tzinfo=UTC)
 @pytest.fixture(autouse=True)
 async def clean_brands(container: Container) -> None:
     async with container.database.engine.begin() as connection:
-        await connection.execute(text("TRUNCATE catalog.brands"))
+        await connection.execute(text("TRUNCATE catalog.brands CASCADE"))
 
 
 async def _create(container: Container, name: str) -> UUID:

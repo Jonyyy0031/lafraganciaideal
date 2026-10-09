@@ -2214,6 +2214,1005 @@
           }
         }
       }
+    },
+    "/api/v1/admin/perfumes": {
+      "get": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "List Admin Perfumes",
+        "description": "Non-archived perfumes (the archived ones with `archived=true`), ordered by brand, then\nname, with their count of active presentations.",
+        "operationId": "list_admin_perfumes",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Size"
+            }
+          },
+          {
+            "name": "archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Archived"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPerfumePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Create Perfume",
+        "description": "Register a perfume, hidden and without presentations. 409\n`CATALOG_PERFUME_ALREADY_EXISTS` for the same brand, name and concentration; 422\n`CATALOG_PERFUME_NAME_INVALID`, `CATALOG_PERFUME_DESCRIPTION_TOO_LONG`,\n`CATALOG_PERFUME_NOTES_INVALID`, or `CATALOG_PERFUME_BRAND_UNAVAILABLE`,\n`CATALOG_PERFUME_FAMILY_UNAVAILABLE`, `CATALOG_PERFUME_CONCENTRATION_UNAVAILABLE` when the\nreference is missing or archived.",
+        "operationId": "create_perfume",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PerfumeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}": {
+      "get": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Get Admin Perfume",
+        "description": "A perfume with every presentation, ordered by ml. 404 `CATALOG_PERFUME_NOT_FOUND`.",
+        "operationId": "get_admin_perfume",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPerfume"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Update Perfume",
+        "description": "Replace every field of a perfume; its slug is recomputed. 404\n`CATALOG_PERFUME_NOT_FOUND`; 409 `CATALOG_PERFUME_ALREADY_EXISTS`; 422 the create errors\n(only a changed brand, family or concentration must be active) or\n`CATALOG_PERFUME_ARCHIVED`.",
+        "operationId": "update_perfume",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PerfumeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/publish": {
+      "post": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Publish Perfume",
+        "description": "Show a perfume in the storefront (idempotent). 404 `CATALOG_PERFUME_NOT_FOUND`; 422\n`CATALOG_PERFUME_NOTHING_TO_SELL` without an active presentation, or\n`CATALOG_PERFUME_ARCHIVED`.",
+        "operationId": "publish_perfume",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/hide": {
+      "post": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Hide Perfume",
+        "description": "Hide a perfume from the storefront (idempotent). 404 `CATALOG_PERFUME_NOT_FOUND`.",
+        "operationId": "hide_perfume",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/archive": {
+      "post": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Archive Perfume",
+        "description": "Archive a perfume: it is hidden and becomes read-only (idempotent). 404\n`CATALOG_PERFUME_NOT_FOUND`.",
+        "operationId": "archive_perfume",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/restore": {
+      "post": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Restore Perfume",
+        "description": "Bring an archived perfume back, still hidden (idempotent). 404\n`CATALOG_PERFUME_NOT_FOUND`.",
+        "operationId": "restore_perfume",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/presentations": {
+      "post": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Add Presentation",
+        "description": "Add a presentation to a perfume. 404 `CATALOG_PERFUME_NOT_FOUND`; 409\n`CATALOG_PRESENTATION_ALREADY_EXISTS` when the perfume has that ml; 422\n`CATALOG_PRESENTATION_ML_INVALID`, `CATALOG_PRESENTATION_PRICE_INVALID`,\n`CATALOG_PRESENTATION_SALE_INVALID`, `CATALOG_PRESENTATION_AVAILABILITY_INVALID` or\n`CATALOG_PERFUME_ARCHIVED`.",
+        "operationId": "add_presentation",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresentationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/presentations/{presentation_id}": {
+      "put": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Update Presentation",
+        "description": "Replace ml, price, sale and availability of a presentation. 404\n`CATALOG_PERFUME_NOT_FOUND` or `CATALOG_PRESENTATION_NOT_FOUND`; 409\n`CATALOG_PRESENTATION_ALREADY_EXISTS` when another presentation has that ml; 422 the add\nerrors.",
+        "operationId": "update_presentation",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          },
+          {
+            "name": "presentation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Presentation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresentationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/presentations/{presentation_id}/archive": {
+      "post": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Archive Presentation",
+        "description": "Stop selling a presentation (idempotent). 404 `CATALOG_PERFUME_NOT_FOUND` or\n`CATALOG_PRESENTATION_NOT_FOUND`; 409 `CATALOG_PERFUME_LAST_PRESENTATION` for the last\nactive presentation of a published perfume; 422 `CATALOG_PERFUME_ARCHIVED`.",
+        "operationId": "archive_presentation",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          },
+          {
+            "name": "presentation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Presentation Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/presentations/{presentation_id}/restore": {
+      "post": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Restore Presentation",
+        "description": "Sell an archived presentation again (idempotent). 404 `CATALOG_PERFUME_NOT_FOUND` or\n`CATALOG_PRESENTATION_NOT_FOUND`; 422 `CATALOG_PERFUME_ARCHIVED`.",
+        "operationId": "restore_presentation",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          },
+          {
+            "name": "presentation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Presentation Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2539,6 +3538,332 @@
         "title": "AdminOlfactoryFamilyPage",
         "description": "One page of the admin olfactory family list."
       },
+      "AdminPerfume": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "women",
+              "men",
+              "unisex"
+            ],
+            "title": "Gender"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "top_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Top Notes"
+          },
+          "heart_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Heart Notes"
+          },
+          "base_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Base Notes"
+          },
+          "brand": {
+            "$ref": "#/components/schemas/PerfumeBrandRef"
+          },
+          "concentration": {
+            "$ref": "#/components/schemas/PerfumeConcentrationRef"
+          },
+          "family": {
+            "$ref": "#/components/schemas/PerfumeFamilyRef"
+          },
+          "is_published": {
+            "type": "boolean",
+            "title": "Is Published"
+          },
+          "first_published_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Published At"
+          },
+          "is_archived": {
+            "type": "boolean",
+            "title": "Is Archived"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "presentations": {
+            "items": {
+              "$ref": "#/components/schemas/AdminPresentation"
+            },
+            "type": "array",
+            "title": "Presentations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "gender",
+          "description",
+          "top_notes",
+          "heart_notes",
+          "base_notes",
+          "brand",
+          "concentration",
+          "family",
+          "is_published",
+          "first_published_at",
+          "is_archived",
+          "created_at",
+          "updated_at",
+          "presentations"
+        ],
+        "title": "AdminPerfume",
+        "description": "A perfume as the back office sees it, with every presentation ordered by ml."
+      },
+      "AdminPerfumePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminPerfumeSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size"
+        ],
+        "title": "AdminPerfumePage",
+        "description": "One page of the admin perfume list."
+      },
+      "AdminPerfumeSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "brand": {
+            "$ref": "#/components/schemas/PerfumeBrandRef"
+          },
+          "concentration": {
+            "$ref": "#/components/schemas/PerfumeConcentrationRef"
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "women",
+              "men",
+              "unisex"
+            ],
+            "title": "Gender"
+          },
+          "is_published": {
+            "type": "boolean",
+            "title": "Is Published"
+          },
+          "is_archived": {
+            "type": "boolean",
+            "title": "Is Archived"
+          },
+          "active_presentations": {
+            "type": "integer",
+            "title": "Active Presentations"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "brand",
+          "concentration",
+          "gender",
+          "is_published",
+          "is_archived",
+          "active_presentations",
+          "created_at"
+        ],
+        "title": "AdminPerfumeSummary",
+        "description": "One row of the admin perfume list."
+      },
+      "AdminPresentation": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "ml": {
+            "type": "integer",
+            "title": "Ml"
+          },
+          "price_cents": {
+            "type": "integer",
+            "title": "Price Cents"
+          },
+          "sale_price_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale Price Cents"
+          },
+          "sale_starts_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale Starts At"
+          },
+          "sale_ends_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale Ends At"
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "in_stock",
+              "made_to_order"
+            ],
+            "title": "Availability"
+          },
+          "lead_time_min_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Min Days"
+          },
+          "lead_time_max_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Max Days"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "ml",
+          "price_cents",
+          "sale_price_cents",
+          "sale_starts_at",
+          "sale_ends_at",
+          "availability",
+          "lead_time_min_days",
+          "lead_time_max_days",
+          "is_active",
+          "created_at"
+        ],
+        "title": "AdminPresentation",
+        "description": "A presentation (size) of a perfume as the back office sees it."
+      },
       "AdminSession": {
         "properties": {
           "id": {
@@ -2861,6 +4186,256 @@
           "email"
         ],
         "title": "PasswordResetRequest"
+      },
+      "PerfumeBrandRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "is_active"
+        ],
+        "title": "PerfumeBrandRef",
+        "description": "The brand of a perfume."
+      },
+      "PerfumeConcentrationRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "abbreviation": {
+            "type": "string",
+            "title": "Abbreviation"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "abbreviation",
+          "is_active"
+        ],
+        "title": "PerfumeConcentrationRef",
+        "description": "The concentration of a perfume."
+      },
+      "PerfumeFamilyRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "is_active"
+        ],
+        "title": "PerfumeFamilyRef",
+        "description": "The olfactory family of a perfume."
+      },
+      "PerfumeRequest": {
+        "properties": {
+          "brand_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Brand Id"
+          },
+          "concentration_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Concentration Id"
+          },
+          "family_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Family Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Name",
+            "examples": [
+              "Eros"
+            ]
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "women",
+              "men",
+              "unisex"
+            ],
+            "title": "Gender"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Description",
+            "default": ""
+          },
+          "top_notes": {
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Top Notes"
+          },
+          "heart_notes": {
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Heart Notes"
+          },
+          "base_notes": {
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Base Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "brand_id",
+          "concentration_id",
+          "family_id",
+          "name",
+          "gender"
+        ],
+        "title": "PerfumeRequest",
+        "description": "Payload to create a perfume, or to replace every field of one (update)."
+      },
+      "PresentationRequest": {
+        "properties": {
+          "ml": {
+            "type": "integer",
+            "title": "Ml",
+            "examples": [
+              100
+            ]
+          },
+          "price_cents": {
+            "type": "integer",
+            "title": "Price Cents",
+            "examples": [
+              250000
+            ]
+          },
+          "sale_price_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale Price Cents"
+          },
+          "sale_starts_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale Starts At"
+          },
+          "sale_ends_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale Ends At"
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "in_stock",
+              "made_to_order"
+            ],
+            "title": "Availability"
+          },
+          "lead_time_min_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Min Days"
+          },
+          "lead_time_max_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Max Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ml",
+          "price_cents",
+          "availability"
+        ],
+        "title": "PresentationRequest",
+        "description": "Payload to add a presentation, or to replace every field of one (update)."
       },
       "PublicBrand": {
         "properties": {

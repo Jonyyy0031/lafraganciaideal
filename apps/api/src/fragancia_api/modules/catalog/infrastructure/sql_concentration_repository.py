@@ -84,6 +84,11 @@ class SqlConcentrationRepository:
             return Err(_conflict(error))
         return Ok(None)
 
+    async def get(self, concentration_id: UUID) -> Concentration | None:
+        statement = select(concentrations).where(concentrations.c.id == concentration_id)
+        row = (await self._database.session.execute(statement)).mappings().first()
+        return _to_concentration(row) if row is not None else None
+
     async def get_for_update(self, concentration_id: UUID) -> Concentration | None:
         statement = (
             select(concentrations).where(concentrations.c.id == concentration_id).with_for_update()

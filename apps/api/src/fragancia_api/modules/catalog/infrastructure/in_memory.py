@@ -40,6 +40,9 @@ class InMemoryBrands:
         self.by_id[brand.id] = brand
         return Ok(None)
 
+    async def get(self, brand_id: UUID) -> Brand | None:
+        return self.by_id.get(brand_id)
+
     async def get_for_update(self, brand_id: UUID) -> Brand | None:
         return self.by_id.get(brand_id)
 
@@ -89,6 +92,9 @@ class InMemoryOlfactoryFamilies:
             return Err(FamilyAlreadyExists())
         self.by_id[family.id] = family
         return Ok(None)
+
+    async def get(self, family_id: UUID) -> OlfactoryFamily | None:
+        return self.by_id.get(family_id)
 
     async def get_for_update(self, family_id: UUID) -> OlfactoryFamily | None:
         return self.by_id.get(family_id)
@@ -161,6 +167,9 @@ class InMemoryConcentrations:
             return Err(conflict)
         self.by_id[concentration.id] = concentration
         return Ok(None)
+
+    async def get(self, concentration_id: UUID) -> Concentration | None:
+        return self.by_id.get(concentration_id)
 
     async def get_for_update(self, concentration_id: UUID) -> Concentration | None:
         return self.by_id.get(concentration_id)
