@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: high
 depends_on: ["001", "002"]
@@ -576,6 +576,58 @@ format hook's `ruff check --fix` stripped the quotes of `Literal["women", …]` 
 edits. Fixed in place, and the code is unaffected.
 
 ## Test coverage
+
+Tester phase, 2026-10-09. No product code was touched. Files (all under `apps/api/tests/`):
+
+- `unit/catalog/perfume_support.py`: shared builders (not a test module).
+- `unit/catalog/test_perfume_domain.py` (83 tests, domain).
+- `unit/catalog/test_perfume_commands.py` (47) and `test_presentation_commands.py` (31), application.
+- `unit/catalog/test_perfume_http.py` (96, http).
+- `integration/catalog/test_sql_perfumes.py` (44, integration, against `fragancia_test`).
+
+The integration module owns its brands, families and concentrations (it does not depend on the
+seeds) and truncates `catalog.perfumes CASCADE` before and after each test.
+
+Every row below is CONFIRMED by a test that passes. There are no GAP and no NOT CONFIRMED
+items: nothing the plan promises for the tested layers was found missing.
+
+| Behavior | Source | Layer | Tests | State |
+| -------- | ------ | ----- | ----- | ----- |
+| Name, description, notes bounds (inclusive limits, trimming, collapse, order and duplicates kept, empty note invalid) | `domain/perfume.py` `PerfumeName`, `Description`, `Notes` | domain | `test_perfume_domain.py` (name, description, notes tests) | CONFIRMED |
+| Ml 1-1000, price 1-10,000,000 cents, with error details | `Ml.create`, `Price.create` | domain | `test_ml_*`, `test_price_*` | CONFIRMED |
+| Sale: price below the regular one and at least 1, window order, past window, open-ended, naive datetimes refused, dates without price refused (deviation 1) | `Sale.create` | domain | `test_sale_*` | CONFIRMED |
+| Availability combinations (in_stock without lead time, made_to_order 1-90 with min <= max) | `Availability.create` | domain | `test_in_stock_*`, `test_made_to_order_*` | CONFIRMED |
+| `perfume_slug` (brand + name + abbreviation, accents and symbols) | `perfume_slug` | domain | `test_perfume_slug_*` | CONFIRMED |
+| New perfume hidden, unarchived, no presentations; update replaces all fields; archived refuses update | `Perfume.create`, `update` | domain | `test_a_new_perfume_*`, `test_update_*`, `test_an_archived_perfume_cannot_be_updated` | CONFIRMED |
+| Publish (nothing to sell, ignores archived presentations, archived refused, `first_published_at` set once, idempotent); hide, archive, restore idempotent and as specified | `publish`, `hide`, `archive`, `restore` | domain | `test_publish_*`, `test_republishing_*`, `test_hide_*`, `test_archive_*`, `test_restore_*` | CONFIRMED |
+| Presentations: add (duplicate ml incl. archived), update (own ml allowed, another's refused, archived one's refused), not found, idempotent archive/restore, last active of a published perfume, read-only when archived | `add_presentation` .. `restore_presentation` | domain | `test_adding_*`, `test_update_presentation_*`, `test_unknown_presentations_*`, `test_the_last_active_*`, `test_an_archived_perfume_refuses_presentation_changes` | CONFIRMED |
+| Create: values validated in order name, description, notes, before references; references missing or archived refused in order brand, family, concentration, before the identity check; identity conflict (case, spacing, archived perfume); other brand or concentration is a new perfume; conflict found on `add` is returned | `commands/perfumes.py` `CreatePerfume` | application | `test_perfume_commands.py` create section | CONFIRMED |
+| Update: not found; validation before lookup; own identity allowed, another's refused; unchanged archived references kept; changed reference must be active (missing, archived); slug recomputed from the current brand name and abbreviation; archived perfume refused; deviation 4 (changed archived reference answers UNAVAILABLE before ARCHIVED); `save` error returned | `UpdatePerfume` | application | `test_perfume_commands.py` update section | CONFIRMED |
+| Publish, hide, archive, restore: effect, not found, domain errors and `save` error passed through | `PublishPerfume` .. `RestorePerfume` | application | `test_perfume_commands.py` status section | CONFIRMED |
+| Add/update/archive/restore presentation: effect, validation order ml, price, sale, availability (before the lookup), not found (perfume and presentation), archived perfume, duplicate ml, last active, `save` error | `commands/presentations.py` | application | `test_presentation_commands.py` | CONFIRMED |
+| In-memory adapter returns copies (unsaved mutations do not leak), as the SQL adapter behaves | `in_memory_perfumes.py` | application | `test_an_unsaved_mutation_does_not_leak_into_the_store` | CONFIRMED |
+| All 12 routes: 401 without a session, 403 without `catalog:manage`, admin routes declared protected | `http/perfume_router.py` | http | `test_routes_return_401_*`, `test_routes_return_403_*`, `assert_admin_routes_are_protected` in the fixture | CONFIRMED |
+| Create/detail shape, slug, hidden state, 409 and every 422 code with details; payload bounds (`Literal` gender and availability, `AwareDatetime`, list sizes, lengths, UUIDs, required fields) | `contracts.py`, router | http | `test_create_*`, `test_presentation_payload_is_bounded`, `test_the_detail_*` | CONFIRMED |
+| Update, presentation add/update/archive/restore, publish/hide/archive/restore status codes and codes (404, 409, 422), archived perfume read-only on six routes, first publication kept, last presentation 409 | router | http | `test_update_*`, `test_add_presentation_*`, `test_publish_*`, `test_archive_hides_*`, `test_the_last_active_*` | CONFIRMED |
+| List: order brand then name, active presentation count, `archived` filter, pagination, bad parameters | router, `InMemoryPerfumes.list_admin` | http | `test_the_list_*` | CONFIRMED |
+| Constraints: `uq_perfumes_identity`, `uq_perfumes_slug`, `uq_presentations_perfume_ml` (per perfume only), the three perfume FKs and the presentation FK, RESTRICT on a referenced brand, TRUNCATE CASCADE | `tables.py`, migration 0007 | integration | `test_identity_is_unique_*`, `test_the_stored_slug_is_unique`, `test_ml_is_unique_*`, `test_a_perfume_needs_*`, `test_a_presentation_needs_*`, `test_a_referenced_brand_*` | CONFIRMED |
+| `add`: row, notes arrays, slug, defaults; presentations of the aggregate; identity and slug violations mapped to Err with the transaction usable; `exists_with_identity` with `except_id`; concurrent creation yields one conflict | `sql_perfume_repository.py` | integration | `test_create_persists_*`, `test_add_*`, `test_exists_with_identity_*`, `test_concurrent_creation_*` | CONFIRMED |
+| `get_for_update`: None when unknown, mapping back (sale, availability, notes, state), presentations in ml order, row lock blocks a second transaction until the first ends | `get_for_update` | integration | `test_get_for_update_*` | CONFIRMED |
+| `save`: updates the row and keeps `created_at`; upserts presentations by id (no duplicates, `created_at` kept, sale and lead time removable); ml clash mapped to Err, savepoint rolls the perfume update back, transaction usable; perfume identity and slug clash mapped to Err; flags and `first_published_at` persisted | `save` | integration | `test_save_*`, `test_an_update_can_remove_*`, `test_moving_a_presentation_*`, `test_status_commands_persist_*`, `test_update_keeps_an_unchanged_archived_family_*` | CONFIRMED |
+| Concurrency: same-ml adds give one 201-equivalent and four conflicts, never an error; different sizes are all kept; two updates to one ml are serialized | `get_for_update` + upsert | integration | `test_concurrent_adds_*`, `test_concurrent_updates_*` | CONFIRMED |
+| Admin queries: detail with refs (including inactive ones) and presentations by ml; unknown is 404; list order (case-insensitive brand, name, id), correlated count of active presentations, `archived` filter with totals, pagination, empty page | `sql_perfume_queries.py` | integration | `test_get_admin_*`, `test_the_list_*`, `test_an_empty_list_*` | CONFIRMED |
+| `get` on the brand, family and concentration repositories (found, archived found, unknown None) | `sql_*_repository.py` | integration | `test_brand_get_*`, `test_family_get_*`, `test_concentration_get_*` | CONFIRMED |
+| e2e | n/a | e2e | not applicable (no e2e infrastructure) | n/a |
+
+Not covered on purpose: the acceptance criterion "two concurrent `POST` with the same ml: one
+201 and one 409" is proved at the use case level (`test_concurrent_adds_of_the_same_ml_*`), not
+through the HTTP stack; the verifier should still drive it against the running app.
+
+**Runs.** Baseline (before any test): `uv run just check` green (684 harness tests; unit suite
+green) and `uv run just test-integration` 124 passed, 2 skipped. Closing (after the tests):
+`uv run just check` green and `uv run just test-integration` 168 passed, 2 skipped (+44). Between
+the two runs only the touched files were run, plus `uv run mypy` once after fixing four typing
+errors in the new tests.
 
 ## Review findings
 
