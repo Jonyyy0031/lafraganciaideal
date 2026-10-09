@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: mid
 depends_on: ["003"]
@@ -307,6 +307,58 @@ All checked against `uv run just api`, with data created through the admin route
 - Smoke test against the running API covered only an empty catalog (no admin session used): routes, validation (`size=49` -> 422), 404 code and SQL execution including `unaccent`. Acceptance criteria on real data are NOT yet verified.
 
 ## Test coverage
+
+Tester phase, 2026-10-09. Files (all new): `apps/api/tests/unit/catalog/test_perfume_public_domain.py`
+(23), `test_public_perfume_queries.py` (14), `test_public_perfume_http.py` (23);
+`apps/api/tests/integration/catalog/test_sql_public_perfumes.py` (67). No GAP and no NOT
+CONFIRMED: every behavior in the plan's "Test layers required" row was confirmed from code or a
+local run. Product code was not touched.
+
+| Behavior | Source | Layer | Test (file::name) | State |
+| -------- | ------ | ----- | ----------------- | ----- |
+| Sale start inclusive, end exclusive, open ends, tz-aware instants | `perfume.py:211` | domain | `test_perfume_public_domain.py::test_sale_is_active_with_the_start_inclusive_and_the_end_exclusive` (11 cases), `::test_sale_activity_is_compared_as_instants_across_time_zones` | CONFIRMED |
+| `effective_price`: sale price while active, regular otherwise | `perfume.py:272` | domain | `::test_the_effective_price_*` (3 tests, 6 cases) | CONFIRMED |
+| `retired_slugs`: empty on create, appended only when the slug changes, in order, nothing on a refused update | `perfume.py:315,375` | domain | `::test_a_new_perfume_has_no_retired_slugs`, `::test_update_records_the_slug_it_replaces`, `::test_update_that_keeps_the_slug_retires_nothing`, `::test_successive_renames_accumulate_*`, `::test_a_refused_update_retires_nothing` | CONFIRMED |
+| `q` trimmed; blank becomes None; other filters untouched | `queries/perfumes.py:34` | application | `test_public_perfume_queries.py::test_a_blank_search_becomes_no_search`, `::test_the_search_is_trimmed_before_the_query`, `::test_the_other_filters_reach_the_query_untouched` | CONFIRMED |
+| `clock.now()` passed to list and get | `queries/perfumes.py:35,50` | application | `::test_listing_passes_the_clock_now_to_the_query`, `::test_get_passes_the_clock_now_to_the_query` | CONFIRMED |
+| Get: `PerfumeNotFound` for unknown and hidden; old slug answers the current one | `queries/perfumes.py:48-53` | application | `::test_get_answers_not_found_for_an_unknown_slug`, `::..._for_a_hidden_perfume`, `::test_an_old_slug_finds_the_perfume_and_answers_the_current_slug`, `::test_get_returns_the_visible_perfume` | CONFIRMED |
+| In-memory adapter follows the same visibility and price rules (it is the port double for the layers above) | `in_memory_perfumes.py:164-260` | application | `::test_the_in_memory_list_uses_the_domain_effective_price_at_the_clock_time`, `::test_the_in_memory_list_hides_hidden_archived_and_archived_brand_perfumes` | CONFIRMED |
+| Query parsing: defaults, repeatable `brand`/`family`/`gender`, `Literal` sort and gender, `size` 1..48, `page>=1`, prices `>=0`, `q` max 100; invalid is 422 `VALIDATION_ERROR` | `perfume_router.py:224-252` | http | `test_public_perfume_http.py::test_the_list_needs_no_session_*`, `::test_brand_family_and_gender_are_repeatable`, `::test_every_other_parameter_is_parsed`, `::test_every_documented_sort_is_accepted`, `::test_invalid_query_parameters_are_a_validation_error` (9), `::test_the_limits_themselves_are_valid`, `::test_a_blank_search_reaches_the_query_as_no_search` | CONFIRMED |
+| Response shapes: card, detail (active presentations by ml, effective price, regular price and sale end only while on sale) | `contracts.py` Public*; `perfume_router.py:255-263` | http | `::test_the_list_answers_cards_with_refs_and_the_from_price`, `::test_the_detail_answers_active_presentations_with_the_effective_price` | CONFIRMED |
+| Detail 404 `CATALOG_PERFUME_NOT_FOUND` (unknown, hidden); slug `max_length=240` (241 is 422) | `perfume_router.py:255-263` | http | `::test_an_unknown_slug_is_a_404_*`, `::test_a_hidden_perfume_is_a_404`, `::test_a_slug_longer_than_240_characters_*` | CONFIRMED |
+| Public routes need no session; admin routes stay protected | `perfume_router.py:221`; `support.py` | http | every test above uses no cookie; `assert_admin_routes_are_protected` in `_client` | CONFIRMED |
+| Visibility: published, not archived, brand active; archived family/concentration still listed; no active presentation is not listed (Deviation 2) | `sql_perfume_queries.py:88,139` | integration | `test_sql_public_perfumes.py::test_only_published_unarchived_perfumes_of_active_brands_are_listed`, `::test_an_archived_family_or_concentration_does_not_hide_a_perfume`, `::test_a_perfume_without_active_presentations_is_not_listed`, `::test_card_fields_come_from_the_perfume_and_its_refs` | CONFIRMED |
+| Effective price and `on_sale` in SQL equal the domain at window boundaries (12 windows, microsecond precision; list card and detail) | `sql_perfume_queries.py:71-85` vs `perfume.py:211,272` | integration | `::test_sql_effective_price_and_on_sale_agree_with_the_domain_at_the_boundaries` (12 params), `::test_the_boundary_matrix_covers_both_outcomes` | CONFIRMED |
+| From price = min effective among active presentations; archived presentation and its sale ignored; `now` drives the result | `sql_perfume_queries.py:139-150` | integration | `::test_the_from_price_is_the_lowest_effective_price_among_active_presentations`, `::test_a_sale_makes_its_presentation_the_cheapest`, `::test_on_sale_ignores_the_sale_of_an_archived_presentation`, `::test_the_price_depends_on_the_now_passed_to_the_query`, `::test_a_sale_ending_in_the_future_reports_the_regular_price_and_the_end` | CONFIRMED |
+| Filters: brand/family/gender (multi), price range inclusive on the effective from price, AND-combination, unknown slugs, no leak of hidden | `sql_perfume_queries.py:151-160` | integration | `::test_the_brand_filter_accepts_several_slugs`, `::test_the_family_filter`, `::test_the_gender_filter_accepts_several_values`, `::test_the_price_range_filters_the_from_price_inclusively`, `::test_the_price_range_uses_the_effective_from_price_not_the_regular_one`, `::test_filters_combine_with_and`, `::test_an_unknown_slug_in_a_filter_matches_nothing`, `::test_filters_never_reveal_non_visible_perfumes` | CONFIRMED |
+| Search: accent and case insensitive over name, brand, notes of all levels; substring; combines with filters; no leak of hidden | `sql_perfume_queries.py:161-176` | integration | `::test_search_finds_a_brand_*`, `::test_search_finds_a_perfume_name_*`, `::test_search_finds_notes_of_any_level`, `::test_search_matches_substrings_*`, `::test_search_with_no_match_*`, `::test_search_combines_with_the_other_filters`, `::test_search_never_reveals_non_visible_perfumes` | CONFIRMED |
+| `%`, `_` and `\` in `q` are literal; SQL-looking text is inert | `sql_perfume_queries.py:100-103` | integration | `::test_search_treats_percent_and_underscore_and_backslash_literally`, `::test_search_with_sql_looking_text_is_inert` | CONFIRMED |
+| Sorts: name (brand, name, case-insensitive, id tie-break), price asc/desc (+ name), newest (+ id, NULL last); pagination slices, totals, beyond-last page; one row per perfume | `sql_perfume_queries.py:177-190` | integration | `::test_the_default_order_is_brand_then_name_ignoring_case`, `::test_name_ties_break_by_id`, `::test_price_ascending_*`, `::test_price_descending_*`, `::test_price_sort_uses_the_lowest_*`, `::test_newest_orders_*`, `::test_newest_puts_a_missing_publication_date_last`, `::test_pagination_slices_*`, `::test_the_total_counts_the_filtered_set_not_the_page`, `::test_a_perfume_with_many_presentations_is_listed_once` | CONFIRMED |
+| Detail: active presentations by ml, notes, refs, lead times; non-visible and unknown are None | `sql_perfume_queries.py:239-300` | integration | `::test_the_detail_lists_active_presentations_ordered_by_ml`, `::test_the_detail_is_found_for_a_family_or_concentration_archived_perfume`, `::test_the_detail_of_a_non_visible_perfume_is_not_found` (3), `::test_an_unknown_slug_is_not_found`, `::test_archiving_a_presentation_hides_it_from_the_public_detail` | CONFIRMED |
+| Slug history written on rename (`retired_at = updated_at`), none when unchanged; old slug returns the current slug; chain of renames; history never exposes hidden/archived/archived-brand perfumes; latest dropper owns a reused slug and the current owner wins while it is held | `sql_perfume_repository.py:219-228`; `sql_perfume_queries.py:265` | integration | `::test_renaming_writes_the_old_slug_to_the_history`, `::test_an_update_that_keeps_the_slug_writes_no_history`, `::test_the_old_slug_finds_the_perfume_and_answers_the_current_slug`, `::test_every_retired_slug_of_successive_renames_still_resolves`, `::test_the_history_does_not_make_a_hidden_perfume_visible`, `::test_the_history_does_not_make_an_archived_brand_perfume_visible`, `::test_a_slug_is_owned_by_the_latest_perfume_that_dropped_it` | CONFIRMED |
+| Migration 0008: `unaccent` installed and folds `Lancôme`; history PK and FK enforced | `0008_*.py` | integration | `::test_the_unaccent_extension_is_installed`, `::test_the_history_slug_is_the_primary_key`, `::test_a_history_slug_cannot_point_to_a_missing_perfume` | CONFIRMED |
+| Migration 0008 round trip on `fragancia_test` | `0008_*.py` | tooling (manual) | `alembic -x test=true downgrade 0007`, then `upgrade head` (see below) | CONFIRMED |
+| Container resolves the two new use cases | `module.py:179-180` | composition | existing `tests/unit/test_container.py` (green in both runs) | CONFIRMED |
+
+Migration round trip (test database only, 2026-10-09): `alembic -x test=true current` showed
+`0008 (head)`; `downgrade 0007` ran `0008 -> 0007` and `current` showed `0007`; `upgrade head`
+ran `0007 -> 0008` and `current` showed `0008 (head)`. After the round trip
+`to_regclass('catalog.perfume_slug_history')` is not null and the `unaccent` extension is
+installed (the downgrade leaves the extension by design). I did not inspect the table between
+downgrade and upgrade.
+
+Runs (the two allowed):
+
+- Baseline, before writing tests: `uv run just check` green (1060 unit passed, 3 skipped; 684
+  harness tests passed); `uv run just test-integration` 168 passed, 2 skipped. Nothing failed.
+- Closing: `uv run just check` green (1120 unit passed, 3 skipped, +60; 684 harness passed);
+  `uv run just test-integration` 235 passed, 2 skipped (+67). One intermediate `check` run
+  caught two mypy `no-any-return` errors in my own new test file (fixed, rerun green). Between
+  runs I only ran the files I touched.
+
+Not covered, on purpose: the HTTP layer against the real SQL adapter (the http tests use the
+in-memory adapter; SQL behavior is covered at the integration layer), and the web's 301 (out of
+scope).
 
 ## Review findings
 
