@@ -18,17 +18,17 @@ and orders come in later initiatives.
 | Plan | Title | Depends on | Purpose |
 | ---- | ----- | ---------- | ------- |
 | 001  | Olfactory families, and renaming and archiving brands | — | Editable `OlfactoryFamily` list (create, rename, archive, restore; public and admin lists); brands gain rename, archive and restore; catalog admin routes require `catalog:manage` |
-| 002  | Perfumes, presentations and the public catalog | 001 | `Perfume` aggregate with presentations (price, sale window, availability); admin CRUD, publish/hide, archive; public list with filters (brand, gender, family, text, effective price range) and detail |
-| 003  | Perfume photos on S3 | 002 | Up to 3 photos per perfume in RustFS/S3: upload, order, remove; public URLs in the catalog responses |
-| 004  | Excel import | 002, 003 | Downloadable `.xlsx` template; validate the whole file into a per-row report; all-or-nothing confirm that upserts perfumes and presentations and downloads image URLs to S3 |
+| 002  | Editable concentrations | 001 | `Concentration` list with a name and an abbreviation (create, update, archive, restore; public and admin lists), seeded with the five classic concentrations |
+| 003  | Perfumes, presentations and the public catalog | 001, 002 | `Perfume` aggregate with presentations (price, sale window, availability); admin CRUD, publish/hide, archive; public list with filters (brand, gender, family, text, effective price range), sorting and detail by slug |
+| 004  | Perfume photos on S3 | 003 | Up to 3 photos per perfume in RustFS/S3: upload, order, remove; public URLs in the catalog responses |
+| 005  | Excel import | 003, 004 | Downloadable `.xlsx` template; validate the whole file into a per-row report; all-or-nothing confirm that upserts perfumes and presentations and downloads image URLs to S3 |
 
 ## Dependency notes
 
-002 references families and brands by id, so 001 must exist first. 004 creates perfumes,
-presentations and photos, so it needs the write side of 002 and the photo storage of 003.
+003 references brands, families (001) and concentrations (002) by id. 005 creates perfumes,
+presentations and photos, so it needs the write side of 003 and the photo storage of 004.
 
-Open for plan 002 (not yet decided with the user): what an archived brand or family means for
-the perfumes that use it (hidden from the storefront? blocked for new perfumes?).
+Plans 002–005 were renumbered on 2026-10-09 (decision 21), before any of their files existed.
 
 ## Decisions with the user
 
@@ -81,6 +81,45 @@ the perfumes that use it (hidden from the storefront? blocked for new perfumes?)
     Oriental, Cítrica, Aromática, Gourmand, Acuática, Chipre, Fougère. The owner adds or
     archives the rest from the panel.
 20. (2026-10-08) Plan 001 approved by the user, with the seed.
+21. (2026-10-09) **Concentrations are an editable list** (a table with CRUD, like the
+    families), not a fixed list in code, so new ones such as Body Mist need no deploy. This
+    replaces the "fixed list in code" part of decision 4. They get their own plan, 002, before
+    the perfumes: perfumes move to 003, photos to 004 and the import to 005.
+22. (2026-10-09) When a **brand** is archived, its perfumes are hidden from the storefront
+    without changing their own state, and they come back when the brand is restored. When a
+    **family** is archived, its perfumes stay visible; only the family filter loses it.
+23. (2026-10-09) Only **active** brands, families and concentrations can be assigned when
+    creating or editing a perfume (422 otherwise). Perfumes that already have an archived one
+    keep it.
+24. (2026-10-09) A perfume can be **published only with at least one active presentation**.
+    Photos are not required.
+25. (2026-10-09) **Gender stays a fixed list in code**: women, men, unisex.
+26. (2026-10-09) A concentration has a **name and an abbreviation**, both unique ("Eau de
+    Toilette" / "EDT"). The storefront shows the name; the perfume URL uses the abbreviation
+    (`/perfumes/versace-eros-edt`).
+27. (2026-10-09) The concentration list starts **seeded** with the five classics: Eau de
+    Cologne (EDC), Eau de Toilette (EDT), Eau de Parfum (EDP), Parfum (Parfum), Extrait de
+    Parfum (Extrait).
+28. (2026-10-09) Sale price window: **start and end are both optional**. No start means valid
+    now; no end means valid until removed; with both, end > start. A sale price is always
+    lower than the regular price.
+29. (2026-10-09) The storefront text search covers **name, brand and notes**, ignoring accents
+    and case ("vainilla" finds perfumes with a vanilla note).
+30. (2026-10-09) Storefront sort options are **name (default: brand + name), price ascending,
+    price descending and newest**. Each perfume shows a **"from" price**: the lowest effective
+    price among its active presentations. The price range filter uses the same price, and the
+    detail page shows every presentation.
+31. (2026-10-09) A perfume has a **readable slug** in its storefront URL:
+    brand + name + concentration abbreviation.
+32. (2026-10-09) Validation limits:
+    - ml: an integer from 1 to 1000.
+    - Price: greater than 0, up to $100,000 MXN.
+    - Delivery days: 1 to 90, with min ≤ max.
+    - Notes: at most 10 per level, 40 characters each.
+    - Description: up to 2,000 characters.
+33. (2026-10-09) When a **concentration** is archived, its perfumes **stay visible**, as with
+    families: archiving "EDT" must not hide half the catalog.
+34. (2026-10-09) Plan 002 approved by the user.
 
 ## Delivered
 
@@ -91,6 +130,12 @@ the perfumes that use it (hidden from the storefront? blocked for new perfumes?)
 - **Availability per perfume**: one perfume can be in stock in 100 ml and made to order in
   200 ml (decision 9).
 - **Families as a fixed list in code**: the user wants to edit them from the panel (decision 5).
+- **Concentrations as a fixed list in code**: replaced by an editable list (decision 21).
+- **Gender as an editable list**: three values that hardly change (decision 25).
+- **One storefront card per presentation**: a perfume shows once, with its "from" price
+  (decision 30).
+- **Perfume URLs by id**: worse for SEO, and the storefront renders on the server (decision
+  31).
 - **Notes as a closed catalog**: more capture and import work; free text is enough for now.
 - **Sale price without dates**: the user wants a validity window (decision 8).
 - **Importing the valid rows and reporting the rest**: a half-applied price list is worse than
