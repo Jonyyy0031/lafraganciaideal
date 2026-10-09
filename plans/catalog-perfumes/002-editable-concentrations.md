@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: catalog
 min_implementer: mid
 depends_on: ["001"]
@@ -263,24 +263,24 @@ Concentrations publish no events (nothing subscribes, the same as families).
 
 ## Acceptance criteria
 
-- [ ] After migrating, `GET /api/v1/concentrations` returns the five seeded concentrations
+- [x] After migrating, `GET /api/v1/concentrations` returns the five seeded concentrations
       with `name`, `abbreviation` and `slug`, ordered by name.
-- [ ] `POST /api/v1/admin/concentrations {"name":" Body  Mist ","abbreviation":"Mist"}` →
+- [x] `POST /api/v1/admin/concentrations {"name":" Body  Mist ","abbreviation":"Mist"}` →
       201. The public list shows `{"name":"Body Mist","abbreviation":"Mist","slug":"body-mist"}`.
-- [ ] Creating `{"name":"eau de toilette","abbreviation":"X1"}` → 409
+- [x] Creating `{"name":"eau de toilette","abbreviation":"X1"}` → 409
       `CATALOG_CONCENTRATION_ALREADY_EXISTS`. Creating `{"name":"Toilette Fraîche",
       "abbreviation":"edt"}` → 409 `CATALOG_CONCENTRATION_ABBREVIATION_TAKEN`. An abbreviation
       of 1 or 13 characters → 422 `CATALOG_CONCENTRATION_ABBREVIATION_INVALID`, and a
       one-character name → 422 `CATALOG_CONCENTRATION_NAME_INVALID`.
-- [ ] `PATCH /api/v1/admin/concentrations/{id}` for Body Mist with `{"name":"Body Mist",
+- [x] `PATCH /api/v1/admin/concentrations/{id}` for Body Mist with `{"name":"Body Mist",
       "abbreviation":"BM"}` → 204 (same name slug). Changing its abbreviation to `"EDP"` →
       409 `..._ABBREVIATION_TAKEN`. An unknown id → 404 `CATALOG_CONCENTRATION_NOT_FOUND`.
-- [ ] `archive` → 204: the concentration leaves the public list and the admin list shows
+- [x] `archive` → 204: the concentration leaves the public list and the admin list shows
       `is_active: false`. A second `archive` is 204. `restore` → 204 and it is public again.
-- [ ] The new admin routes return 401 without a session.
-- [ ] Two concurrent updates that give two concentrations the same abbreviation → one 204 and
+- [x] The new admin routes return 401 without a session.
+- [x] Two concurrent updates that give two concentrations the same abbreviation → one 204 and
       one 409, never a 500.
-- [ ] Migration 0006 applies on the development database. `openapi.json` is regenerated and
+- [x] Migration 0006 applies on the development database. `openapi.json` is regenerated and
       the drift check passes.
 
 ## Test layers required
@@ -415,3 +415,49 @@ money or time windows are involved.
 All blocking checks passed → `status: verify`.
 
 ## Verification
+
+Verified on 2026-10-09 by the main session, inline, on `feat/catalog-concentrations` at
+ec21447.
+
+**Suites, each run once:**
+
+- `uv run just check`: ruff "All checks passed!"; mypy "no issues found in 187 source
+  files"; unit `803 passed, 3 skipped`; harness `684 passed`.
+- `uv run just test-integration`: `124 passed, 2 skipped`.
+- `uv run just db-migrate` on the development database: clean, at 0006. The tester ran the
+  0006 → 0005 → 0006 round trip on the test database (see Test coverage).
+
+**Running app** (`uv run just api`, port 8100), signed in as the synthetic owner
+`verifier@example.test` (`POST /auth/login` → 200). Every row I created is named "Verif …".
+
+- **Public list.** `GET /concentrations` returns the five seeded rows ordered by name: Eau de
+  Cologne/EDC, Eau de Parfum/EDP, Eau de Toilette/EDT, Extrait de Parfum/Extrait,
+  Parfum/Parfum, each with its `slug`.
+- **Create.** `{"name":" Verif  Body  Mist ","abbreviation":"VMist"}` → 201. The public list
+  shows `{"name":"Verif Body Mist","abbreviation":"VMist","slug":"verif-body-mist"}`.
+- **Create, unhappy paths:**
+  - `"eau de toilette"/"X1"` → 409 `CATALOG_CONCENTRATION_ALREADY_EXISTS`.
+  - `"Verif Toilette Fraiche"/"edt"` → 409 `CATALOG_CONCENTRATION_ABBREVIATION_TAKEN`.
+  - An abbreviation of `"X"` or of 13 characters → 422
+    `CATALOG_CONCENTRATION_ABBREVIATION_INVALID` with `{"min":2,"max":12}`.
+  - A name of `"V"` → 422 `CATALOG_CONCENTRATION_NAME_INVALID`.
+- **Update.**
+  - Keeping the name with abbreviation `"VBM"` → 204.
+  - Changing the abbreviation to `"EDP"` → 409 `..._ABBREVIATION_TAKEN`.
+  - An unknown id → 404 `CATALOG_CONCENTRATION_NOT_FOUND`.
+- **Archive and restore.**
+  - `archive` → 204: the concentration leaves the public list (0), and the admin list shows
+    `is_active:false`.
+  - A second `archive` → 204.
+  - `restore` → 204, and it is public again (1).
+- **Without a session.** `POST` and `PATCH /admin/concentrations…` → 401
+  `AUTHENTICATION_REQUIRED`.
+- **Concurrency.** Two rounds of two parallel `PATCH` requests (`curl -Z`) gave "Verif Race A"
+  and "Verif Race B" the same abbreviation. Each round returned one 204 and one 409. The
+  server log has no 500 and no traceback.
+- **Cleanup.** `DELETE … WHERE slug LIKE 'verif-%'` removed exactly the 3 rows I created.
+
+**NOT VERIFIED in the running app:** calls as a **staff** user. Only an owner can be created
+from the terminal; the http tests cover 403 without `catalog:manage`.
+
+Every acceptance criterion passes. The plan is ready for the user to set `done`.
