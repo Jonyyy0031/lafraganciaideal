@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: catalog
 min_implementer: mid
 depends_on: ["003"]
@@ -306,6 +306,18 @@ All checked against `uv run just api`, with data created through the admin route
 - Step 8 (tests) skipped on purpose: it belongs to the tester phase.
 - Smoke test against the running API covered only an empty catalog (no admin session used): routes, validation (`size=49` -> 422), 404 code and SQL execution including `unaccent`. Acceptance criteria on real data are NOT yet verified.
 
+**Repair round 1** (2026-10-09, main session): review → implementing for the review's Low
+finding.
+- **What breaks:** full-width `％`, `＿` and `＼` in `q` become wildcards. `unaccent` maps
+  them to `%`, `_` and `\` *after* the Python escaping (`sql_perfume_queries.py:100-103`,
+  `:157-161`). So `?q=％` lists the whole catalog.
+- **In scope:** step 4's search escaping, and acceptance criterion "`?q=100%` … does not
+  match everything".
+- **Repair:** escape after normalizing, so no character can turn into a wildcard after
+  being escaped.
+- **What stays valid:** the tests and review evidence above still hold for everything else.
+  The tester adds the full-width regression test.
+
 ## Test coverage
 
 Tester phase, 2026-10-09. Files (all new): `apps/api/tests/unit/catalog/test_perfume_public_domain.py`
@@ -361,5 +373,106 @@ in-memory adapter; SQL behavior is covered at the integration layer), and the we
 scope).
 
 ## Review findings
+
+Reviewer, 2026-10-09, diff `main...HEAD` on `feat/catalog-public` (worktree clean). No PR
+exists yet, so the PR-body item is not applicable at this phase. The main session must check it
+before merging.
+
+**Checklist: 14/14 applicable items pass (PR body N/A).**
+
+- [x] `plans-scope`: 19 changed files, all inside the plan. No hot file was touched
+      (`container.py`, `modules.json`, `.importlinter`).
+- [x] `uv run just check` is green, including 684 hook tests and the drift check.
+- [x] `uv run just test-integration`: 235 passed, 2 skipped.
+- [x] Business rules are in the domain. `Sale.is_active` and `Presentation.effective_price`
+      live in `domain/perfume.py:211,272`. The SQL `CASE` is the planned mirror and is pinned to
+      the domain by the 12-window test. The detail maps each row through the domain methods.
+- [x] CQRS-lite holds. The reads go through `PerfumeQueries` and return response models. The
+      slug history is written in `SqlPerfumeRepository.save` inside the existing savepoint.
+- [x] The contracts are in `contracts.py`, and `openapi.json` was regenerated (the drift check
+      is green).
+- [x] A missing perfume is `Err(PerfumeNotFound)` → 404 `CATALOG_PERFUME_NOT_FOUND`.
+- [x] Money is integer cents. `now` comes from `Clock` in both use cases.
+- [x] Migration 0008 is new and has no drops in `upgrade`. Its FK stays inside `catalog`.
+      `downgrade` drops only the index and the table, and its comment explains why the
+      extension stays. The tester's round trip is recorded.
+- [x] The public routes use `public_router`. Admin protection was asserted in the HTTP tests.
+- [x] The wiring resolves (`module.py:179-180`; `test_container.py` is green).
+- [x] There are no secrets and no real personal data.
+- [x] `## Deviations` is honest. I spot-checked two claims. `concat_ws` is at
+      `sql_perfume_queries.py:148`. The inner join to `prices` is at `:175/:195`, and the port
+      docstring says "with at least one active presentation".
+- [x] `docs/architecture.md:55` was updated as planned. README decisions 40–44 match the code.
+
+**Ruling on the Deviations.**
+
+1. `concat_ws` instead of `||`: **accepted.** The arrays are `NOT NULL`. An empty array
+   only adds blank separators, and that does not change any `contains` match.
+2. A visible perfume with no active presentation is left out of the list: **accepted.**
+   It is unreachable in practice. The domain refuses to archive the last active presentation of a
+   published perfume, and publishing needs one (`perfume.py` `publish`). The detail still answers
+   for such a perfume with `presentations: []`, and that is harmless.
+3. Tests were left to the tester: **accepted**, as planned.
+4. The smoke test ran only on an empty catalog: **accepted** for this phase. The acceptance
+   criteria on real data remain for verify.
+
+**Findings.** There are no Critical, High or Medium findings. One Low finding needs a code change.
+
+- **Low: a full-width `％` or `＿` in `q` becomes a live LIKE wildcard.**
+  `sql_perfume_queries.py:100-103` (`_like_pattern`) and `:157-161`.
+  - **What fails:** the code escapes `\`, `%` and `_` in Python, then applies
+    `unaccent(lower(...))` to the escaped pattern in SQL. `unaccent` folds the full-width forms
+    to ASCII. I checked this on `fragancia_test`:
+    `unaccent(lower('％ ＿ ＼'))` = `% _ \`, and `'abc' LIKE unaccent(lower('%＿%'))` is true.
+  - **Failure scenario:** `GET /api/v1/perfumes?q=％` (a phone keyboard in full-width mode, or
+    a paste) lists the whole visible catalog instead of nothing. `q=＿` matches any perfume. A
+    full-width `＼` turns into an escape character and changes the meaning of the next
+    character. This breaks the acceptance criterion "`?q=100%` … does not match everything" for
+    the full-width variant.
+  - **Impact:** only visible perfumes appear, so nothing leaks and no money is affected.
+  - **Possible fixes (the implementer chooses):** run `unicodedata.normalize("NFKC", q)` in
+    `_like_pattern` before escaping, or escape after folding in SQL
+    (`replace(...unaccent(lower(:q))...)`). Either needs an integration test with `％` and `＿`.
+
+**Checked and found correct (no finding):**
+
+- **Effective price, SQL against the domain.** Both sides use the same predicate:
+  `sale_price IS NOT NULL AND (starts IS NULL OR starts <= now) AND (ends IS NULL OR now < ends)`.
+  It never evaluates to NULL, so `bool_or` and `CASE` cannot drift. `now` is a single tz-aware
+  bind compared with `timestamptz`, both at microsecond precision. Archived presentations are
+  excluded before `min`/`bool_or`. The price filters compare the effective "from" price,
+  inclusively.
+- **Visibility.** The same `_VISIBLE` applies to the list, to the detail by current slug and to
+  the detail by history. The history cannot expose a hidden, archived or archived-brand perfume.
+- **Sort stability.** Every sort ends on `perfumes.id`, which is unique: `name` is
+  `lower(brand), lower(name), id`, price is `price_from, lower(name), id`, and `newest` is
+  `first_published_at DESC NULLS LAST, id`. LIMIT/OFFSET pages are deterministic. The count
+  uses the same joins and conditions.
+- **Slug history.** The upsert gives the slug to the latest perfume that dropped it.
+  `retired_at = updated_at`, which `update` sets. `retired_slugs` is cleared only after a
+  successful save, and a refused update appends nothing. Lookup order is the current visible
+  slug, then the history. The answer always carries the current slug.
+
+**Info (no change requested):**
+
+- (Uncertain, by design) Suppose perfume A dropped `x`, and perfume B now holds `x` but is
+  hidden. Then `GET /perfumes/x` resolves through the history to A, and the web would 301 a
+  hidden product's URL to a different perfume. The plan prescribes this. The user may want it
+  noted.
+- The in-memory double differs from SQL in places. `_fold` (NFD) does not fold `ø`, `ß` or `Œ`
+  the way `unaccent` does. Python sorts by code point, while the database sorts with the
+  `en_US.utf8` collation. This only matters to unit tests that rely on those characters, and
+  none do.
+- The migration file name `0008_catalog_perfume_slug_history_and_.py` was cut off by Alembic's
+  default `truncate_slug_length` (40). The revision id inside is correct (`0008` ← `0007`), so
+  the name is cosmetic. The migration is applied, so renaming it is optional. A rename would
+  only change the file name, never the revision.
+
+**Out of scope, filed:** `plans/findings/catalog-unbounded-page-offset-overflow.md`. Every list
+route accepts an unbounded `page`, and `(page-1)*size` overflows the `bigint` OFFSET, giving a
+500. The defect existed before plan 004, but this plan makes one of those routes public.
+
+**Status:** stays `review`, because the Low finding needs a code change. If the user accepts the
+full-width wildcard behavior instead, the main session can move the plan to `verify`.
 
 ## Verification
