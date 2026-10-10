@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, case, func, or_, select
+from sqlalchemy import ColumnElement, and_, case, func, literal, or_, select
 
 from fragancia_api.modules.catalog.application.ports import PublicPerfumeFilters
 from fragancia_api.modules.catalog.contracts import (
@@ -97,9 +97,16 @@ _PUBLIC_ORDER = {
 }
 
 
-def _like_pattern(q: str) -> str:
-    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
+def _like_pattern(q: str) -> ColumnElement[str]:
+    """`%q%` with LIKE wildcards escaped AFTER `unaccent(lower(q))`.
+
+    `unaccent` maps the full-width `％ ＿ ＼` to `% _ \\`, so escaping in Python beforehand
+    would leave them live. Escaping the folded text in SQL covers every character.
+    """
+    folded: ColumnElement[str] = func.unaccent(func.lower(q))
+    for char in ("\\", "%", "_"):
+        folded = func.replace(folded, char, "\\" + char)
+    return literal("%").concat(folded).concat(literal("%"))
 
 
 def _public_presentation(row: Any, now: datetime) -> PublicPresentation:
@@ -171,11 +178,7 @@ class SqlPerfumeQueries:
                 func.array_to_string(perfumes.c.base_notes, " "),
             )
             pattern = _like_pattern(filters.q)
-            conditions.append(
-                func.unaccent(func.lower(haystack)).like(
-                    func.unaccent(func.lower(pattern)), escape="\\"
-                )
-            )
+            conditions.append(func.unaccent(func.lower(haystack)).like(pattern, escape="\\"))
         order: tuple[ColumnElement[Any], ...]
         if filters.sort == "name":
             order = _BY_BRAND_THEN_NAME

@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: catalog
 min_implementer: mid
 depends_on: ["003"]
@@ -317,6 +317,22 @@ finding.
   being escaped.
 - **What stays valid:** the tests and review evidence above still hold for everything else.
   The tester adds the full-width regression test.
+
+**Repair round 1, done** (2026-10-10). The implementer subagent was interrupted when the
+session ended; the main session checked its partial diff and finished the round.
+
+- **The change.** `_like_pattern` in `sql_perfume_queries.py` now builds the pattern in SQL.
+  It applies `unaccent(lower(q))` first, then `replace` for `\`, `%` and `_` (in that order),
+  wrapped in `'%' … '%'`. The call site compares `unaccent(lower(haystack))` with that
+  pattern using `escape="\\"`. Because the folding happens before the escaping, no character
+  can become a wildcard afterwards.
+- **The in-memory adapter** needs no change: it matches by substring (`in`), not `LIKE`.
+- **psql check on `fragancia_test`.** Old pattern vs new:
+  - `＿` and `％` no longer match `'abc'`; before, they matched.
+  - `％` and `100％` match `'100% oud'` literally.
+  - `＼` matches nothing.
+- **Runs.** `uv run just check` is green (1120 passed, 3 skipped; harness 684).
+  `uv run just test-integration` gives 235 passed, 2 skipped.
 
 ## Test coverage
 
