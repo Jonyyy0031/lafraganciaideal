@@ -158,6 +158,7 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
     005** on the plan-004 branch, not through the fast lane: bounding `page` changes the
     OpenAPI contract and touches more than three files. Photos move to 006 and the import to
     007.
+46. (2026-10-10) The user approved plan 005 (`MAX_PAGE = 10_000`).
 
 ## Delivered
 

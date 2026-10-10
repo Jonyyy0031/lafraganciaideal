@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 module: catalog
 min_implementer: small
 depends_on: ["004"]
