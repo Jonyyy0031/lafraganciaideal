@@ -1,7 +1,8 @@
 ---
-status: open
+status: resolved
 module: catalog
 found: 2026-10-09
+plan: catalog-perfumes/005
 ---
 
 # A huge `page` overflows the SQL OFFSET and answers 500 instead of 422
@@ -33,3 +34,12 @@ exposed.
 A fast-lane fix: an upper bound on `page` (for example a `le=` that keeps
 `page * MAX_PAGE_SIZE` far inside int64), shared by every list route, plus an HTTP test for
 422 `VALIDATION_ERROR`.
+
+## Resolution
+
+Plan `catalog-perfumes/005` added `MAX_PAGE = 10_000` next to `MAX_PAGE_SIZE` in
+`apps/api/src/fragancia_api/shared/contracts/__init__.py` and bound the five `page` parameters
+with `le=MAX_PAGE` (`router.py` brands, families and concentrations lists; `perfume_router.py`
+admin perfumes and public perfumes). A huge page is now a 422 `VALIDATION_ERROR` before any
+query runs. `apps/api/openapi.json` shows `maximum: 10000` on the five parameters. HTTP tests
+for the bound are part of the tester phase of the plan.

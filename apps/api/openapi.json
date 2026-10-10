@@ -1079,6 +1079,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 10000,
               "minimum": 1,
               "default": 1,
               "title": "Page"
@@ -1423,6 +1424,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 10000,
               "minimum": 1,
               "default": 1,
               "title": "Page"
@@ -1842,6 +1844,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 10000,
               "minimum": 1,
               "default": 1,
               "title": "Page"
@@ -2341,6 +2344,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 10000,
               "minimum": 1,
               "default": 1,
               "title": "Page"
@@ -2457,6 +2461,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 10000,
               "minimum": 1,
               "default": 1,
               "title": "Page"

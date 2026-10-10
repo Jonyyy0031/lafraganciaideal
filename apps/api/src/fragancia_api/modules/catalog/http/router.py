@@ -56,7 +56,7 @@ from fragancia_api.modules.catalog.contracts import (
     RenameOlfactoryFamilyRequest,
     UpdateConcentrationRequest,
 )
-from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE, MAX_PAGE_SIZE
 from fragancia_api.shared.http import (
     ErrorResponse,
     admin_router,
@@ -114,7 +114,7 @@ async def create_brand(
 @admin.get("")
 async def list_all_brands(
     use_case: Annotated[ListAdminBrands, Depends(provide(ListAdminBrands))],
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 1,
     size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
 ) -> AdminBrandPage:
     """Every brand (active or not), ordered by name."""
@@ -170,7 +170,7 @@ async def list_olfactory_families(
 @admin_families.get("")
 async def list_all_olfactory_families(
     use_case: Annotated[ListAdminOlfactoryFamilies, Depends(provide(ListAdminOlfactoryFamilies))],
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 1,
     size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
 ) -> AdminOlfactoryFamilyPage:
     """Every olfactory family (active or not), ordered by name."""
@@ -244,7 +244,7 @@ async def list_concentrations(
 @admin_concentrations.get("")
 async def list_all_concentrations(
     use_case: Annotated[ListAdminConcentrations, Depends(provide(ListAdminConcentrations))],
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 1,
     size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
 ) -> AdminConcentrationPage:
     """Every concentration (active or not), ordered by name."""

@@ -36,7 +36,7 @@ from fragancia_api.modules.catalog.contracts import (
     PublicPerfumePage,
 )
 from fragancia_api.modules.catalog.http.router import CATALOG_MANAGE
-from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE, MAX_PAGE_SIZE
 from fragancia_api.shared.http import (
     ErrorResponse,
     admin_router,
@@ -66,7 +66,7 @@ _404_409_422: _Responses = {
 @admin_perfumes.get("")
 async def list_admin_perfumes(
     use_case: Annotated[ListAdminPerfumes, Depends(provide(ListAdminPerfumes))],
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 1,
     size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     archived: bool = False,
 ) -> AdminPerfumePage:
@@ -231,7 +231,7 @@ async def list_public_perfumes(
     min_price_cents: Annotated[int | None, Query(ge=0)] = None,
     max_price_cents: Annotated[int | None, Query(ge=0)] = None,
     sort: Literal["name", "price_asc", "price_desc", "newest"] = "name",
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 1,
     size: Annotated[int, Query(ge=1, le=48)] = 24,
 ) -> PublicPerfumePage:
     """Published perfumes of active brands, filtered (`brand`, `family` and `gender` are

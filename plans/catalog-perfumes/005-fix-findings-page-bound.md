@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: catalog
 min_implementer: small
 depends_on: ["004"]
@@ -74,6 +74,8 @@ Paginated lists in other modules (none exist yet besides catalog), cursor pagina
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+None.
 
 ## Test coverage
 
