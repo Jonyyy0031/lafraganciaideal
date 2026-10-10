@@ -134,3 +134,23 @@ async def test_admin_list_rejects_bad_pagination(
 
 async def test_admin_list_requires_an_admin(client: AsyncClient) -> None:
     assert (await client.get(ADMIN_BRANDS)).status_code == 401
+
+
+# --- Plan 005: the page number is bounded (MAX_PAGE = 10_000) ------------------------------
+
+
+async def test_the_last_allowed_page_is_empty_not_an_error(client: AsyncClient) -> None:
+    response = await client.get(ADMIN_BRANDS, params={"page": 10_000}, headers=ADMIN_HEADERS)
+
+    body = response.json()
+    assert response.status_code == 200
+    assert (body["items"], body["page"]) == ([], 10_000)
+
+
+@pytest.mark.parametrize("page", [10_001, 10**18])
+async def test_a_page_past_the_bound_is_a_422_before_any_query(
+    client: AsyncClient, page: int
+) -> None:
+    response = await client.get(ADMIN_BRANDS, params={"page": page}, headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (422, "VALIDATION_ERROR")

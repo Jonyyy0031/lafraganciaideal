@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: small
 depends_on: ["004"]
@@ -78,6 +78,21 @@ Paginated lists in other modules (none exist yet besides catalog), cursor pagina
 None.
 
 ## Test coverage
+
+Baseline `uv run just check`: 684 passed. All tests are http layer, in the existing files of
+`apps/api/tests/unit/catalog/`; the over-bound case is parametrized on `page` in {10_001, 10**18}.
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| Public list accepts `page=10000` and passes it to the query | `perfume_router.py` (`le=MAX_PAGE`) | http | `test_public_perfume_http.py::test_the_last_allowed_page_is_accepted_and_reaches_the_query` | CONFIRMED |
+| Public list: 10001 / 10**18 -> 422 `VALIDATION_ERROR`, query never runs | `perfume_router.py` | http | `test_public_perfume_http.py::test_a_page_past_the_bound_is_a_422_and_the_query_never_runs` | CONFIRMED |
+| Admin perfumes: 10000 -> 200 empty; 10001 / 10**18 -> 422 | `perfume_router.py` | http | `test_perfume_http.py::test_the_last_allowed_page_is_empty_not_an_error`, `::test_a_page_past_the_bound_is_a_422_before_any_query` | CONFIRMED |
+| Admin brands: same | `router.py` | http | `test_brand_http.py` (same two names) | CONFIRMED |
+| Admin olfactory families: same | `router.py` | http | `test_catalog_maintenance_http.py` (same two names) | CONFIRMED |
+| Admin concentrations: same | `router.py` | http | `test_concentration_http.py` (same two names) | CONFIRMED |
+
+15 tests added (5 routes x 3 cases). No GAP, no NOT CONFIRMED. Integration not required by the
+plan. Closing `uv run just check`: green (see the tester report).
 
 ## Review findings
 

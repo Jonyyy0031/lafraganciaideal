@@ -297,3 +297,26 @@ async def test_a_slug_longer_than_240_characters_is_a_validation_error(
 ) -> None:
     assert (await client.get(f"{PUBLIC}/{'a' * 241}")).status_code == 422
     assert (await client.get(f"{PUBLIC}/{'a' * 240}")).status_code == 404
+
+
+# --- Plan 005: the page number is bounded (MAX_PAGE = 10_000) ------------------------------
+
+
+async def test_the_last_allowed_page_is_accepted_and_reaches_the_query(
+    client: AsyncClient, stub: StubQueries
+) -> None:
+    response = await client.get(PUBLIC, params={"page": 10_000})
+
+    assert response.status_code == 200
+    assert response.json()["page"] == 10_000
+    assert [f.page for f in stub.filters] == [10_000]
+
+
+@pytest.mark.parametrize("page", [10_001, 10**18])
+async def test_a_page_past_the_bound_is_a_422_and_the_query_never_runs(
+    client: AsyncClient, stub: StubQueries, page: int
+) -> None:
+    response = await client.get(PUBLIC, params={"page": page})
+
+    assert (response.status_code, response.json()["code"]) == (422, "VALIDATION_ERROR")
+    assert stub.filters == []
