@@ -235,3 +235,71 @@ class AdminPerfumeSummary(BaseModel):
 
 class AdminPerfumePage(Page[AdminPerfumeSummary]):
     """One page of the admin perfume list."""
+
+
+class PublicPerfumeBrand(BaseModel):
+    """The brand of a perfume in the public catalog."""
+
+    name: str
+    slug: str
+
+
+class PublicPerfumeConcentration(BaseModel):
+    """The concentration of a perfume in the public catalog."""
+
+    name: str
+    abbreviation: str
+
+
+class PublicPerfumeFamily(BaseModel):
+    """The olfactory family of a perfume in the public catalog."""
+
+    name: str
+    slug: str
+
+
+class PublicPerfumeCard(BaseModel):
+    """One perfume of the public list, with its lowest current price."""
+
+    slug: str
+    name: str
+    gender: Literal["women", "men", "unisex"]
+    brand: PublicPerfumeBrand
+    concentration: PublicPerfumeConcentration
+    family: PublicPerfumeFamily
+    price_from_cents: int
+    on_sale: bool
+
+
+class PublicPerfumePage(Page[PublicPerfumeCard]):
+    """One page of the public perfume list."""
+
+
+class PublicPresentation(BaseModel):
+    """An active presentation with its current (effective) price."""
+
+    id: UUID
+    ml: int
+    availability: Literal["in_stock", "made_to_order"]
+    lead_time_min_days: int | None
+    lead_time_max_days: int | None
+    price_cents: int
+    regular_price_cents: int | None
+    sale_ends_at: datetime | None
+
+
+class PublicPerfume(BaseModel):
+    """A perfume of the public catalog; the web redirects when `slug` differs from the one
+    requested (the perfume was renamed)."""
+
+    slug: str
+    name: str
+    gender: Literal["women", "men", "unisex"]
+    description: str
+    brand: PublicPerfumeBrand
+    concentration: PublicPerfumeConcentration
+    family: PublicPerfumeFamily
+    top_notes: list[str]
+    heart_notes: list[str]
+    base_notes: list[str]
+    presentations: list[PublicPresentation]

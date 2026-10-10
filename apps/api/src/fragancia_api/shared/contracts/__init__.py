@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
+MAX_PAGE = 10_000  # keeps (page - 1) × size far inside the SQL OFFSET range
 
 
 class Page[T](BaseModel):

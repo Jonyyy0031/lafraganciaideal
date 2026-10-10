@@ -1,9 +1,9 @@
 """Back-office routes for perfumes and their presentations (`catalog:manage`)."""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import Depends, Query
+from fastapi import Depends, Path, Query
 
 from fragancia_api.modules.catalog.application.commands.perfumes import (
     ArchivePerfume,
@@ -19,9 +19,12 @@ from fragancia_api.modules.catalog.application.commands.presentations import (
     RestorePresentation,
     UpdatePresentation,
 )
+from fragancia_api.modules.catalog.application.ports import PublicPerfumeFilters
 from fragancia_api.modules.catalog.application.queries.perfumes import (
     GetAdminPerfume,
+    GetPublicPerfume,
     ListAdminPerfumes,
+    ListPublicPerfumes,
 )
 from fragancia_api.modules.catalog.contracts import (
     AdminPerfume,
@@ -29,13 +32,16 @@ from fragancia_api.modules.catalog.contracts import (
     CreatedResponse,
     PerfumeRequest,
     PresentationRequest,
+    PublicPerfume,
+    PublicPerfumePage,
 )
 from fragancia_api.modules.catalog.http.router import CATALOG_MANAGE
-from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE, MAX_PAGE_SIZE
 from fragancia_api.shared.http import (
     ErrorResponse,
     admin_router,
     provide,
+    public_router,
     require_permission,
     unwrap,
 )
@@ -60,7 +66,7 @@ _404_409_422: _Responses = {
 @admin_perfumes.get("")
 async def list_admin_perfumes(
     use_case: Annotated[ListAdminPerfumes, Depends(provide(ListAdminPerfumes))],
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 1,
     size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     archived: bool = False,
 ) -> AdminPerfumePage:
@@ -212,4 +218,49 @@ async def restore_presentation(
     unwrap(await use_case.execute(perfume_id, presentation_id))
 
 
-perfume_routers = (admin_perfumes,)
+public_perfumes = public_router(prefix="/perfumes", tags=["catalog"])
+
+
+@public_perfumes.get("")
+async def list_public_perfumes(
+    use_case: Annotated[ListPublicPerfumes, Depends(provide(ListPublicPerfumes))],
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    brand: Annotated[list[str], Query()] = [],  # noqa: B006 - FastAPI copies query defaults
+    family: Annotated[list[str], Query()] = [],  # noqa: B006
+    gender: Annotated[list[Literal["women", "men", "unisex"]], Query()] = [],  # noqa: B006
+    min_price_cents: Annotated[int | None, Query(ge=0)] = None,
+    max_price_cents: Annotated[int | None, Query(ge=0)] = None,
+    sort: Literal["name", "price_asc", "price_desc", "newest"] = "name",
+    page: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 1,
+    size: Annotated[int, Query(ge=1, le=48)] = 24,
+) -> PublicPerfumePage:
+    """Published perfumes of active brands, filtered (`brand`, `family` and `gender` are
+    repeatable; prices filter the "from" price), searched (`q`, accent and case insensitive over
+    name, brand and notes) and sorted (default: brand, then name)."""
+    return await use_case.execute(
+        PublicPerfumeFilters(
+            q=q,
+            brands=tuple(brand),
+            families=tuple(family),
+            genders=tuple(gender),
+            min_price_cents=min_price_cents,
+            max_price_cents=max_price_cents,
+            sort=sort,
+            page=page,
+            size=size,
+        )
+    )
+
+
+@public_perfumes.get("/{slug}", responses=_404)
+async def get_public_perfume(
+    slug: Annotated[str, Path(max_length=240)],
+    use_case: Annotated[GetPublicPerfume, Depends(provide(GetPublicPerfume))],
+) -> PublicPerfume:
+    """A perfume with its active presentations. An old slug still finds it: the answer carries
+    the current `slug`, and the web redirects when it differs from the requested one. 404
+    `CATALOG_PERFUME_NOT_FOUND` for an unknown or non-visible perfume."""
+    return unwrap(await use_case.execute(slug))
+
+
+perfume_routers = (public_perfumes, admin_perfumes)

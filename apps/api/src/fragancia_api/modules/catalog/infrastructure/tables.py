@@ -106,3 +106,13 @@ presentations = Table(
 )
 
 PRESENTATION_ML_UNIQUE = "uq_presentations_perfume_ml"
+
+# Slugs a perfume used to have; the latest perfume to drop a slug owns it.
+perfume_slug_history = Table(
+    "perfume_slug_history",
+    metadata,
+    Column("slug", String(240), primary_key=True),
+    Column("perfume_id", Uuid, ForeignKey(perfumes.c.id), nullable=False, index=True),
+    Column("retired_at", DateTime(timezone=True), nullable=False),
+    schema=SCHEMA,
+)

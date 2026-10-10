@@ -1,8 +1,11 @@
 """In-memory perfume adapter for unit tests. It honors the same contracts as the SQL ones."""
 
+import unicodedata
 from copy import deepcopy
+from datetime import UTC, datetime
 from uuid import UUID
 
+from fragancia_api.modules.catalog.application.ports import PublicPerfumeFilters
 from fragancia_api.modules.catalog.contracts import (
     AdminPerfume,
     AdminPerfumePage,
@@ -11,6 +14,13 @@ from fragancia_api.modules.catalog.contracts import (
     PerfumeBrandRef,
     PerfumeConcentrationRef,
     PerfumeFamilyRef,
+    PublicPerfume,
+    PublicPerfumeBrand,
+    PublicPerfumeCard,
+    PublicPerfumeConcentration,
+    PublicPerfumeFamily,
+    PublicPerfumePage,
+    PublicPresentation,
 )
 from fragancia_api.modules.catalog.domain.errors import (
     PerfumeAlreadyExists,
@@ -43,6 +53,8 @@ class InMemoryPerfumes:
         self._families = families
         self._concentrations = concentrations
         self.by_id: dict[UUID, Perfume] = {perfume.id: deepcopy(perfume) for perfume in perfumes}
+        # Retired slug -> the perfume that dropped it last.
+        self.slug_history: dict[str, UUID] = {}
 
     async def exists_with_identity(
         self,
@@ -96,6 +108,9 @@ class InMemoryPerfumes:
         mls = [presentation.ml for presentation in perfume.presentations]
         if len(mls) != len(set(mls)):
             return Err(PresentationAlreadyExists())
+        for slug in perfume.retired_slugs:
+            self.slug_history[slug] = perfume.id
+        perfume.retired_slugs.clear()
         self.by_id[perfume.id] = deepcopy(perfume)
         return Ok(None)
 
@@ -139,6 +154,117 @@ class InMemoryPerfumes:
         ]
         return AdminPerfumePage(items=items, total=len(everything), page=page, size=size)
 
+    def _visible(self, perfume: Perfume) -> bool:
+        return (
+            perfume.is_published
+            and not perfume.is_archived
+            and self._brands.by_id[perfume.brand_id].is_active
+        )
+
+    async def list_public(
+        self, filters: PublicPerfumeFilters, *, now: datetime
+    ) -> PublicPerfumePage:
+        cards: list[tuple[Perfume, int, bool]] = []
+        for p in self.by_id.values():
+            active = [x for x in p.presentations if x.is_active]
+            if not self._visible(p) or not active:
+                continue
+            price_from = min(x.effective_price(now).cents for x in active)
+            on_sale = any(x.sale is not None and x.sale.is_active(now) for x in active)
+            brand = self._brands.by_id[p.brand_id]
+            family = self._families.by_id[p.family_id]
+            if filters.brands and brand.slug not in filters.brands:
+                continue
+            if filters.families and family.slug not in filters.families:
+                continue
+            if filters.genders and p.gender.value not in filters.genders:
+                continue
+            if filters.min_price_cents is not None and price_from < filters.min_price_cents:
+                continue
+            if filters.max_price_cents is not None and price_from > filters.max_price_cents:
+                continue
+            if filters.q is not None:
+                haystack = " ".join(
+                    (p.name.value, brand.name.value, *p.notes.top, *p.notes.heart, *p.notes.base)
+                )
+                if _fold(filters.q) not in _fold(haystack):
+                    continue
+            cards.append((p, price_from, on_sale))
+
+        def by_name(entry: tuple[Perfume, int, bool]) -> tuple[str, str, UUID]:
+            p = entry[0]
+            return (self._brands.by_id[p.brand_id].name.value.lower(), p.name.value.lower(), p.id)
+
+        if filters.sort == "name":
+            cards.sort(key=by_name)
+        elif filters.sort == "newest":
+            cards.sort(key=lambda e: e[0].id)
+            cards.sort(
+                key=lambda e: e[0].first_published_at or datetime.min.replace(tzinfo=UTC),
+                reverse=True,
+            )
+        else:
+            cards.sort(key=lambda e: (e[0].name.value.lower(), e[0].id))
+            cards.sort(key=lambda e: e[1], reverse=filters.sort == "price_desc")
+        chunk = cards[(filters.page - 1) * filters.size : filters.page * filters.size]
+        items = [
+            PublicPerfumeCard(
+                slug=p.slug,
+                name=p.name.value,
+                gender=p.gender.value,
+                brand=self._public_brand(p),
+                concentration=self._public_concentration(p),
+                family=self._public_family(p),
+                price_from_cents=price_from,
+                on_sale=on_sale,
+            )
+            for p, price_from, on_sale in chunk
+        ]
+        return PublicPerfumePage(
+            items=items, total=len(cards), page=filters.page, size=filters.size
+        )
+
+    async def get_public(self, slug: str, *, now: datetime) -> PublicPerfume | None:
+        perfume = next((p for p in self.by_id.values() if p.slug == slug), None)
+        if perfume is None or not self._visible(perfume):
+            perfume = None
+            owner = self.slug_history.get(slug)
+            if owner is not None and self._visible(self.by_id[owner]):
+                perfume = self.by_id[owner]
+        if perfume is None:
+            return None
+        return PublicPerfume(
+            slug=perfume.slug,
+            name=perfume.name.value,
+            gender=perfume.gender.value,
+            description=perfume.description.value,
+            brand=self._public_brand(perfume),
+            concentration=self._public_concentration(perfume),
+            family=self._public_family(perfume),
+            top_notes=list(perfume.notes.top),
+            heart_notes=list(perfume.notes.heart),
+            base_notes=list(perfume.notes.base),
+            presentations=[
+                _public_presentation(p, now)
+                for p in sorted(perfume.presentations, key=lambda p: p.ml.value)
+                if p.is_active
+            ],
+        )
+
+    def _public_brand(self, perfume: Perfume) -> PublicPerfumeBrand:
+        brand = self._brands.by_id[perfume.brand_id]
+        return PublicPerfumeBrand(name=brand.name.value, slug=brand.slug)
+
+    def _public_concentration(self, perfume: Perfume) -> PublicPerfumeConcentration:
+        concentration = self._concentrations.by_id[perfume.concentration_id]
+        return PublicPerfumeConcentration(
+            name=concentration.name.value, abbreviation=concentration.abbreviation.value
+        )
+
+    def _public_family(self, perfume: Perfume) -> PublicPerfumeFamily:
+        family = self._families.by_id[perfume.family_id]
+        return PublicPerfumeFamily(name=family.name.value, slug=family.slug)
+
     async def get_admin(self, perfume_id: UUID) -> AdminPerfume | None:
         perfume = self.by_id.get(perfume_id)
         if perfume is None:
@@ -168,6 +294,27 @@ class InMemoryPerfumes:
                 for p in sorted(perfume.presentations, key=lambda p: p.ml.value)
             ],
         )
+
+
+def _fold(text: str) -> str:
+    """Case- and accent-insensitive form, like `unaccent(lower(...))` in SQL."""
+    decomposed = unicodedata.normalize("NFD", text.lower())
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
+
+
+def _public_presentation(presentation: Presentation, now: datetime) -> PublicPresentation:
+    sale = presentation.sale
+    on_sale = sale is not None and sale.is_active(now)
+    return PublicPresentation(
+        id=presentation.id,
+        ml=presentation.ml.value,
+        availability=presentation.availability.kind,
+        lead_time_min_days=presentation.availability.min_days,
+        lead_time_max_days=presentation.availability.max_days,
+        price_cents=presentation.effective_price(now).cents,
+        regular_price_cents=presentation.price.amount.cents if on_sale else None,
+        sale_ends_at=sale.ends_at if sale is not None and on_sale else None,
+    )
 
 
 def _admin_presentation(presentation: Presentation) -> AdminPresentation:
