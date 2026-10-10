@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: catalog
 min_implementer: mid
 depends_on: ["003"]
@@ -259,34 +259,34 @@ perfumes:
 
 All checked against `uv run just api`, with data created through the admin routes of plan 003.
 
-- [ ] `GET /api/v1/perfumes` lists only perfumes that are published, not archived, and whose
+- [x] `GET /api/v1/perfumes` lists only perfumes that are published, not archived, and whose
       brand is active. A hidden, archived, or archived-brand perfume does not appear. A
       perfume whose family or concentration is archived still appears.
-- [ ] A perfume with presentations at 250000 and 390000 (sale 350000, active) shows
+- [x] A perfume with presentations at 250000 and 390000 (sale 350000, active) shows
       `price_from_cents: 250000` and `on_sale: true`.
-- [ ] A sale whose `sale_starts_at` is in the future does not count: the price is the
+- [x] A sale whose `sale_starts_at` is in the future does not count: the price is the
       regular one and `on_sale: false`. A sale whose `sale_ends_at` has passed does not
       count either.
-- [ ] Filters:
-  - [ ] `?brand=<slug>&brand=<slug2>` returns perfumes of either brand.
-  - [ ] `?family=<slug>` and `?gender=men` filter by family and gender.
-  - [ ] `?min_price_cents=300000` excludes a perfume whose from price is 250000.
-- [ ] Search:
-  - [ ] `?q=lanc` finds a perfume of brand "Lancôme".
-  - [ ] `?q=VAIN` finds one with the note "Vainilla".
-  - [ ] `?q=100%` matches nothing literally, and does not match everything.
-- [ ] Sorting:
-  - [ ] `?sort=price_asc` and `price_desc` order by the from price.
-  - [ ] `?sort=newest` orders by first publication, newest first.
-  - [ ] The default order is brand, then name.
-- [ ] Pagination: the default page size is 24. `?size=49` → 422 `VALIDATION_ERROR`.
-- [ ] Detail: `GET /api/v1/perfumes/<slug>` returns the perfume with only active
+- [x] Filters:
+  - [x] `?brand=<slug>&brand=<slug2>` returns perfumes of either brand.
+  - [x] `?family=<slug>` and `?gender=men` filter by family and gender.
+  - [x] `?min_price_cents=300000` excludes a perfume whose from price is 250000.
+- [x] Search:
+  - [x] `?q=lanc` finds a perfume of brand "Lancôme".
+  - [x] `?q=VAIN` finds one with the note "Vainilla".
+  - [x] `?q=100%` matches nothing literally, and does not match everything.
+- [x] Sorting:
+  - [x] `?sort=price_asc` and `price_desc` order by the from price.
+  - [x] `?sort=newest` orders by first publication, newest first.
+  - [x] The default order is brand, then name.
+- [x] Pagination: the default page size is 24. `?size=49` → 422 `VALIDATION_ERROR`.
+- [x] Detail: `GET /api/v1/perfumes/<slug>` returns the perfume with only active
       presentations, ordered by ml. A presentation on sale has `price_cents` = the sale
       price, `regular_price_cents` and `sale_ends_at`. One without a sale has both null.
-- [ ] Old slugs: after renaming the perfume in the admin, `GET /perfumes/<old slug>` → 200
+- [x] Old slugs: after renaming the perfume in the admin, `GET /perfumes/<old slug>` → 200
       with the **new** `slug`. A hidden perfume, or an unknown slug → 404
       `CATALOG_PERFUME_NOT_FOUND`.
-- [ ] Migration 0008 applies on the development database, and `unaccent` is installed.
+- [x] Migration 0008 applies on the development database, and `unaccent` is installed.
       `openapi.json` is regenerated and the drift check passes.
 
 ## Test layers required
@@ -543,3 +543,86 @@ closed. The earlier Info notes and the filed out-of-scope finding are unchanged.
 **Status:** `verify`.
 
 ## Verification
+
+Verified on 2026-10-10 by the main session, inline, on `feat/catalog-public` at 0fbd546. This
+includes repair round 1.
+
+**Suites, each run once:**
+- `uv run just check`: ruff "All checks passed!", mypy "no issues found in 207 source
+  files", unit `1120 passed, 3 skipped`, harness `684 passed`.
+- `uv run just test-integration`: `236 passed, 2 skipped`.
+- `uv run just db-migrate` on the development database: clean, at 0008.
+- The tester ran the migration round trip 0008 → 0007 → 0008 on the test database.
+
+**Running app.** `uv run just api` on port 8100. I started it and stopped it. The data was
+created through the admin routes of plan 003 as `verifier@example.test`:
+- **Brands:** "Verif Lancôme", "Verif Dior", and "Verif Oculta" (archived later).
+- **Family:** "Verif Fam" (archived later). Seeded Floral, EDP and EDT were also used.
+- **Perfumes:**
+
+  | Perfume | Setup | Expected |
+  | ------- | ----- | -------- |
+  | A, Idole (EDP, women, base note Vainilla) | 50 ml at 250000; 100 ml at 390000 with an active sale at 350000 ending 2027-01-31 −06:00 | visible |
+  | B, Sauvage (Verif Fam, men) | sale starting 2027-01-01 | visible |
+  | C, Fahrenheit (Floral, men, note Cuero) | sale ended 2026-01-01; made to order, 7–10 days | visible |
+  | D, Hidden | its brand "Verif Oculta" is archived | hidden |
+  | E | published, then archived | hidden |
+  | F | never published | hidden |
+
+- A, C and B were published in that order, one second apart.
+
+**Visibility and price.** `GET /perfumes` → `total: 3`: Fahrenheit, Sauvage, Idole.
+- B stays visible although its family "Verif Fam" is archived.
+- D, E and F are hidden.
+- Idole: `price_from_cents 250000`, `on_sale true`.
+- Sauvage, whose sale starts in the future: `300000`, `on_sale false`.
+- Fahrenheit, whose sale has ended: `280000`, `on_sale false`.
+
+**Filters:**
+- `brand=verif-dior&brand=verif-lancome` → all 3. `brand=verif-lancome` → Idole.
+- `family=floral` → Fahrenheit and Idole.
+- `gender=men` → Fahrenheit and Sauvage. `gender=women&gender=unisex` → Idole.
+- `min_price_cents=260000` → Fahrenheit (280000) and Sauvage (300000).
+- `max_price_cents=280000` → Fahrenheit and Idole.
+
+**Search:**
+- `q=lanc` → Idole (brand "Lancôme"). `q=VAIN` → Idole (note). `q=cuero` → Fahrenheit.
+- `q=100%`, `q=％` and `q=_` → `total: 0`. A blank `q` → all 3.
+
+**Sorting:**
+- `price_asc` → Idole 250000, Fahrenheit 280000, Sauvage 300000. `price_desc` is the
+  reverse.
+- `newest` → Sauvage, Fahrenheit, Idole.
+- The default is brand then name.
+
+**Pagination and validation:**
+- The default `size` is 24. `size=2&page=2` → `total 3`, one item.
+- `size=49` → 422 `VALIDATION_ERROR`. `gender=kids` → 422.
+
+**Detail.** `GET /perfumes/verif-lancome-idole-edp` returns the brand, concentration and
+family refs and the notes.
+- 50 ml: `price_cents 250000`, `regular_price_cents null`.
+- 100 ml: `price_cents 350000`, `regular_price_cents 390000`, `sale_ends_at
+  2027-02-01T05:59:59Z`.
+- Fahrenheit's presentation: `made_to_order`, 7–10 days, `regular_price_cents null`.
+- After archiving Idole's 50 ml, the detail shows only `[100]`, and the list's
+  `price_from_cents` becomes 350000.
+
+**Old slugs.** After the admin renamed Idole to "Idole Intense":
+- `GET /perfumes/verif-lancome-idole-edp` → 200 with `slug
+  "verif-lancome-idole-intense-edp"`.
+- After hiding it, both the old and the new slug → 404.
+- D (archived brand), F (unpublished), E (archived) and an unknown slug → 404
+  `CATALOG_PERFUME_NOT_FOUND`.
+- The server log has no 500 and no traceback.
+
+**Cleanup.** I counted first, then deleted exactly what I created, in FK order: 1 slug
+history row, 7 presentations, 6 perfumes, 3 brands and 1 family. I stopped the API.
+
+**NOT VERIFIED:**
+- The migration downgrade on the development database. It was covered on the test database.
+- `unaccent` permissions in production. Locally the role is a superuser; on the VPS the
+  database owner should be able to create it, because `unaccent` is a trusted extension. This
+  is a rollout check.
+
+Every acceptance criterion passes. The plan is ready for the user to set `done`.
