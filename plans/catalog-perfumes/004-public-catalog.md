@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: catalog
 min_implementer: mid
 depends_on: ["003"]
@@ -507,5 +507,39 @@ route accepts an unbounded `page`, and `(page-1)*size` overflows the `bigint` OF
 
 **Status:** stays `review`, because the Low finding needs a code change. If the user accepts the
 full-width wildcard behavior instead, the main session can move the plan to `verify`.
+
+### Re-review (repair round 1), 2026-10-10
+
+Reviewer, scope limited to the Low finding. Diff: `04e1f25` (fix) and `3cd073b` (test) on
+`feat/catalog-public`; worktree clean.
+
+**Checklist: 5/5 pass.**
+
+- [x] `plans-scope`: every change is inside the plan (20 changed, base `main`).
+- [x] `uv run just check` green: 1120 unit passed, 3 skipped; 684 harness passed.
+- [x] `uv run just test-integration`: 236 passed, 2 skipped (+1, the new regression test).
+- [x] The fix closes the finding. `_like_pattern` (`sql_perfume_queries.py:100-109`) now folds
+      first, `unaccent(lower(q))`, then escapes in SQL with `replace` for `\`, `%`, `_` in that
+      order (backslash first, so the escapes it adds are not re-escaped), wrapped in `'%' … '%'`.
+      The call site (`:181`) compares `unaccent(lower(haystack))` against it with
+      `ESCAPE '\'`. Only `%`, `_` and the escape char are special in `LIKE`, so after folding no
+      character can become live. Values travel as bind parameters.
+- [x] The regression test proves it. In
+      `test_sql_public_perfumes.py::test_search_treats_full_width_wildcards_literally`,
+      `q="％"` must return only "Percent"; under the old code it returned both perfumes
+      (whole catalog), and `％oud` / `p＿ain` would have matched "Plain Perfume". So the test
+      fails on the old code and passes on the new.
+
+**Normal search not broken.** The unchanged integration tests for accents, case, substrings,
+notes of every level, filters combined with search, ASCII `% _ \` literals and SQL-looking
+text all pass. I also probed the exact fold-then-escape expression on `fragancia_test`
+(literals only, no table writes): `LANCÔME` matches `plain lancome`; `％` matches
+`100% oud` and `a\% b` but not `plain lancome`; `＼％` and ASCII `\%` match only `a\% b`;
+`p＿ain` matches nothing.
+
+**Findings:** none (0 Critical, 0 High, 0 Medium, 0 Low). The Low finding of 2026-10-09 is
+closed. The earlier Info notes and the filed out-of-scope finding are unchanged.
+
+**Status:** `verify`.
 
 ## Verification
