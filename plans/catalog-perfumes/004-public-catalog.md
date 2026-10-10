@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: mid
 depends_on: ["003"]
@@ -387,6 +387,23 @@ Runs (the two allowed):
 Not covered, on purpose: the HTTP layer against the real SQL adapter (the http tests use the
 in-memory adapter; SQL behavior is covered at the integration layer), and the web's 301 (out of
 scope).
+
+### Repair round 1 (2026-10-10)
+
+Regression for the full-width wildcards (Deviations, "Repair round 1"). Product code was not
+touched. No GAP, no NOT CONFIRMED. The integration file now has 68 tests (+1).
+
+| Behavior | Source | Layer | Test (file::name) | State |
+| -------- | ------ | ----- | ----------------- | ----- |
+| Full-width `％` `＿` `＼` in `q` are literal after `unaccent` folding: `?q=％` does not list everything and finds only "100% Oud"; `100％` finds it; `50％` and `％oud` match nothing; `＿` and `p＿ain` match nothing (no underscore in the data); `＼` matches nothing (no backslash in the data) | `sql_perfume_queries.py` `_like_pattern` (fold, then escape) | integration | `test_sql_public_perfumes.py::test_search_treats_full_width_wildcards_literally` | CONFIRMED |
+
+Existing tests are untouched, including `::test_search_treats_percent_and_underscore_and_backslash_literally`.
+
+Closing run, repair round 1: `uv run just check` green (it reached its last step; harness 684
+passed). No unit test changed, so the unit count of the repair round (1120 passed, 3 skipped)
+still holds; I did not re-read the unit line because I only kept the tail of the output.
+`uv run just test-integration`: 236 passed, 2 skipped (+1). Before it I ran only the search
+tests of the touched file.
 
 ## Review findings
 

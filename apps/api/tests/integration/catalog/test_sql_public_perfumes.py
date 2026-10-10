@@ -650,6 +650,22 @@ async def test_search_treats_percent_and_underscore_and_backslash_literally(
     assert (await _list(shop, q="%oud")).items == []
 
 
+async def test_search_treats_full_width_wildcards_literally(
+    container: Container, shop: Shop
+) -> None:
+    # `unaccent` folds the full-width ％ ＿ ＼ to % _ \; they must be escaped after folding.
+    await _perfume(container, shop, "Plain Perfume", top=["Oud"])
+    await _perfume(container, shop, "Percent", top=["100% Oud"])
+
+    assert _names(await _list(shop, q="％")) == ["Percent"]  # not "everything"
+    assert _names(await _list(shop, q="100％")) == ["Percent"]
+    assert (await _list(shop, q="50％")).items == []
+    assert (await _list(shop, q="％oud")).items == []  # as a wildcard it would match both
+    assert (await _list(shop, q="＿")).items == []  # no underscore anywhere in this catalog
+    assert (await _list(shop, q="p＿ain")).items == []  # as a wildcard it would match "Plain"
+    assert (await _list(shop, q="＼")).items == []  # no backslash anywhere in this catalog
+
+
 async def test_search_with_sql_looking_text_is_inert(container: Container, shop: Shop) -> None:
     await _perfume(container, shop, "Plain Perfume")
 
