@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: catalog
 min_implementer: small
 depends_on: ["004"]
@@ -95,5 +95,41 @@ Baseline `uv run just check`: 684 passed. All tests are http layer, in the exist
 plan. Closing `uv run just check`: green (see the tester report).
 
 ## Review findings
+
+Reviewed 2026-10-10, diff `git diff 87678b6..HEAD` (plan 004 commits excluded).
+
+**Checklist: 15/15 applicable items pass** (N/A counted as pass; nothing failed).
+
+- plans-scope (`--base 87678b6`): pass, "Every change is inside the plan" (6 declared, 11
+  changed; the tests fall under the declared `apps/api/tests/unit/catalog/`). No hot files touched.
+- `uv run just check`: pass (exit 0; ruff, mypy 207 files, import-linter 7 kept, plans OK,
+  1135 api tests passed / 3 skipped, 684 hook tests passed, harness-check up to date,
+  `tests/unit/test_openapi.py` drift test green).
+- test-integration: N/A (no `infrastructure/`, tables or migrations changed).
+- Business rules / CQRS-lite / Result errors / Money-Clock-ids / migrations / wiring: N/A or
+  unchanged; the change is HTTP-boundary validation only.
+- Contracts: `MAX_PAGE` lives next to `MAX_PAGE_SIZE` in `shared/contracts/__init__.py:7`;
+  `openapi.json` regenerated (five `maximum: 10000` additions only, matching the five routes).
+- Routes: still declared via `admin_router()` / `public_router()`; no new routes.
+- No secrets or personal data.
+- Deviations "None": spot-checked, accurate (all five parameters at `router.py:117,173,247`
+  and `perfume_router.py:69,234` carry `le=MAX_PAGE`; `grep "page: Annotated"` finds no others).
+- Docs: README decision 45 present; no doc describes the page parameter bound, nothing stale.
+  Finding `catalog-unbounded-page-offset-overflow.md` resolved with `plan:` and Resolution.
+- PR body: N/A, no PR exists yet for this branch.
+
+**Bug hunt:** no findings requiring changes. `(MAX_PAGE - 1) × MAX_PAGE_SIZE` = 999,900 rows,
+far inside int64; FastAPI parses `10**18` as an int and the `le` check rejects it with the
+standard 422 `VALIDATION_ERROR` before the use case is resolved (the public test asserts the
+stub query never ran). Public route keeps its own `size le=48`. No authorization change.
+
+**Low (no change required):** the four admin tests named
+`test_a_page_past_the_bound_is_a_422_before_any_query` (`test_brand_http.py:151`,
+`test_catalog_maintenance_http.py:431`, `test_concentration_http.py:383`,
+`test_perfume_http.py:864`) assert only the 422, not that the query did not run; the name
+overclaims slightly. The behavior is guaranteed by FastAPI validation and is asserted
+explicitly on the public route, so this is cosmetic.
+
+All passed.
 
 ## Verification
