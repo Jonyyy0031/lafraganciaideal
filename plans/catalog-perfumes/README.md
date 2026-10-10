@@ -21,8 +21,9 @@ and orders come in later initiatives.
 | 002  | Editable concentrations | 001 | `Concentration` list with a name and an abbreviation (create, update, archive, restore; public and admin lists), seeded with the five classic concentrations |
 | 003  | Perfumes and presentations in the back office | 001, 002 | `Perfume` aggregate with its presentations (price, sale window, availability); admin create, edit, publish/hide, archive/restore, add/edit/archive presentations; admin list and detail |
 | 004  | The public catalog | 003 | Storefront list with filters (brand, gender, family, text, effective price range), sorting, "from" price, and detail by slug |
-| 005  | Perfume photos on S3 | 003 | Up to 3 photos per perfume in RustFS/S3: upload, order, remove; public URLs in the catalog responses |
-| 006  | Excel import | 003, 005 | Downloadable `.xlsx` template; validate the whole file into a per-row report; all-or-nothing confirm that upserts perfumes and presentations and downloads image URLs to S3 |
+| 005  | Bound the page number of every list | 004 | Shared `MAX_PAGE` with `le=` on the five paginated list routes, so a huge `page` is a 422 instead of an OFFSET overflow (finding `catalog-unbounded-page-offset-overflow`) |
+| 006  | Perfume photos on S3 | 003 | Up to 3 photos per perfume in RustFS/S3: upload, order, remove; public URLs in the catalog responses |
+| 007  | Excel import | 003, 006 | Downloadable `.xlsx` template; validate the whole file into a per-row report; all-or-nothing confirm that upserts perfumes and presentations and downloads image URLs to S3 |
 
 ## Dependency notes
 
@@ -31,7 +32,8 @@ writes. 006 creates perfumes, presentations and photos, so it needs the write si
 the photo storage of 005.
 
 Plans 002–005 were renumbered on 2026-10-09 (decision 21), and plans 003–006 again on the
-same day (decision 35). Both times, none of their files existed yet.
+same day (decision 35). Photos and the import moved once more, to 006 and 007, on 2026-10-10
+(decision 45). Each time, none of their files existed yet.
 
 ## Decisions with the user
 
@@ -152,6 +154,10 @@ same day (decision 35). Both times, none of their files existed yet.
 44. (2026-10-09) The user approved plan 004 as proposed, with two consequences:
     - **No concentration filter**, since decision 12 doesn't list one.
     - **No search or price indexes** until a measurement calls for them.
+45. (2026-10-10) The finding `catalog-unbounded-page-offset-overflow` is fixed by a **mini-plan
+    005** on the plan-004 branch, not through the fast lane: bounding `page` changes the
+    OpenAPI contract and touches more than three files. Photos move to 006 and the import to
+    007.
 
 ## Delivered
 
