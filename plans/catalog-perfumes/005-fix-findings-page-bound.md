@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: catalog
 min_implementer: small
 depends_on: ["004"]
@@ -57,11 +57,11 @@ Paginated lists in other modules (none exist yet besides catalog), cursor pagina
 
 ## Acceptance criteria
 
-- [ ] `GET /api/v1/perfumes?page=1000000000000000000` → 422 `VALIDATION_ERROR` (was a 500).
-- [ ] `GET /api/v1/perfumes?page=10000` → 200 with empty `items` and the real `total`.
-- [ ] The four admin lists (`/admin/brands`, `/admin/olfactory-families`,
+- [x] `GET /api/v1/perfumes?page=1000000000000000000` → 422 `VALIDATION_ERROR` (was a 500).
+- [x] `GET /api/v1/perfumes?page=10000` → 200 with empty `items` and the real `total`.
+- [x] The four admin lists (`/admin/brands`, `/admin/olfactory-families`,
       `/admin/concentrations`, `/admin/perfumes`) answer 422 for `page=10001`.
-- [ ] `openapi.json` regenerated; the drift check passes.
+- [x] `openapi.json` regenerated; the drift check passes.
 
 ## Test layers required
 
@@ -133,3 +133,32 @@ explicitly on the public route, so this is cosmetic.
 All passed.
 
 ## Verification
+
+Verified on 2026-10-10 by the main session, inline, on `feat/catalog-public` at 798f8fe.
+
+**Suite.** `uv run just check` (run once):
+- ruff: "All checks passed!".
+- mypy: "no issues found in 207 source files".
+- Unit tests: `1135 passed, 3 skipped`.
+- Harness tests: `684 passed`.
+
+No infrastructure changed, so the integration tests were not run.
+
+**Running app** (`uv run just api` on port 8100, started and stopped by me):
+
+| Request | Session | Result |
+| ------- | ------- | ------ |
+| `GET /perfumes?page=1000000000000000000` | none | 422 `VALIDATION_ERROR` (was the OFFSET overflow 500) |
+| `GET /perfumes?page=10000` | none | 200 `{"items":[],"total":0,"page":10000,"size":24}` |
+| `GET /perfumes?page=10001` | none | 422 |
+| `GET /admin/brands?page=10001` | `verifier@example.test` | 422 |
+| `GET /admin/olfactory-families?page=10001` | `verifier@example.test` | 422 |
+| `GET /admin/concentrations?page=10001` | `verifier@example.test` | 422 |
+| `GET /admin/perfumes?page=10001` | `verifier@example.test` | 422 |
+| `GET /admin/concentrations?page=10000` | `verifier@example.test` | 200 with empty `items` and the real `total: 5` |
+
+The server log has no 500 and no traceback. No rows were created.
+
+**NOT VERIFIED:** nothing in this plan's scope.
+
+Every acceptance criterion passes. The plan is ready for the user to set `done`.
