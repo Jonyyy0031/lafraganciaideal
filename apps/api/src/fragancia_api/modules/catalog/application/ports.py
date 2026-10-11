@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
@@ -10,18 +10,21 @@ from fragancia_api.modules.catalog.contracts import (
     AdminOlfactoryFamilyPage,
     AdminPerfume,
     AdminPerfumePage,
+    CatalogImportResponse,
     PublicBrand,
     PublicConcentration,
     PublicOlfactoryFamily,
     PublicPerfume,
     PublicPerfumePage,
 )
+from fragancia_api.modules.catalog.domain.catalog_import import CatalogImport, ImportIssue
 from fragancia_api.modules.catalog.domain.errors import (
     PhotoFormatInvalid,
     PhotoTooLarge,
     PhotoTooSmall,
 )
-from fragancia_api.shared.kernel import Result
+from fragancia_api.modules.catalog.domain.import_cells import Cell
+from fragancia_api.shared.kernel import DomainError, Result
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,3 +135,108 @@ class PerfumeQueries(Protocol):
         """A visible perfume with its active presentations (by ml), matched by its current slug
         first and then by its slug history; the answer always carries the current slug."""
         ...
+
+
+# Catalog import (plan 007).
+
+
+@dataclass(frozen=True, slots=True)
+class SheetRows:
+    """The data rows of an import sheet: (Excel row number, cells by `header_key`), the header
+    keys found and the keys that appear more than once."""
+
+    rows: list[tuple[int, dict[str, Cell]]]
+    headers: list[str]
+    duplicated: list[str]
+
+
+class SpreadsheetReader(Protocol):
+    async def read(self, data: bytes, *, max_rows: int) -> Result[SheetRows, ImportIssue]:
+        """The rows of the first sheet, or a file-level issue: unreadable, empty or more than
+        `max_rows` data rows."""
+        ...
+
+
+class TemplateWriter(Protocol):
+    async def build(self, families: list[str], concentrations: list[str]) -> bytes:
+        """The .xlsx template, with dropdowns of these family and concentration names."""
+        ...
+
+
+class ImageDownloader(Protocol):
+    async def fetch(self, url: str) -> Result[bytes, DomainError]:
+        """The body of a public image URL, or `CATALOG_IMPORT_IMAGE_URL_INVALID`,
+        `CATALOG_IMPORT_IMAGE_HOST_BLOCKED`, `CATALOG_IMPORT_IMAGE_UNREACHABLE` or
+        `CATALOG_PHOTO_TOO_LARGE`."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceItem:
+    """A brand, family or concentration as the import matches it; `alt_slug` is the
+    abbreviation slug of a concentration."""
+
+    id: UUID
+    slug: str
+    alt_slug: str | None
+    name: str
+    is_active: bool
+
+
+type PerfumeIdentity = tuple[UUID, str, UUID]  # (brand_id, name_slug, concentration_id)
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingPerfume:
+    """A stored perfume: `presentations` maps ml → (id, is_active) and `photos` maps
+    position → (id, source_url)."""
+
+    id: UUID
+    is_archived: bool
+    family_id: UUID
+    presentations: dict[int, tuple[UUID, bool]]
+    photos: dict[int, tuple[UUID, str | None]]
+
+
+class ImportReferences(Protocol):
+    """Read-only lookups for validating an import."""
+
+    async def brands(self) -> list[ReferenceItem]: ...
+
+    async def families(self) -> list[ReferenceItem]: ...
+
+    async def concentrations(self) -> list[ReferenceItem]: ...
+
+    async def existing_perfumes(
+        self, identities: Collection[PerfumeIdentity]
+    ) -> dict[PerfumeIdentity, ExistingPerfume]:
+        """The stored perfumes with these identities (archived ones included)."""
+        ...
+
+
+class CatalogImportRepository(Protocol):
+    """Write side. Joins the active transaction."""
+
+    async def add(self, catalog_import: CatalogImport) -> None: ...
+
+    async def get_for_update(self, import_id: UUID) -> CatalogImport | None:
+        """The import, with its row locked until the transaction ends."""
+        ...
+
+    async def claim_next_pending(self) -> CatalogImport | None:
+        """The oldest pending import by `created_at`, locked with `FOR UPDATE SKIP LOCKED`."""
+        ...
+
+    async def list_stale_validating(self, before: datetime) -> list[CatalogImport]:
+        """Imports validating since before `before`, locked with `SKIP LOCKED`."""
+        ...
+
+    async def list_expired_ready(self, now: datetime) -> list[CatalogImport]:
+        """Ready imports with `expires_at <= now`, locked with `SKIP LOCKED`."""
+        ...
+
+    async def save(self, catalog_import: CatalogImport) -> None: ...
+
+
+class CatalogImportQueries(Protocol):
+    async def get(self, import_id: UUID) -> CatalogImportResponse | None: ...

@@ -149,6 +149,15 @@ POST /api/v1/admin/brands
   `paid` → `orders.order.paid` → `inventory` commits stock, `notifications` emails the customer.
 - `arq` on Valkey runs heavy or deferred work (emails, expiring unpaid orders, carrier sync).
   Email never goes out inside an HTTP request.
+- Modules declare periodic jobs as `ScheduledJob`s (`AppModule.jobs` in `shared/module.py`);
+  the worker runs each one as an arq cron named `cron:<job name>`, with the service registry.
+- The catalog import is a **database-backed job**: the upload stores the `.xlsx` file as a
+  `pending` row of `catalog.imports`, and the `catalog_validate_imports` cron (every 5
+  seconds) claims the oldest one with `FOR UPDATE SKIP LOCKED`, like the outbox relay. It
+  validates outside any transaction (downloading and staging the image URLs in S3) and writes
+  the report back in one short transaction. `catalog_expire_imports` (every minute) fails
+  validations interrupted for 30 minutes and expires unconfirmed ready imports, deleting their
+  staged objects.
 
 ## Errors
 

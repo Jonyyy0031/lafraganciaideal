@@ -1,6 +1,6 @@
 """What a business module hands to the composition root."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from fastapi import APIRouter
@@ -29,10 +29,27 @@ class Platform:
 
 
 @dataclass(frozen=True)
+class ScheduledJob:
+    """A periodic job the worker runs as an arq cron named `cron:<name>`. `run` gets the
+    service registry and returns how many items it processed. `every_seconds` divides 60, or
+    is 60 (once a minute, at second 0)."""
+
+    name: str
+    run: Callable[[ServiceRegistry], Awaitable[int]]
+    every_seconds: int
+    timeout_seconds: int
+
+    def __post_init__(self) -> None:
+        if not 0 < self.every_seconds <= 60 or 60 % self.every_seconds != 0:
+            raise ValueError(f"Job {self.name}: every_seconds must divide 60")
+
+
+@dataclass(frozen=True)
 class AppModule:
     """`register` builds the module's adapters and use cases into the registry (and may
-    subscribe to events); `routers` are mounted under /api/v1."""
+    subscribe to events); `routers` are mounted under /api/v1; `jobs` run in the worker."""
 
     name: str
     register: Callable[[Platform, ServiceRegistry], None]
     routers: Sequence[APIRouter] = field(default_factory=tuple)
+    jobs: Sequence[ScheduledJob] = field(default_factory=tuple)

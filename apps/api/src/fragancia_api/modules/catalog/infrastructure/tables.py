@@ -3,13 +3,15 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
+    LargeBinary,
     String,
     Table,
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.types import Uuid
 
 from fragancia_api.shared.infrastructure.tables import metadata
@@ -119,6 +121,8 @@ perfume_photos = Table(
     Column("width", Integer, nullable=False),
     Column("height", Integer, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    # The URL an import downloaded the photo from (decision 58); NULL for panel uploads.
+    Column("source_url", String(2000), nullable=True),
     UniqueConstraint(
         "perfume_id",
         "position",
@@ -136,5 +140,27 @@ perfume_slug_history = Table(
     Column("slug", String(240), primary_key=True),
     Column("perfume_id", Uuid, ForeignKey(perfumes.c.id), nullable=False, index=True),
     Column("retired_at", DateTime(timezone=True), nullable=False),
+    schema=SCHEMA,
+)
+
+# Excel imports: each row is also its own job (the worker claims pending ones). `summary`,
+# `errors` and `plan` are explicit JSON mappings of the domain objects.
+imports = Table(
+    "imports",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("status", String(12), nullable=False),
+    Column("file", LargeBinary, nullable=True),
+    Column("created_by", String(64), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=True),
+    Column("finished_at", DateTime(timezone=True), nullable=True),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+    Column("row_count", Integer, nullable=True),
+    Column("error_count", Integer, nullable=True),
+    Column("summary", JSONB, nullable=True),
+    Column("errors", JSONB, nullable=True),
+    Column("plan", JSONB, nullable=True),
+    Index("ix_catalog_imports_status_created_at", "status", "created_at"),
     schema=SCHEMA,
 )

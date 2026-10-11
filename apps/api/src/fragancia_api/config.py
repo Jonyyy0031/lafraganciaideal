@@ -77,6 +77,12 @@ class Settings(DatabaseSettings):
     s3_region: str = "us-east-1"
     media_public_base_url: str = "http://127.0.0.1:9100/fragancia-media"
     photo_max_bytes: int = Field(default=10_485_760, ge=1)
+    # Catalog import from an .xlsx file (validated by the worker).
+    catalog_import_max_bytes: int = Field(default=5_242_880, ge=1)
+    catalog_import_max_rows: int = Field(default=2000, ge=1)
+    catalog_import_ttl_minutes: int = Field(default=60, ge=1)
+    # Only tests and local QA allow image URLs on private or loopback hosts.
+    catalog_import_image_allow_private_hosts: bool = False
 
     @model_validator(mode="after")
     def _check_admin_web_url(self) -> Self:

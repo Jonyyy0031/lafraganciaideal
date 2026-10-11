@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: catalog
 min_implementer: high
 depends_on: ["003", "006"]
@@ -670,6 +670,71 @@ deletes them.
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+All cosmetic or implementation detail; none changes scope or design.
+
+1. **Stale `file:line` citations.** Several line numbers do not match the files. The cited
+   symbols exist and were used: `ImageProcessor`/`MediaStorage` are at `application/ports.py:37-52`
+   (not 249-274); `list_active` at `ports.py:88` and `100` (not 310/322); `PhotoUploadLimit` and
+   `_delete_quietly` at `commands/photos.py:25-37` (not 381-393); `AppModule` at
+   `shared/module.py:31-38`.
+2. **Header issues carry their columns in `column`.** `ImportIssue` (and the contract) has no
+   `details`. A `HEADER_MISSING` / `HEADER_DUPLICATED` issue therefore lists the header texts
+   in `column`, joined by `", "` (e.g. `"Precio, ML"`). The error dataclass still gets
+   `details={"columns": [...]}`. `TOO_MANY_ROWS` puts `max_rows` in the error details only.
+3. **`sale_window` and `notes` return plain values, not `Result`.** Neither can fail. They
+   return `(starts_at, ends_at)` and `list[str]`.
+4. **The validator cleans up its own uploads when staging raises.** If an exception escapes
+   the image stage, the caller never receives the keys. So `ImportValidator` deletes them quietly
+   and then re-raises. `ValidateNextCatalogImport` still deletes every key it received. The
+   "delete quietly" helper therefore exists twice: the plan's copy in
+   `commands/catalog_imports.py`, and a private one in `import_validation.py`, which cannot
+   import the command module without a cycle.
+5. **Defensive paths in `ValidateNextCatalogImport`.** If the import disappears between the
+   claim and the save, the save raises and the import is treated as failed. `_fail` marks it
+   `failed` only when it is still `pending` or `validating`. A stale validation that the expiry
+   job already failed is left as it is, so `fail` never raises `ValueError`.
+6. **Downloader tries every resolved address.** All resolved addresses are checked. The fetch
+   then connects to each in resolver order until one accepts the connection
+   (`httpx.ConnectError`). Before this change `localhost` resolved to `::1` first and was
+   unreachable against a service bound to IPv4. The downloader also uses `trust_env=False`, so
+   no proxy from the environment bypasses the IP check.
+7. **Small additions.**
+   - `ScheduledJob.__post_init__` rejects an `every_seconds` that does not divide 60.
+   - `OpenpyxlSheetReader` calls `reset_dimensions()`, so a wrong size in the sheet does not
+     hide rows.
+   - The template skips the dropdown of an empty list (no active families or concentrations),
+     since an empty range is not a valid formula.
+   - openpyxl has no type stubs, so its imports carry `# type: ignore[import-untyped]`, like
+     boto3.
+8. **Report details the plan leaves open.**
+   - Archived-reference checks run only on rows with a resolved identity.
+   - `PERFUME_ARCHIVED` uses column `Nombre`.
+   - An invalid sale uses `Precio oferta`, and an invalid availability or lead time uses
+     `Disponibilidad`.
+   - `photos_new` counts replacements as well as appends.
+   - `fail()` stores its single issue with `error_count = 1`.
+   - `finish_ready` sets `error_count = 0`.
+
+Implementation evidence (2026-10-11):
+
+- `uv run just check`: green.
+- `uv run just test-integration`: 329 passed, 2 skipped.
+- Migration 0010 applied with `db-migrate` and `db-migrate --test`. On the test DB,
+  `alembic -x test=true check` is clean, and so is a `downgrade 0009` / `upgrade head` round
+  trip.
+- `uv run just openapi` regenerated the contract.
+- `uv run just plans-scope` is clean.
+- The running worker listed `cron:relay_outbox`, `cron:catalog_validate_imports` and
+  `cron:catalog_expire_imports` and stayed quiet while idle.
+- Without a session, the three routes returned 401.
+- A scratch script (not committed) exercised these:
+  - a template round trip through the reader;
+  - row issues, grouping and mismatches;
+  - a Cancún sale window of `2026-11-01T00:00-05:00` → `2026-12-01T00:00-05:00`;
+  - a skipped photo with the same URL;
+  - downloader refusals for loopback, link-local, userinfo and non-http URLs;
+  - a 404 and a too-large body against local services.
 
 ## Test coverage
 

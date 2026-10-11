@@ -8,7 +8,8 @@ Commands run from the repository root with `uv run just <recipe>`.
 ```bash
 uv run just bootstrap        # once: services, apps/api/.env, migrations on both databases
 uv run just api              # http://127.0.0.1:8100/api/v1/docs (Scalar, auto-reload)
-uv run just worker           # background jobs: relays the outbox every 2 seconds, sends account emails
+uv run just worker           # background jobs: relays the outbox every 2 seconds, sends account emails,
+                             # validates and expires catalog imports
 ```
 
 Admin endpoints (`/api/v1/admin/*`) need a session cookie. Create an owner once with
@@ -26,7 +27,7 @@ src/fragancia_api/
 ├── container.py       Composition root: the only place that knows concrete adapters; MODULES
 ├── main/
 │   ├── http.py        FastAPI factory (create_app) and build_app (used by tests)
-│   └── worker.py      arq WorkerSettings (outbox relay cron)
+│   └── worker.py      arq WorkerSettings (outbox relay cron + module jobs: catalog imports)
 ├── shared/
 │   ├── kernel/        Pure: Result, DomainError categories, AggregateRoot, DomainEvent, Money, ids
 │   ├── application/   Ports: TransactionRunner, EventPublisher, EventSubscriptions, ActorResolver,

@@ -3716,6 +3716,201 @@
           }
         }
       }
+    },
+    "/api/v1/admin/catalog-imports/template": {
+      "get": {
+        "tags": [
+          "catalog · import"
+        ],
+        "summary": "Download Catalog Import Template",
+        "description": "The .xlsx import template: one row per presentation, with dropdowns of the active\nolfactory families and concentrations, gender, availability and published.",
+        "operationId": "download_catalog_import_template",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/catalog-imports": {
+      "post": {
+        "tags": [
+          "catalog · import"
+        ],
+        "summary": "Start Catalog Import",
+        "description": "Upload a filled template to validate: the raw .xlsx bytes are the request body, with\n`Content-Type` `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`. The\nbody is read only after the admin checks pass, and is cut off at the size limit. The\nworker validates it; poll `GET /admin/catalog-imports/{id}` for the report. 422\n`CATALOG_IMPORT_TOO_LARGE` or `CATALOG_IMPORT_FORMAT_INVALID`.",
+        "operationId": "start_catalog_import",
+        "requestBody": {
+          "content": {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/catalog-imports/{import_id}": {
+      "get": {
+        "tags": [
+          "catalog · import"
+        ],
+        "summary": "Get Catalog Import",
+        "description": "An import with its status and, once validated, its report: `ready` with the summary\nof what confirming does, or `invalid` with one issue per problem (Excel row, header text,\ncode). 404 `CATALOG_IMPORT_NOT_FOUND`.",
+        "operationId": "get_catalog_import",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "import_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Import Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogImportResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4526,6 +4721,180 @@
           "created_at"
         ],
         "title": "AdminUser"
+      },
+      "CatalogImportIssue": {
+        "properties": {
+          "row": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row"
+          },
+          "column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "row",
+          "column",
+          "code",
+          "message"
+        ],
+        "title": "CatalogImportIssue",
+        "description": "One problem of an import file: `row` is the Excel row number (the header is row 1) and\n`column` the header text; both are null for a file-level issue. The panel translates\n`code`; `message` is an English fallback."
+      },
+      "CatalogImportResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "validating",
+              "ready",
+              "invalid",
+              "failed",
+              "expired",
+              "applied"
+            ],
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "row_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Count"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogImportSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_count": {
+            "type": "integer",
+            "title": "Error Count"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogImportIssue"
+            },
+            "type": "array",
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "created_at",
+          "finished_at",
+          "expires_at",
+          "row_count",
+          "summary",
+          "error_count",
+          "errors"
+        ],
+        "title": "CatalogImportResponse",
+        "description": "An uploaded import and its validation report. `error_count` is 0 while there are no\nissues and can exceed `len(errors)` when the list is capped."
+      },
+      "CatalogImportSummary": {
+        "properties": {
+          "perfumes_new": {
+            "type": "integer",
+            "title": "Perfumes New"
+          },
+          "perfumes_updated": {
+            "type": "integer",
+            "title": "Perfumes Updated"
+          },
+          "presentations_new": {
+            "type": "integer",
+            "title": "Presentations New"
+          },
+          "presentations_updated": {
+            "type": "integer",
+            "title": "Presentations Updated"
+          },
+          "photos_new": {
+            "type": "integer",
+            "title": "Photos New"
+          }
+        },
+        "type": "object",
+        "required": [
+          "perfumes_new",
+          "perfumes_updated",
+          "presentations_new",
+          "presentations_updated",
+          "photos_new"
+        ],
+        "title": "CatalogImportSummary",
+        "description": "What confirming a ready import would do."
       },
       "ChangePasswordRequest": {
         "properties": {
