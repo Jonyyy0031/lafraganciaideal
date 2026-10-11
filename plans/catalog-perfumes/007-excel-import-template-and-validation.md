@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: high
 depends_on: ["003", "006"]
@@ -737,6 +737,47 @@ Implementation evidence (2026-10-11):
   - a 404 and a too-large body against local services.
 
 ## Test coverage
+
+Baseline (before the tests): `uv run just check` green (1253 passed, 3 skipped unit;
+684 harness); `uv run just test-integration` 329 passed, 2 skipped. No GAP was found: every
+behavior the plan promises that the tests exercise is implemented.
+
+Paths are under `apps/api/tests/`. Shared builders: `unit/catalog/import_support.py`,
+`integration/catalog/import_fixtures.py`.
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| 21 headers in order, 8 required, header matched by slug | `import_cells.py:22-73` | domain | `unit/catalog/test_import_cells_domain.py` (headers) | CONFIRMED |
+| `text`, `whole_number`, `pesos_to_cents` (2 vs 3 decimals, negatives, NaN, bool) | `import_cells.py:80-133` | domain | `test_import_cells_domain.py` | CONFIRMED |
+| `sale_day` (00:00 vs a time, strings) and `sale_window` Cancún, day after "hasta" | `import_cells.py:136-167` | domain | `test_import_cells_domain.py` | CONFIRMED |
+| Words by slug (gender, availability, published), notes split, image URL limits | `import_cells.py:170-211` | domain | `test_import_cells_domain.py` | CONFIRMED |
+| `CatalogImport` transitions, forbidden ones raise, file dropped, 1,000-issue cap, `expire` keys | `catalog_import.py:132-230` | domain | `unit/catalog/test_catalog_import_domain.py` | CONFIRMED |
+| `ImportPlan.staged_keys` | `catalog_import.py:122` | domain | `test_catalog_import_domain.py` | CONFIRMED |
+| Headers missing / duplicated stop the validation | `import_validation.py:236-262` | application | `unit/catalog/test_import_validation.py` | CONFIRMED |
+| Every issue of a row is collected; sorted by row and column order; each cell code | `import_validation.py:281-395` | application | `test_import_validation.py` | CONFIRMED |
+| Sale price rules and Cancún window in the plan; availability and lead times | `import_validation.py:347-393` | application | `test_import_validation.py` | CONFIRMED |
+| Archived rules of decision 23 for new and existing perfumes; archived perfume and presentation | `import_validation.py:433-456` | application | `test_import_validation.py` | CONFIRMED |
+| Grouping, mismatch per column, duplicate ml, one stored-perfume lookup, summary counts | `import_validation.py:405-433`, `541-601` | application | `test_import_validation.py` | CONFIRMED |
+| Photo placement: same URL skips, replace, append, URL cache, 4 concurrent downloads, no downloads for groups with issues | `import_validation.py:458-538` | application | `test_import_validation.py` | CONFIRMED |
+| Image errors on the first row and `Imagen N`; staged keys returned; cleanup when staging raises (deviation 4) | `import_validation.py:498-505` | application | `test_import_validation.py` | CONFIRMED |
+| `StartCatalogImport`: ZIP signature, pending import | `commands/catalog_imports.py:61-83` | application | `unit/catalog/test_catalog_import_commands.py` | CONFIRMED |
+| `ValidateNextCatalogImport`: nothing pending, file-level issue, invalid (keys deleted), ready, exception (failed, logged, no raise), outside any transaction, deviation 5 | `commands/catalog_imports.py:86-185` | application | `test_catalog_import_commands.py` | CONFIRMED |
+| `ExpireCatalogImports`: stale validating, expired ready, delete after commit, boundaries | `commands/catalog_imports.py:188-230` | application | `test_catalog_import_commands.py` | CONFIRMED |
+| `GetCatalogImport`, `DownloadCatalogTemplate` | `queries/catalog_imports.py` | application | `test_catalog_import_commands.py` | CONFIRMED |
+| Three routes: 202 and 200 shapes, template headers, 404, 401, 403 | `http/import_router.py:44-107` | http | `unit/catalog/test_catalog_import_http.py` | CONFIRMED |
+| Media type, not-a-ZIP, empty body, size at/over limit declared and chunked, no chunk read before auth | `http/import_router.py:79-96` | http | `test_catalog_import_http.py` | CONFIRMED |
+| OpenAPI raw body and tag | `http/import_router.py:36-41` | http | `test_catalog_import_http.py` | CONFIRMED |
+| Settings defaults and bounds; `ScheduledJob` divisors; catalog jobs; container registrations | `config.py:80-85`, `shared/module.py`, `module.py` | application | `unit/catalog/test_catalog_import_wiring.py` | CONFIRMED |
+| Migration 0010 schema (table, columns, index, `source_url`) | `tables.py:113-166` | integration | `integration/catalog/test_sql_catalog_imports.py` | CONFIRMED |
+| Migration downgrade/upgrade round trip | `0010_catalog_imports.py` | integration | not a pytest test (it would downgrade a shared database); run by CI (`ci.yml`) and recorded in the implementation evidence | NOT CONFIRMED by a test here |
+| SQL repository JSON round trip of plan and issues, 5 MB file, claiming with SKIP LOCKED (two concurrent claims differ, third none), stale and expired selects | `sql_catalog_import_repository.py` | integration | `test_sql_catalog_imports.py` | CONFIRMED |
+| SQL references incl. `source_url`, archived rows, identity tuple lookup | `sql_import_references.py` | integration | `test_sql_catalog_imports.py` | CONFIRMED |
+| Reader: headers, rows, empty rows skipped, row limit, non-xlsx, formulas read as cached values; template round trip and dropdowns | `xlsx_sheets.py` | integration | `integration/catalog/test_xlsx_sheets.py` | CONFIRMED |
+| Downloader: 200, 404, redirect, redirect loop, too large (declared and streamed), SSRF guard, invalid URLs | `http_image_downloader.py` | integration | `integration/catalog/test_http_image_downloader.py` | CONFIRMED |
+| Downloader: a redirect to a private host (needs a public first hop) | `http_image_downloader.py:55-63` | integration | `test_http_image_downloader.py` (skipped) | NOT CONFIRMED |
+| Downloader: timeout (20 s read, 30 s total) | `http_image_downloader.py:47-52` | integration | `test_http_image_downloader.py` (skipped) | NOT CONFIRMED |
+| Full job on PostgreSQL and RustFS: ready, staged WebP in the bucket, expiry deletes them, invalid leaves none, private hosts blocked, unreadable file, missing header | `commands/catalog_imports.py`, `module.py` | integration | `integration/catalog/test_catalog_import_job.py` | CONFIRMED |
+| Mailpit in the CI integration job | `.github/workflows/ci.yml` | tooling | not testable locally | NOT CONFIRMED |
 
 ## Review findings
 
