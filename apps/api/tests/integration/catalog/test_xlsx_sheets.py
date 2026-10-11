@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
+from openpyxl.styles import Font  # type: ignore[import-untyped]
 
 from fragancia_api.modules.catalog.domain.import_cells import COLUMNS, header_key
 from fragancia_api.modules.catalog.infrastructure import xlsx_sheets
@@ -468,8 +469,11 @@ async def test_a_big_but_in_limit_workbook_is_still_read() -> None:
 # --- the reader: blank rows count toward the scan limit (repair round 1, M2) --------------------
 
 
-async def test_blank_rows_up_to_twice_the_limit_are_scanned_and_skipped() -> None:
-    # max_rows=5: 10 physical rows after the header are allowed, blank or not.
+async def test_blank_rows_up_to_the_scan_limit_are_scanned_and_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # scan limit 10: exactly 10 physical rows after the header are allowed, blank or not.
+    monkeypatch.setattr(xlsx_sheets, "XLSX_MAX_SCANNED_ROWS", 10)
     data = _workbook([[1], [2], [3]] + [[None]] * 5 + [[4]] + [[None]], header=["ML"])
 
     sheet = unwrap_ok(await _read(data, max_rows=5))
@@ -495,3 +499,23 @@ async def test_a_sheet_of_whitespace_rows_stops_at_the_scan_limit(
     data = _workbook([["   "]] * 40, header=["ML"])
 
     assert _code(await _read(data, max_rows=5)) == "CATALOG_IMPORT_TOO_MANY_ROWS"
+
+
+async def test_formatted_empty_cells_down_to_row_5000_do_not_hide_the_three_data_rows() -> None:
+    # Repair round 2: styled but empty cells make the sheet declare thousands of rows.
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["Marca"])
+    for brand in ("a", "b", "c"):
+        sheet.append([brand])
+    for row in range(5, 5001):
+        sheet.cell(row=row, column=1).font = Font(bold=True)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    data = buffer.getvalue()
+    with zipfile.ZipFile(BytesIO(data)) as archive:
+        assert 'r="A5000"' in archive.read("xl/worksheets/sheet1.xml").decode()
+
+    result = unwrap_ok(await _read(data))
+
+    assert result.rows == [(2, {"marca": "a"}), (3, {"marca": "b"}), (4, {"marca": "c"})]

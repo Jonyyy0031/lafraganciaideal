@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: high
 depends_on: ["003", "006"]
@@ -978,6 +978,22 @@ still holds for storage failures only; a processor or downloader exception is no
 | L4: zero budget → no download, every image `IMAGE_UNREACHABLE`; a URL whose turn is after the deadline makes no call while earlier ones stay staged (clock replaced in the module) | `import_validation.py` `_stage_photos` | application | `test_import_validation.py::test_with_no_time_left_*`, `test_a_download_whose_turn_comes_after_the_deadline_makes_no_call` | CONFIRMED |
 | L5: `::ffff:127.0.0.1`, `::ffff:10.0.0.5`, `::/96`, `64:ff9b::/96`, `64:ff9b:1::/48` blocked through the URL; `_is_blocked` table incl. mapped public, `2606:4700::1111` and `8.8.8.8` allowed | `http_image_downloader.py` `_is_blocked` | integration | `test_ipv6_forms_that_reach_ipv4_hosts_are_blocked_by_default`, `test_is_blocked_judges_mapped_addresses_*` | CONFIRMED |
 | L6: `Accept-Encoding: identity` sent; `Content-Encoding: gzip` → `IMAGE_UNREACHABLE` with the encoding; `identity` accepted; undeclared gzip bytes returned raw and counted raw | `_get` | integration | `test_the_request_asks_for_an_uncompressed_body`, `test_a_compressed_response_is_refused_as_unreachable`, `test_an_identity_content_encoding_is_accepted`, `test_the_body_is_counted_and_returned_as_raw_bytes_never_decoded` | CONFIRMED |
+
+### Repair round 2 (tester, 2026-10-11)
+
+The two adapted tests were reviewed: both monkeypatch `XLSX_MAX_SCANNED_ROWS` to 10 and still
+assert the boundary (11 physical rows → `TOO_MANY_ROWS`; 40 whitespace rows stop). A third test,
+"up to twice the limit", still passed but no longer tested what its name said, so it was
+renamed `test_blank_rows_up_to_the_scan_limit_are_scanned_and_skipped` and patched to limit 10
+(exactly 10 physical rows are read). The M2 row above, "2 × `max_rows`", is superseded by the
+rows below. No GAP. Closing: `uv run just check` green; `uv run just test-integration`
+463 passed, 4 skipped (+1).
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| Scan limit is `XLSX_MAX_SCANNED_ROWS`: exactly the limit is read; one blank row past it and a sheet of whitespace rows → `TOO_MANY_ROWS` | `xlsx_sheets.py` `_rows` | integration | `test_xlsx_sheets.py::test_blank_rows_up_to_the_scan_limit_*`, `test_one_blank_row_past_the_scan_limit_*`, `test_a_sheet_of_whitespace_rows_*` | CONFIRMED |
+| Regression: 3 data rows plus styled empty cells down to row 5000 → Ok with exactly the 3 rows (the test asserts the file really declares `A5000`) | `xlsx_sheets.py` `_rows` | integration | `test_formatted_empty_cells_down_to_row_5000_do_not_hide_the_three_data_rows` | CONFIRMED |
+| The real 1,048,576-row limit itself | `xlsx_sheets.py` | integration | not tested (a million-row file is too heavy; the constant is patched to 10) | NOT CONFIRMED |
 
 ## Review findings
 
