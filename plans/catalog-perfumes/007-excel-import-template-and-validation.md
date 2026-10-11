@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: catalog
 min_implementer: high
 depends_on: ["003", "006"]
@@ -1269,6 +1269,44 @@ fix) and commit afa2560 (the tests). The worktree was clean.
 
 **Outcome:** every finding from the first review is closed and the checklist passes. Status
 is set to `verify`.
+
+### Re-review after repair round 2 (reviewer, 2026-10-11)
+
+This re-review covers only `git diff 6bc95fd..HEAD`: commit ab86f4c (the fix) and commit
+d3d59d2 (the tests). The worktree was clean.
+
+**Checklist: 14/15 passed, 1 not applicable.**
+
+- `plans-scope`: "Every change is inside the plan".
+- `uv run just check` passed: 1704 unit tests passed with 3 skipped, 684 harness tests,
+  plans-lint OK.
+- `uv run just test-integration` passed: 463 passed, 4 skipped.
+- Nothing else in the checklist is touched: there is no contract, migration, route or
+  settings change.
+- PR body: not applicable, because no PR has been opened yet.
+
+**The note from round 1 is closed.**
+
+- The scan limit is now `XLSX_MAX_SCANNED_ROWS = 1_048_576` (Excel's sheet maximum), at
+  `infrastructure/xlsx_sheets.py:122-125`.
+- Formatted empty rows no longer cause `TOO_MANY_ROWS`. The new test,
+  `test_formatted_empty_cells_down_to_row_5000_do_not_hide_the_three_data_rows`, builds
+  styled cells down to `A5000` and gets the three data rows back.
+- The limit on non-empty rows (`max_rows`) is unchanged.
+
+**The cost stays bounded.** A scratch probe built a 4.8 KB file with one cell at row
+1,048,576. openpyxl fills the gap with about 1,048,574 empty rows. The reader scanned them all
+in about 1.1 s, and returned `Ok` with the two real data rows. A row number above Excel's
+maximum stops at the scan limit, and the ZIP limits from round 1 still cap the XML size. So
+the decision 71 trade-off holds: at most about a second of thread time, instead of a false
+rejection.
+
+**Cosmetic:** ruff's wrapping leaves the comment at `xlsx_sheets.py:124` hanging after
+`):`. It has no effect.
+
+**Findings:** none.
+
+**Outcome:** all checks pass. Status is set to `verify`.
 
 ## Verification
 
