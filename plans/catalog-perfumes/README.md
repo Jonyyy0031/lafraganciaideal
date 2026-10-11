@@ -159,6 +159,26 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
     OpenAPI contract and touches more than three files. Photos move to 006 and the import to
     007.
 46. (2026-10-10) The user approved plan 005 (`MAX_PAGE = 10_000`).
+47. (2026-10-11) Photos are **uploaded through the API** (multipart). The API checks that the
+    file is a real image, processes it and stores it in S3. Presigned direct uploads are
+    discarded.
+48. (2026-10-11) Each upload is **converted to WebP in two sizes**: 400 px for the card and
+    1200 px for the detail page. Metadata (EXIF, GPS) is stripped.
+49. (2026-10-11) The storefront loads photos **straight from a public-read bucket**. The API
+    builds each URL from `MEDIA_PUBLIC_BASE_URL`, which can point to a CDN in production
+    without code changes.
+50. (2026-10-11) Upload limits:
+    - Formats: JPEG, PNG or WebP.
+    - Size: at most 10 MB.
+    - Shorter side: at least 600 px.
+51. (2026-10-11) **Removing a photo deletes it**, both its record and its files. A photo is not
+    business history the way a perfume or an order is.
+52. (2026-10-11) Photos have **positions 1–3**, and **position 1 is the main photo** shown on
+    the storefront card. The back office can reorder them.
+53. (2026-10-11) The user approved plan 006, including three choices made in the plan:
+    - Images are processed **in the request**, in a thread, not in the worker.
+    - Renditions are WebP at **quality 82** with a one-year immutable cache.
+    - **Orphan objects** left by a failed delete after the commit are only logged.
 
 ## Delivered
 
