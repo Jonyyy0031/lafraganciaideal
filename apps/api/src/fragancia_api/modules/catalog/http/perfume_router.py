@@ -3,7 +3,8 @@
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import Depends, Path, Query
+from fastapi import Depends, Form, Path, Query, UploadFile
+from pydantic import BaseModel
 
 from fragancia_api.modules.catalog.application.commands.perfumes import (
     ArchivePerfume,
@@ -12,6 +13,12 @@ from fragancia_api.modules.catalog.application.commands.perfumes import (
     PublishPerfume,
     RestorePerfume,
     UpdatePerfume,
+)
+from fragancia_api.modules.catalog.application.commands.photos import (
+    AddPhoto,
+    PhotoUploadLimit,
+    RemovePhoto,
+    ReorderPhotos,
 )
 from fragancia_api.modules.catalog.application.commands.presentations import (
     AddPresentation,
@@ -34,7 +41,9 @@ from fragancia_api.modules.catalog.contracts import (
     PresentationRequest,
     PublicPerfume,
     PublicPerfumePage,
+    ReorderPhotosRequest,
 )
+from fragancia_api.modules.catalog.domain.errors import PhotoTooLarge
 from fragancia_api.modules.catalog.http.router import CATALOG_MANAGE
 from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE, MAX_PAGE_SIZE
 from fragancia_api.shared.http import (
@@ -45,6 +54,7 @@ from fragancia_api.shared.http import (
     require_permission,
     unwrap,
 )
+from fragancia_api.shared.kernel import Err
 
 admin_perfumes = admin_router(
     prefix="/perfumes",
@@ -216,6 +226,51 @@ async def restore_presentation(
     """Sell an archived presentation again (idempotent). 404 `CATALOG_PERFUME_NOT_FOUND` or
     `CATALOG_PRESENTATION_NOT_FOUND`; 422 `CATALOG_PERFUME_ARCHIVED`."""
     unwrap(await use_case.execute(perfume_id, presentation_id))
+
+
+class AddPhotoForm(BaseModel):
+    """The multipart body of a photo upload (a named model keeps the OpenAPI schema readable)."""
+
+    file: UploadFile
+
+
+@admin_perfumes.post("/{perfume_id}/photos", status_code=201, responses=_404_409_422)
+async def add_photo(
+    perfume_id: UUID,
+    form: Annotated[AddPhotoForm, Form()],
+    use_case: Annotated[AddPhoto, Depends(provide(AddPhoto))],
+    limit: Annotated[PhotoUploadLimit, Depends(provide(PhotoUploadLimit))],
+) -> CreatedResponse:
+    """Upload a photo (multipart field `file`: JPEG, PNG or WebP) as the perfume's next one. 404
+    `CATALOG_PERFUME_NOT_FOUND`; 409 `CATALOG_PHOTO_LIMIT_REACHED` with 3 photos already; 422
+    `CATALOG_PHOTO_TOO_LARGE`, `CATALOG_PHOTO_FORMAT_INVALID`, `CATALOG_PHOTO_TOO_SMALL` or
+    `CATALOG_PERFUME_ARCHIVED`."""
+    data = await form.file.read(limit.max_bytes + 1)
+    if len(data) > limit.max_bytes:
+        unwrap(Err(PhotoTooLarge(details={"max_bytes": limit.max_bytes})))
+    return CreatedResponse(id=unwrap(await use_case.execute(perfume_id, data)))
+
+
+@admin_perfumes.put("/{perfume_id}/photos/order", status_code=204, responses=_404_422)
+async def reorder_photos(
+    perfume_id: UUID,
+    body: ReorderPhotosRequest,
+    use_case: Annotated[ReorderPhotos, Depends(provide(ReorderPhotos))],
+) -> None:
+    """Set the order of the photos: the full list of the perfume's photo ids. 404
+    `CATALOG_PERFUME_NOT_FOUND`; 422 `CATALOG_PHOTO_ORDER_INVALID` or `CATALOG_PERFUME_ARCHIVED`."""
+    unwrap(await use_case.execute(perfume_id, body.photo_ids))
+
+
+@admin_perfumes.delete("/{perfume_id}/photos/{photo_id}", status_code=204, responses=_404_422)
+async def remove_photo(
+    perfume_id: UUID,
+    photo_id: UUID,
+    use_case: Annotated[RemovePhoto, Depends(provide(RemovePhoto))],
+) -> None:
+    """Remove a photo and delete its files; the rest are renumbered. 404
+    `CATALOG_PERFUME_NOT_FOUND` or `CATALOG_PHOTO_NOT_FOUND`; 422 `CATALOG_PERFUME_ARCHIVED`."""
+    unwrap(await use_case.execute(perfume_id, photo_id))
 
 
 public_perfumes = public_router(prefix="/perfumes", tags=["catalog"])

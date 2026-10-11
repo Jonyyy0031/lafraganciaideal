@@ -230,6 +230,7 @@ async def test_create_returns_201_and_the_detail_shows_the_slug_and_hidden_state
         "created_at",
         "updated_at",
         "presentations",
+        "photos",
     }
 
 

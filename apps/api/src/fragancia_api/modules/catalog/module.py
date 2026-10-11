@@ -27,6 +27,12 @@ from fragancia_api.modules.catalog.application.commands.perfumes import (
     RestorePerfume,
     UpdatePerfume,
 )
+from fragancia_api.modules.catalog.application.commands.photos import (
+    AddPhoto,
+    PhotoUploadLimit,
+    RemovePhoto,
+    ReorderPhotos,
+)
 from fragancia_api.modules.catalog.application.commands.presentations import (
     AddPresentation,
     ArchivePresentation,
@@ -60,6 +66,10 @@ from fragancia_api.modules.catalog.application.queries.perfumes import (
 )
 from fragancia_api.modules.catalog.http.perfume_router import perfume_routers
 from fragancia_api.modules.catalog.http.router import routers
+from fragancia_api.modules.catalog.infrastructure.pillow_image_processor import (
+    PillowImageProcessor,
+)
+from fragancia_api.modules.catalog.infrastructure.s3_media_storage import S3MediaStorage
 from fragancia_api.modules.catalog.infrastructure.sql_brand_queries import SqlBrandQueries
 from fragancia_api.modules.catalog.infrastructure.sql_brand_repository import SqlBrandRepository
 from fragancia_api.modules.catalog.infrastructure.sql_concentration_queries import (
@@ -147,7 +157,18 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     services.add(ListAdminConcentrations, ListAdminConcentrations(concentration_queries))
 
     perfumes = SqlPerfumeRepository(platform.database)
-    perfume_queries = SqlPerfumeQueries(platform.database)
+    perfume_queries = SqlPerfumeQueries(
+        platform.database, media_base_url=platform.settings.media_public_base_url
+    )
+    secret = platform.settings.s3_secret_key
+    media = S3MediaStorage(
+        endpoint_url=platform.settings.s3_endpoint_url,
+        access_key=platform.settings.s3_access_key,
+        secret_key=secret.get_secret_value() if secret is not None else None,
+        bucket=platform.settings.s3_bucket,
+        region=platform.settings.s3_region,
+    )
+    images = PillowImageProcessor()
     for perfume_command in (CreatePerfume, UpdatePerfume):
         services.add(
             perfume_command,
@@ -174,6 +195,24 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
             command,
             command(perfumes=perfumes, transactions=platform.transactions, clock=platform.clock),
         )
+    services.add(
+        AddPhoto,
+        AddPhoto(
+            perfumes=perfumes,
+            images=images,
+            storage=media,
+            transactions=platform.transactions,
+            clock=platform.clock,
+        ),
+    )
+    services.add(
+        RemovePhoto,
+        RemovePhoto(perfumes=perfumes, storage=media, transactions=platform.transactions),
+    )
+    services.add(
+        ReorderPhotos, ReorderPhotos(perfumes=perfumes, transactions=platform.transactions)
+    )
+    services.add(PhotoUploadLimit, PhotoUploadLimit(max_bytes=platform.settings.photo_max_bytes))
     services.add(ListAdminPerfumes, ListAdminPerfumes(perfume_queries))
     services.add(GetAdminPerfume, GetAdminPerfume(perfume_queries))
     services.add(ListPublicPerfumes, ListPublicPerfumes(perfume_queries, platform.clock))

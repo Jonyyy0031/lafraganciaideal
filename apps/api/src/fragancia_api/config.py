@@ -69,12 +69,29 @@ class Settings(DatabaseSettings):
     smtp_password: SecretStr | None = None
     smtp_starttls: bool = False
     mail_from: str = "La Fragancia Ideal <no-reply@lafraganciaideal.test>"
+    # Media storage (catalog photos).
+    s3_endpoint_url: str = "http://127.0.0.1:9100"
+    s3_access_key: str | None = None
+    s3_secret_key: SecretStr | None = None
+    s3_bucket: str = "fragancia-media"
+    s3_region: str = "us-east-1"
+    media_public_base_url: str = "http://127.0.0.1:9100/fragancia-media"
+    photo_max_bytes: int = Field(default=10_485_760, ge=1)
 
     @model_validator(mode="after")
     def _check_admin_web_url(self) -> Self:
         url = self.admin_web_url
         if not url.startswith(("http://", "https://")) or url.endswith("/"):
             raise ValueError("ADMIN_WEB_URL must start with http:// or https:// and not end with /")
+        return self
+
+    @model_validator(mode="after")
+    def _check_media_public_base_url(self) -> Self:
+        url = self.media_public_base_url
+        if not url.startswith(("http://", "https://")) or url.endswith("/"):
+            raise ValueError(
+                "MEDIA_PUBLIC_BASE_URL must start with http:// or https:// and not end with /"
+            )
         return self
 
     @cached_property

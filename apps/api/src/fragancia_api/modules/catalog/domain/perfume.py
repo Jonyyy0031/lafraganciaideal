@@ -50,6 +50,17 @@ persists so old URLs keep finding the perfume.
 Presentation operations: adding or updating to an ml another presentation has is a conflict.
 Archiving the last active presentation of a published perfume is a conflict (hide the perfume
 first). Archiving and restoring a presentation are idempotent. Nothing is ever deleted.
+
+Photo fields and rules (a photo is a child entity; the file rules live in the image processor):
+
+- At most 3 photos per perfume; a 4th is a conflict. A new photo takes the next position.
+- `position`: 1..n without gaps; removing a photo renumbers the rest keeping their order, and the
+  repository deletes the removed ids.
+- `card_key`, `detail_key`: object keys from `photo_keys`; `width` and `height` are those of the
+  detail rendition.
+- Reordering takes exactly the current set of photo ids (no missing, extra or duplicated one).
+- Adding, removing and reordering photos are refused on an archived perfume. Publishing does not
+  need a photo.
 """
 
 from dataclasses import dataclass
@@ -65,6 +76,9 @@ from fragancia_api.modules.catalog.domain.errors import (
     PerfumeNameInvalid,
     PerfumeNotesInvalid,
     PerfumeNothingToSell,
+    PhotoLimitReached,
+    PhotoNotFound,
+    PhotoOrderInvalid,
     PresentationAlreadyExists,
     PresentationAvailabilityInvalid,
     PresentationMlInvalid,
@@ -89,6 +103,10 @@ PRICE_MIN_CENTS = 1
 PRICE_MAX_CENTS = 10_000_000  # $100,000 MXN
 LEAD_TIME_MIN_DAYS = 1
 LEAD_TIME_MAX_DAYS = 90
+PHOTOS_MAX = 3
+PHOTO_MIN_SIDE = 600
+CARD_SIDE = 400
+DETAIL_SIDE = 1200
 
 type AvailabilityKind = Literal["in_stock", "made_to_order"]
 
@@ -276,6 +294,35 @@ class Presentation:
         return self.price.amount
 
 
+def photo_keys(perfume_id: UUID, photo_id: UUID) -> tuple[str, str]:
+    """The object keys of the card and detail renditions of a photo."""
+    prefix = f"perfumes/{perfume_id}/{photo_id}"
+    return f"{prefix}-card.webp", f"{prefix}-detail.webp"
+
+
+class Photo:
+    """A photo of a perfume; width and height are those of the detail rendition."""
+
+    def __init__(
+        self,
+        *,
+        id: UUID,
+        position: int,
+        card_key: str,
+        detail_key: str,
+        width: int,
+        height: int,
+        created_at: datetime,
+    ) -> None:
+        self.id = id
+        self.position = position
+        self.card_key = card_key
+        self.detail_key = detail_key
+        self.width = width
+        self.height = height
+        self.created_at = created_at
+
+
 class Perfume(AggregateRoot):
     def __init__(
         self,
@@ -295,6 +342,7 @@ class Perfume(AggregateRoot):
         created_at: datetime,
         updated_at: datetime,
         presentations: list[Presentation],
+        photos: list[Photo],
     ) -> None:
         super().__init__()
         self.id = id
@@ -312,7 +360,9 @@ class Perfume(AggregateRoot):
         self.created_at = created_at
         self.updated_at = updated_at
         self.presentations = presentations
+        self.photos = photos
         self.retired_slugs: list[str] = []
+        self.removed_photo_ids: list[UUID] = []
 
     @property
     def name_slug(self) -> str:
@@ -349,6 +399,7 @@ class Perfume(AggregateRoot):
             created_at=now,
             updated_at=now,
             presentations=[],
+            photos=[],
         )
 
     def update(
@@ -478,6 +529,58 @@ class Perfume(AggregateRoot):
         if presentation is None:
             return Err(PresentationNotFound())
         presentation.is_active = True
+        return Ok(None)
+
+    def add_photo(
+        self,
+        photo_id: UUID,
+        card_key: str,
+        detail_key: str,
+        width: int,
+        height: int,
+        *,
+        created_at: datetime,
+    ) -> Result[None, PerfumeArchived | PhotoLimitReached]:
+        if self.is_archived:
+            return Err(PerfumeArchived())
+        if len(self.photos) >= PHOTOS_MAX:
+            return Err(PhotoLimitReached(details={"max": PHOTOS_MAX}))
+        self.photos.append(
+            Photo(
+                id=photo_id,
+                position=len(self.photos) + 1,
+                card_key=card_key,
+                detail_key=detail_key,
+                width=width,
+                height=height,
+                created_at=created_at,
+            )
+        )
+        return Ok(None)
+
+    def remove_photo(self, photo_id: UUID) -> Result[Photo, PerfumeArchived | PhotoNotFound]:
+        if self.is_archived:
+            return Err(PerfumeArchived())
+        photo = next((p for p in self.photos if p.id == photo_id), None)
+        if photo is None:
+            return Err(PhotoNotFound())
+        self.photos.remove(photo)
+        for position, remaining in enumerate(self.photos, start=1):
+            remaining.position = position
+        self.removed_photo_ids.append(photo.id)
+        return Ok(photo)
+
+    def reorder_photos(
+        self, photo_ids: list[UUID]
+    ) -> Result[None, PerfumeArchived | PhotoOrderInvalid]:
+        if self.is_archived:
+            return Err(PerfumeArchived())
+        by_id = {photo.id: photo for photo in self.photos}
+        if len(photo_ids) != len(by_id) or set(photo_ids) != set(by_id):
+            return Err(PhotoOrderInvalid())
+        self.photos = [by_id[photo_id] for photo_id in photo_ids]
+        for position, photo in enumerate(self.photos, start=1):
+            photo.position = position
         return Ok(None)
 
     def _presentation(self, presentation_id: UUID) -> Presentation | None:

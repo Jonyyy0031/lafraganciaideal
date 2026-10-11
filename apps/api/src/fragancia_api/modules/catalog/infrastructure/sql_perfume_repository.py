@@ -2,7 +2,7 @@ from typing import Any
 from uuid import UUID
 
 from psycopg import errors as pg_errors
-from sqlalchemy import exists, insert, select, update
+from sqlalchemy import delete, exists, insert, select, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 
@@ -18,6 +18,7 @@ from fragancia_api.modules.catalog.domain.perfume import (
     Notes,
     Perfume,
     PerfumeName,
+    Photo,
     Presentation,
     Price,
     Sale,
@@ -26,6 +27,7 @@ from fragancia_api.modules.catalog.infrastructure.tables import (
     PERFUME_IDENTITY_UNIQUE,
     PERFUME_SLUG_UNIQUE,
     PRESENTATION_ML_UNIQUE,
+    perfume_photos,
     perfume_slug_history,
     perfumes,
     presentations,
@@ -109,7 +111,32 @@ def _to_presentation(row: Any) -> Presentation:
     )
 
 
-def _to_perfume(row: Any, presentation_rows: Any) -> Perfume:
+def _photo_row(perfume_id: UUID, photo: Photo) -> dict[str, Any]:
+    return {
+        "id": photo.id,
+        "perfume_id": perfume_id,
+        "position": photo.position,
+        "card_key": photo.card_key,
+        "detail_key": photo.detail_key,
+        "width": photo.width,
+        "height": photo.height,
+        "created_at": photo.created_at,
+    }
+
+
+def _to_photo(row: Any) -> Photo:
+    return Photo(
+        id=row["id"],
+        position=row["position"],
+        card_key=row["card_key"],
+        detail_key=row["detail_key"],
+        width=row["width"],
+        height=row["height"],
+        created_at=row["created_at"],
+    )
+
+
+def _to_perfume(row: Any, presentation_rows: Any, photo_rows: Any) -> Perfume:
     # Values read from the database are already valid: built directly, without `create`.
     return Perfume(
         id=row["id"],
@@ -127,6 +154,7 @@ def _to_perfume(row: Any, presentation_rows: Any) -> Perfume:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         presentations=[_to_presentation(presentation) for presentation in presentation_rows],
+        photos=[_to_photo(photo) for photo in photo_rows],
     )
 
 
@@ -193,7 +221,18 @@ class SqlPerfumeRepository:
             .mappings()
             .all()
         )
-        return _to_perfume(row, presentation_rows)
+        photo_rows = (
+            (
+                await session.execute(
+                    select(perfume_photos)
+                    .where(perfume_photos.c.perfume_id == perfume_id)
+                    .order_by(perfume_photos.c.position)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return _to_perfume(row, presentation_rows, photo_rows)
 
     async def save(
         self, perfume: Perfume
@@ -216,6 +255,20 @@ class SqlPerfumeRepository:
                             set_={column: row[column] for column in _PRESENTATION_MUTABLE},
                         )
                     )
+                if perfume.removed_photo_ids:
+                    await session.execute(
+                        delete(perfume_photos).where(
+                            perfume_photos.c.id.in_(perfume.removed_photo_ids)
+                        )
+                    )
+                for photo in perfume.photos:
+                    photo_row = _photo_row(perfume.id, photo)
+                    photo_statement = postgresql.insert(perfume_photos).values(photo_row)
+                    await session.execute(
+                        photo_statement.on_conflict_do_update(
+                            index_elements=["id"], set_={"position": photo.position}
+                        )
+                    )
                 for slug in perfume.retired_slugs:
                     history = postgresql.insert(perfume_slug_history).values(
                         slug=slug, perfume_id=perfume.id, retired_at=perfume.updated_at
@@ -229,6 +282,7 @@ class SqlPerfumeRepository:
         except IntegrityError as error:
             return Err(_conflict(error))
         perfume.retired_slugs.clear()
+        perfume.removed_photo_ids.clear()
         return Ok(None)
 
 

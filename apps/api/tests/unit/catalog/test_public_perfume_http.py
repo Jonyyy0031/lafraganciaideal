@@ -220,6 +220,7 @@ async def test_the_list_answers_cards_with_refs_and_the_from_price(
                 "family": {"name": "Aromática", "slug": "aromatica"},
                 "price_from_cents": 250_000,
                 "on_sale": False,
+                "photo_url": None,
             }
         ],
         "total": 1,
@@ -272,6 +273,7 @@ async def test_the_detail_answers_active_presentations_with_the_effective_price(
         "heart_notes",
         "base_notes",
         "presentations",
+        "photos",
     }
 
 

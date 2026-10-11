@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
@@ -15,6 +16,37 @@ from fragancia_api.modules.catalog.contracts import (
     PublicPerfume,
     PublicPerfumePage,
 )
+from fragancia_api.modules.catalog.domain.errors import PhotoFormatInvalid, PhotoTooSmall
+from fragancia_api.shared.kernel import Result
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessedImage:
+    """The two WebP renditions of a photo; width and height are those of the detail one."""
+
+    card: bytes
+    detail: bytes
+    width: int
+    height: int
+
+
+class ImageProcessor(Protocol):
+    """Validates an uploaded image and renders its card and detail renditions."""
+
+    async def process(
+        self, data: bytes
+    ) -> Result[ProcessedImage, PhotoFormatInvalid | PhotoTooSmall]: ...
+
+
+class MediaStorage(Protocol):
+    """Object storage for media files."""
+
+    async def put(self, key: str, data: bytes, content_type: str) -> None: ...
+
+    async def delete(self, keys: Sequence[str]) -> None:
+        """Delete the objects; a missing key is not an error."""
+        ...
+
 
 type PublicPerfumeSort = Literal["name", "price_asc", "price_desc", "newest"]
 

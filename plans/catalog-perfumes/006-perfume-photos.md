@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: catalog
 min_implementer: mid
 depends_on: ["003", "004"]
@@ -407,6 +407,26 @@ Checked against `uv run just api`, with RustFS up and the bucket bootstrapped.
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+All cosmetic, fixed forward:
+
+- Step 1: `uv add` only added `pillow` and `python-multipart`; `boto3` was already a dependency of
+  `apps/api`.
+- Step 4: `PhotoUploadLimit` is defined in `application/commands/photos.py` (the router and
+  `module.py` import it from there). structlog is allowed in the application layer, so the
+  delete failures are logged there and no port change was needed.
+- Step 5: `S3MediaStorage` imports `boto3`/`botocore` with `# type: ignore[import-untyped]`
+  (no stubs; mypy strict). `SqlPerfumeQueries` takes `media_base_url` keyword-only;
+  `InMemoryPerfumes` takes it as an optional keyword (default `http://media.test`).
+- Step 7: the upload route takes a named `AddPhotoForm` (pydantic model with `file: UploadFile`,
+  `Form()`), defined in `perfume_router.py`, so the OpenAPI schema is `AddPhotoForm` and not
+  `Body_add_photo` (rejected by `test_schema_names_are_readable`).
+- Existing tests touched to keep `check` green (outside the file list; additive contract fields and
+  the new constructor argument): `tests/integration/catalog/test_sql_public_perfumes.py` (passes
+  `media_base_url`), `tests/unit/catalog/test_perfume_http.py` and `test_public_perfume_http.py`
+  (exact key-set assertions gained `photos` / `photo_url`). `plans-scope` reports clean.
+- Step 8: `ensure_public_read` keeps other statements of an existing policy and only manages its
+  own `Sid`.
 
 ## Test coverage
 

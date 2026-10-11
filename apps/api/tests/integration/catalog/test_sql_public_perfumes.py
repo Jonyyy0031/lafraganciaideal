@@ -125,7 +125,14 @@ async def shop(container: Container) -> AsyncIterator[Shop]:
             ],
         )
     yield Shop(
-        lancome, versace, closed, floral, woody, edp, edt, SqlPerfumeQueries(container.database)
+        lancome,
+        versace,
+        closed,
+        floral,
+        woody,
+        edp,
+        edt,
+        SqlPerfumeQueries(container.database, media_base_url="http://media.test"),
     )
     async with container.database.engine.begin() as connection:
         await connection.execute(text("TRUNCATE catalog.perfumes CASCADE"))
