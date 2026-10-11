@@ -246,6 +246,10 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
     - L4: give image work an overall time budget.
     - L5: block the remaining IPv6 ranges.
     - L6: refuse compressed image responses.
+71. (2026-10-11) **Second repair round for plan 007.** The blank-row scan limit from repair M2
+    rejects files whose empty rows only carry formatting (finding
+    `catalog-import-formatted-blank-rows-too-many`). The user chose to fix it in 007 now: the
+    scan limit goes up to Excel's maximum of 1,048,576 rows, and the ZIP limits bound the cost.
 
 ## Delivered
 

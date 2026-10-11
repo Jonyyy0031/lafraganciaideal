@@ -1,5 +1,5 @@
 ---
-status: verify
+status: implementing
 module: catalog
 min_implementer: high
 depends_on: ["003", "006"]
@@ -873,6 +873,27 @@ image budget.
     openpyxl; 3 rows + 10 blank rows with `max_rows=5` → `TOO_MANY_ROWS`, + 6 blank rows → Ok.
 - Not exercised here: a real IDN host that resolves, a real gzip response, the budget and the
   cron lock at run time (no API or worker was started in this round).
+
+### Repair round 2 (2026-10-11, main session: verify → implementing)
+
+**Why.** Verification reproduced a false `TOO_MANY_ROWS`. The file had 3 data rows, but its
+empty cells were formatted down to row 5000. The blank-row scan limit from repair item M2
+(`max_rows * 2`) counts those formatted empty rows. The user chose to fix it now (README
+decision 71; finding `catalog-import-formatted-blank-rows-too-many`). Everything else verified
+on 2026-10-11 stays valid; only the scan limit is re-verified.
+
+**Repair spec.** Product code is `infrastructure/xlsx_sheets.py` only.
+1. Replace the `max_rows * 2` scan limit with a constant `XLSX_MAX_SCANNED_ROWS = 1_048_576`,
+   Excel's sheet maximum. Physical rows still count, blank or not, so a malformed sheet that
+   declares more rows than this stops with `TOO_MANY_ROWS`.
+2. The limit of `max_rows` non-empty data rows and the ZIP limits (`XLSX_MAX_ENTRIES`,
+   `XLSX_MAX_UNCOMPRESSED_BYTES`) stay as they are. The ZIP limits are what bound memory and
+   time.
+3. Update the module docstring (`xlsx_sheets.py:7`) to match.
+
+Then set the status to `testing`. The tester adapts the blank-row scan tests to the new
+constant and adds a regression: 3 data rows plus formatted empty cells down to row 5000 → Ok,
+with the 3 rows.
 
 ## Test coverage
 
