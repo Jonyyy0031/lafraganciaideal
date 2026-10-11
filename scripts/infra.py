@@ -4,6 +4,7 @@ Every `ensure_*` function returns True when it created something and False when 
 already there. None of them deletes or overwrites anything.
 """
 
+import json
 import re
 import shutil
 import subprocess
@@ -92,4 +93,31 @@ def ensure_bucket(s3: Any, name: str) -> bool:
         if error.response.get("Error", {}).get("Code") not in ("404", "NoSuchBucket"):
             raise
     s3.create_bucket(Bucket=name)
+    return True
+
+
+def ensure_public_read(s3: Any, bucket: str, prefix: str) -> bool:
+    """Allow anonymous `s3:GetObject` on `<prefix>*` of `bucket`. True when the policy changed.
+
+    Only that statement is managed; others in an existing policy are kept.
+    """
+    sid = f"PublicRead-{prefix.strip('/').replace('/', '-')}"
+    statement = {
+        "Sid": sid,
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": f"arn:aws:s3:::{bucket}/{prefix}*",
+    }
+    try:
+        policy = json.loads(s3.get_bucket_policy(Bucket=bucket)["Policy"])
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") not in ("404", "NoSuchBucketPolicy"):
+            raise
+        policy = {"Version": "2012-10-17", "Statement": []}
+    statements = policy.get("Statement", [])
+    if statement in statements:
+        return False
+    policy["Statement"] = [*(s for s in statements if s.get("Sid") != sid), statement]
+    s3.put_bucket_policy(Bucket=bucket, Policy=json.dumps(policy))
     return True

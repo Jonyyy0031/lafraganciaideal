@@ -10,6 +10,7 @@ from fragancia_api.modules.catalog.contracts import (
     AdminPerfume,
     AdminPerfumePage,
     AdminPerfumeSummary,
+    AdminPhoto,
     AdminPresentation,
     PerfumeBrandRef,
     PerfumeConcentrationRef,
@@ -20,6 +21,7 @@ from fragancia_api.modules.catalog.contracts import (
     PublicPerfumeConcentration,
     PublicPerfumeFamily,
     PublicPerfumePage,
+    PublicPhoto,
     PublicPresentation,
 )
 from fragancia_api.modules.catalog.domain.errors import (
@@ -48,7 +50,9 @@ class InMemoryPerfumes:
         families: InMemoryOlfactoryFamilies,
         concentrations: InMemoryConcentrations,
         *perfumes: Perfume,
+        media_base_url: str = "http://media.test",
     ) -> None:
+        self._media_base_url = media_base_url
         self._brands = brands
         self._families = families
         self._concentrations = concentrations
@@ -98,6 +102,7 @@ class InMemoryPerfumes:
             return None
         copy = deepcopy(perfume)
         copy.presentations.sort(key=lambda p: p.ml.value)
+        copy.photos.sort(key=lambda photo: photo.position)
         return copy
 
     async def save(
@@ -111,6 +116,7 @@ class InMemoryPerfumes:
         for slug in perfume.retired_slugs:
             self.slug_history[slug] = perfume.id
         perfume.retired_slugs.clear()
+        perfume.removed_photo_ids.clear()
         self.by_id[perfume.id] = deepcopy(perfume)
         return Ok(None)
 
@@ -217,6 +223,7 @@ class InMemoryPerfumes:
                 family=self._public_family(p),
                 price_from_cents=price_from,
                 on_sale=on_sale,
+                photo_url=self._photo_url(p),
             )
             for p, price_from, on_sale in chunk
         ]
@@ -249,7 +256,18 @@ class InMemoryPerfumes:
                 for p in sorted(perfume.presentations, key=lambda p: p.ml.value)
                 if p.is_active
             ],
+            photos=[
+                PublicPhoto(
+                    card_url=f"{self._media_base_url}/{photo.card_key}",
+                    detail_url=f"{self._media_base_url}/{photo.detail_key}",
+                )
+                for photo in sorted(perfume.photos, key=lambda photo: photo.position)
+            ],
         )
+
+    def _photo_url(self, perfume: Perfume) -> str | None:
+        first = next((photo for photo in perfume.photos if photo.position == 1), None)
+        return f"{self._media_base_url}/{first.card_key}" if first is not None else None
 
     def _public_brand(self, perfume: Perfume) -> PublicPerfumeBrand:
         brand = self._brands.by_id[perfume.brand_id]
@@ -292,6 +310,18 @@ class InMemoryPerfumes:
             presentations=[
                 _admin_presentation(p)
                 for p in sorted(perfume.presentations, key=lambda p: p.ml.value)
+            ],
+            photos=[
+                AdminPhoto(
+                    id=photo.id,
+                    position=photo.position,
+                    card_url=f"{self._media_base_url}/{photo.card_key}",
+                    detail_url=f"{self._media_base_url}/{photo.detail_key}",
+                    width=photo.width,
+                    height=photo.height,
+                    created_at=photo.created_at,
+                )
+                for photo in sorted(perfume.photos, key=lambda photo: photo.position)
             ],
         )
 

@@ -52,7 +52,7 @@ Modules (✔ = built; `catalog` is the **reference module** — see [recipes/new
 
 | Module          | Responsibility                                                                        |
 | --------------- | ------------------------------------------------------------------------------------- |
-| `catalog`       | ✔ Brands, olfactory families, concentrations, perfumes and presentations (back office), public catalog (filters, search, sort, detail by slug). Next: photos, Excel import |
+| `catalog`       | ✔ Brands, olfactory families, concentrations, perfumes and presentations (back office), public catalog (filters, search, sort, detail by slug), perfume photos (S3, WebP). Next: Excel import |
 | `inventory`     | Stock per size; reserve on checkout, release on cancellation, commit on payment       |
 | `orders`        | Cart → order; the `Order` aggregate and its state machine                             |
 | `payments`      | `PaymentGateway` port → Mercado Pago adapter (Checkout Pro); idempotent webhooks      |

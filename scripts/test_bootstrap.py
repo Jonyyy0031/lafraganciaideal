@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from infra import (
     ensure_database_in_container,
     ensure_env_file,
     ensure_env_keys,
+    ensure_public_read,
     missing_tools,
     read_env,
 )
@@ -44,6 +46,16 @@ class FakeS3:
     def create_bucket(self, Bucket):  # noqa: N803
         self.created.append(Bucket)
         self.existing.add(Bucket)
+
+    policy: str | None = None
+
+    def get_bucket_policy(self, Bucket):  # noqa: N803
+        if self.policy is None:
+            raise ClientError({"Error": {"Code": "NoSuchBucketPolicy"}}, "GetBucketPolicy")
+        return {"Policy": self.policy}
+
+    def put_bucket_policy(self, Bucket, Policy):  # noqa: N803
+        self.policy = Policy
 
 
 def test_ensure_env_file_copies_when_missing(tmp_path: Path):
@@ -128,6 +140,20 @@ def test_ensure_bucket_is_idempotent():
 
     assert ensure_bucket(s3, "fragancia-media") is False
     assert s3.created == []
+
+
+def test_ensure_public_read_sets_the_policy_once():
+    s3 = FakeS3(existing={"fragancia-media"})
+
+    assert ensure_public_read(s3, "fragancia-media", "perfumes/") is True
+    statement = json.loads(s3.policy)["Statement"]
+    assert len(statement) == 1
+    assert statement[0]["Principal"] == "*"
+    assert statement[0]["Action"] == "s3:GetObject"
+    assert statement[0]["Resource"] == "arn:aws:s3:::fragancia-media/perfumes/*"
+
+    assert ensure_public_read(s3, "fragancia-media", "perfumes/") is False
+    assert len(json.loads(s3.policy)["Statement"]) == 1
 
 
 def test_ensure_bucket_propagates_unexpected_errors():

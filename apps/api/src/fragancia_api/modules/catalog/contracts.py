@@ -196,6 +196,24 @@ class PerfumeFamilyRef(BaseModel):
     is_active: bool
 
 
+class AdminPhoto(BaseModel):
+    """A photo of a perfume as the back office sees it; width and height are the detail size."""
+
+    id: UUID
+    position: int
+    card_url: str
+    detail_url: str
+    width: int
+    height: int
+    created_at: datetime
+
+
+class ReorderPhotosRequest(BaseModel):
+    """The full list of the perfume's photo ids in the new order."""
+
+    photo_ids: list[UUID] = Field(max_length=3)
+
+
 class AdminPerfume(BaseModel):
     """A perfume as the back office sees it, with every presentation ordered by ml."""
 
@@ -216,6 +234,7 @@ class AdminPerfume(BaseModel):
     created_at: datetime
     updated_at: datetime
     presentations: list[AdminPresentation]
+    photos: list[AdminPhoto]
 
 
 class AdminPerfumeSummary(BaseModel):
@@ -258,6 +277,13 @@ class PublicPerfumeFamily(BaseModel):
     slug: str
 
 
+class PublicPhoto(BaseModel):
+    """A photo of a public perfume."""
+
+    card_url: str
+    detail_url: str
+
+
 class PublicPerfumeCard(BaseModel):
     """One perfume of the public list, with its lowest current price."""
 
@@ -269,6 +295,7 @@ class PublicPerfumeCard(BaseModel):
     family: PublicPerfumeFamily
     price_from_cents: int
     on_sale: bool
+    photo_url: str | None
 
 
 class PublicPerfumePage(Page[PublicPerfumeCard]):
@@ -303,3 +330,4 @@ class PublicPerfume(BaseModel):
     heart_notes: list[str]
     base_notes: list[str]
     presentations: list[PublicPresentation]
+    photos: list[PublicPhoto]

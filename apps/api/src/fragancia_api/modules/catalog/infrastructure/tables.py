@@ -107,6 +107,28 @@ presentations = Table(
 
 PRESENTATION_ML_UNIQUE = "uq_presentations_perfume_ml"
 
+# Positions are rewritten together on a reorder, hence the deferred unique constraint.
+perfume_photos = Table(
+    "perfume_photos",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("perfume_id", Uuid, ForeignKey(perfumes.c.id), nullable=False, index=True),
+    Column("position", Integer, nullable=False),
+    Column("card_key", String(200), nullable=False),
+    Column("detail_key", String(200), nullable=False),
+    Column("width", Integer, nullable=False),
+    Column("height", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "perfume_id",
+        "position",
+        name="uq_perfume_photos_position",
+        deferrable=True,
+        initially="DEFERRED",
+    ),
+    schema=SCHEMA,
+)
+
 # Slugs a perfume used to have; the latest perfume to drop a slug owns it.
 perfume_slug_history = Table(
     "perfume_slug_history",

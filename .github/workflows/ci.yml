@@ -92,10 +92,28 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      storage:
+        # Same image as infra/docker/compose.yaml (RustFS); the photo tests need real S3.
+        image: rustfs/rustfs@sha256:0b3d45bbbc9eb73433ac48e4eb8374a460061ea1e4e952e25a3ef79796733617
+        env:
+          RUSTFS_ACCESS_KEY: ci-access
+          RUSTFS_SECRET_KEY: ci-ephemeral
+        ports:
+          - 9100:9000
+        options: >-
+          --health-cmd "curl -fsS http://127.0.0.1:9000/health"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     env:
       DATABASE_URL: postgresql+psycopg://ci:ci-ephemeral@localhost:5432/fragancia_test
       DATABASE_URL_TEST: postgresql+psycopg://ci:ci-ephemeral@localhost:5432/fragancia_test
       VALKEY_URL: redis://localhost:6379/0
+      S3_ENDPOINT_URL: http://127.0.0.1:9100
+      S3_ACCESS_KEY: ci-access
+      S3_SECRET_KEY: ci-ephemeral
+      S3_BUCKET: fragancia-media
+      MEDIA_PUBLIC_BASE_URL: http://127.0.0.1:9100/fragancia-media
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,6 +122,16 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen
+      - name: Create the media bucket (same helpers as bootstrap)
+        working-directory: scripts
+        run: >-
+          uv run python -c "import os, boto3;
+          from infra import ensure_bucket, ensure_public_read;
+          s3 = boto3.client('s3', endpoint_url=os.environ['S3_ENDPOINT_URL'],
+          aws_access_key_id=os.environ['S3_ACCESS_KEY'],
+          aws_secret_access_key=os.environ['S3_SECRET_KEY'], region_name='us-east-1');
+          ensure_bucket(s3, os.environ['S3_BUCKET']);
+          ensure_public_read(s3, os.environ['S3_BUCKET'], 'perfumes/')"
       - name: Apply migrations
         working-directory: apps/api
         run: uv run alembic -x test=true upgrade head

@@ -16,6 +16,7 @@ from infra import (
     ensure_database_in_container,
     ensure_env_file,
     ensure_env_keys,
+    ensure_public_read,
     missing_tools,
     read_env,
 )
@@ -91,6 +92,10 @@ def main() -> None:
         region_name="us-east-1",
     )
     report(ensure_bucket(s3, env["S3_BUCKET"]), f"bucket {env['S3_BUCKET']}")
+    report(
+        ensure_public_read(s3, env["S3_BUCKET"], "perfumes/"),
+        f"public read on {env['S3_BUCKET']}/perfumes/",
+    )
 
     if (ROOT / ".git").exists():
         step("Git hooks (pre-commit + commit message)")

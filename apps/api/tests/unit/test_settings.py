@@ -78,3 +78,55 @@ def test_the_smtp_password_is_a_secret_that_does_not_show_in_the_repr() -> None:
     assert settings.smtp_password is not None
     assert settings.smtp_password.get_secret_value() == "s3cret-value"
     assert "s3cret-value" not in repr(settings)
+
+
+def test_media_storage_defaults_point_at_the_local_rustfs() -> None:
+    settings = make_settings()
+
+    assert settings.s3_endpoint_url == "http://127.0.0.1:9100"
+    assert (settings.s3_access_key, settings.s3_secret_key) == (None, None)
+    assert (settings.s3_bucket, settings.s3_region) == ("fragancia-media", "us-east-1")
+    assert settings.media_public_base_url == "http://127.0.0.1:9100/fragancia-media"
+    assert settings.photo_max_bytes == 10_485_760
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "127.0.0.1:9100/fragancia-media",
+        "ftp://cdn.example.test",
+        "//cdn.example.test",
+        "http://127.0.0.1:9100/fragancia-media/",
+        "https://cdn.example.test/",
+        "",
+    ],
+)
+def test_media_public_base_url_needs_a_scheme_and_no_trailing_slash(url: str) -> None:
+    with pytest.raises(ValidationError, match="MEDIA_PUBLIC_BASE_URL must start with http"):
+        make_settings(media_public_base_url=url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://x", "https://cdn.example.test", "http://127.0.0.1:9100/fragancia-media"],
+)
+def test_media_public_base_url_accepts_a_base_url(url: str) -> None:
+    assert make_settings(media_public_base_url=url).media_public_base_url == url
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_photo_max_bytes_must_be_positive(value: int) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(photo_max_bytes=value)
+
+
+def test_photo_max_bytes_accepts_one() -> None:
+    assert make_settings(photo_max_bytes=1).photo_max_bytes == 1
+
+
+def test_the_s3_secret_key_is_a_secret_that_does_not_show_in_the_repr() -> None:
+    settings = make_settings(s3_access_key="access", s3_secret_key="s3cret-key-value")
+
+    assert settings.s3_secret_key is not None
+    assert settings.s3_secret_key.get_secret_value() == "s3cret-key-value"
+    assert "s3cret-key-value" not in repr(settings)

@@ -3440,6 +3440,282 @@
           }
         }
       }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/photos": {
+      "post": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Add Photo",
+        "description": "Upload a photo as the perfume's next one: the raw image bytes are the request body, with\n`Content-Type` `image/jpeg`, `image/png` or `image/webp`. The body is read only after the\nadmin checks pass, and is cut off at the size limit. 404 `CATALOG_PERFUME_NOT_FOUND`; 409\n`CATALOG_PHOTO_LIMIT_REACHED` with 3 photos already; 422 `CATALOG_PHOTO_TOO_LARGE`,\n`CATALOG_PHOTO_FORMAT_INVALID`, `CATALOG_PHOTO_TOO_SMALL` or `CATALOG_PERFUME_ARCHIVED`.",
+        "operationId": "add_photo",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/photos/order": {
+      "put": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Reorder Photos",
+        "description": "Set the order of the photos: the full list of the perfume's photo ids. 404\n`CATALOG_PERFUME_NOT_FOUND`; 422 `CATALOG_PHOTO_ORDER_INVALID` or `CATALOG_PERFUME_ARCHIVED`.",
+        "operationId": "reorder_photos",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderPhotosRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/perfumes/{perfume_id}/photos/{photo_id}": {
+      "delete": {
+        "tags": [
+          "catalog · perfumes"
+        ],
+        "summary": "Remove Photo",
+        "description": "Remove a photo and delete its files; the rest are renumbered. 404\n`CATALOG_PERFUME_NOT_FOUND` or `CATALOG_PHOTO_NOT_FOUND`; 422 `CATALOG_PERFUME_ARCHIVED`.",
+        "operationId": "remove_photo",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "perfume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Perfume Id"
+            }
+          },
+          {
+            "name": "photo_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Photo Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3859,6 +4135,13 @@
             },
             "type": "array",
             "title": "Presentations"
+          },
+          "photos": {
+            "items": {
+              "$ref": "#/components/schemas/AdminPhoto"
+            },
+            "type": "array",
+            "title": "Photos"
           }
         },
         "type": "object",
@@ -3879,7 +4162,8 @@
           "is_archived",
           "created_at",
           "updated_at",
-          "presentations"
+          "presentations",
+          "photos"
         ],
         "title": "AdminPerfume",
         "description": "A perfume as the back office sees it, with every presentation ordered by ml."
@@ -3983,6 +4267,52 @@
         ],
         "title": "AdminPerfumeSummary",
         "description": "One row of the admin perfume list."
+      },
+      "AdminPhoto": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "card_url": {
+            "type": "string",
+            "title": "Card Url"
+          },
+          "detail_url": {
+            "type": "string",
+            "title": "Detail Url"
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "position",
+          "card_url",
+          "detail_url",
+          "width",
+          "height",
+          "created_at"
+        ],
+        "title": "AdminPhoto",
+        "description": "A photo of a perfume as the back office sees it; width and height are the detail size."
       },
       "AdminPresentation": {
         "properties": {
@@ -4803,6 +5133,13 @@
             },
             "type": "array",
             "title": "Presentations"
+          },
+          "photos": {
+            "items": {
+              "$ref": "#/components/schemas/PublicPhoto"
+            },
+            "type": "array",
+            "title": "Photos"
           }
         },
         "type": "object",
@@ -4817,7 +5154,8 @@
           "top_notes",
           "heart_notes",
           "base_notes",
-          "presentations"
+          "presentations",
+          "photos"
         ],
         "title": "PublicPerfume",
         "description": "A perfume of the public catalog; the web redirects when `slug` differs from the one\nrequested (the perfume was renamed)."
@@ -4876,6 +5214,17 @@
           "on_sale": {
             "type": "boolean",
             "title": "On Sale"
+          },
+          "photo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Photo Url"
           }
         },
         "type": "object",
@@ -4887,7 +5236,8 @@
           "concentration",
           "family",
           "price_from_cents",
-          "on_sale"
+          "on_sale",
+          "photo_url"
         ],
         "title": "PublicPerfumeCard",
         "description": "One perfume of the public list, with its lowest current price."
@@ -4965,6 +5315,25 @@
         ],
         "title": "PublicPerfumePage",
         "description": "One page of the public perfume list."
+      },
+      "PublicPhoto": {
+        "properties": {
+          "card_url": {
+            "type": "string",
+            "title": "Card Url"
+          },
+          "detail_url": {
+            "type": "string",
+            "title": "Detail Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "card_url",
+          "detail_url"
+        ],
+        "title": "PublicPhoto",
+        "description": "A photo of a public perfume."
       },
       "PublicPresentation": {
         "properties": {
@@ -5112,6 +5481,25 @@
         ],
         "title": "RenameOlfactoryFamilyRequest",
         "description": "Payload to rename an olfactory family."
+      },
+      "ReorderPhotosRequest": {
+        "properties": {
+          "photo_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "title": "Photo Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "photo_ids"
+        ],
+        "title": "ReorderPhotosRequest",
+        "description": "The full list of the perfume's photo ids in the new order."
       },
       "ResetPasswordRequest": {
         "properties": {

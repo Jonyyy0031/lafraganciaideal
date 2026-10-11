@@ -9,6 +9,7 @@ from fragancia_api.modules.catalog.contracts import (
     AdminPerfume,
     AdminPerfumePage,
     AdminPerfumeSummary,
+    AdminPhoto,
     AdminPresentation,
     PerfumeBrandRef,
     PerfumeConcentrationRef,
@@ -19,6 +20,7 @@ from fragancia_api.modules.catalog.contracts import (
     PublicPerfumeConcentration,
     PublicPerfumeFamily,
     PublicPerfumePage,
+    PublicPhoto,
     PublicPresentation,
 )
 from fragancia_api.modules.catalog.domain.perfume import (
@@ -32,6 +34,7 @@ from fragancia_api.modules.catalog.infrastructure.tables import (
     brands,
     concentrations,
     olfactory_families,
+    perfume_photos,
     perfume_slug_history,
     perfumes,
     presentations,
@@ -140,12 +143,22 @@ def _public_presentation(row: Any, now: datetime) -> PublicPresentation:
 
 
 class SqlPerfumeQueries:
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, *, media_base_url: str) -> None:
         self._database = database
+        self._media_base_url = media_base_url
+
+    def _url(self, key: str) -> str:
+        return f"{self._media_base_url}/{key}"
 
     async def list_public(
         self, filters: PublicPerfumeFilters, *, now: datetime
     ) -> PublicPerfumePage:
+        first_photo = (
+            select(perfume_photos.c.card_key)
+            .where(perfume_photos.c.perfume_id == perfumes.c.id, perfume_photos.c.position == 1)
+            .correlate(perfumes)
+            .scalar_subquery()
+        )
         prices = (
             select(
                 presentations.c.perfume_id.label("perfume_id"),
@@ -208,6 +221,7 @@ class SqlPerfumeQueries:
                 olfactory_families.c.slug.label("family_slug"),
                 price_from.label("price_from"),
                 prices.c.on_sale.label("on_sale"),
+                first_photo.label("photo_key"),
             )
             .join_from(perfumes, brands, perfumes.c.brand_id == brands.c.id)
             .join(concentrations, perfumes.c.concentration_id == concentrations.c.id)
@@ -234,6 +248,7 @@ class SqlPerfumeQueries:
                 family=PublicPerfumeFamily(name=row["family_name"], slug=row["family_slug"]),
                 price_from_cents=row["price_from"],
                 on_sale=row["on_sale"],
+                photo_url=self._url(row["photo_key"]) if row["photo_key"] is not None else None,
             )
             for row in rows
         ]
@@ -287,6 +302,17 @@ class SqlPerfumeQueries:
                 .mappings()
                 .all()
             )
+            photo_rows = (
+                (
+                    await session.execute(
+                        select(perfume_photos)
+                        .where(perfume_photos.c.perfume_id == row["id"])
+                        .order_by(perfume_photos.c.position)
+                    )
+                )
+                .mappings()
+                .all()
+            )
         return PublicPerfume(
             slug=row["slug"],
             name=row["name"],
@@ -301,6 +327,12 @@ class SqlPerfumeQueries:
             heart_notes=list(row["heart_notes"]),
             base_notes=list(row["base_notes"]),
             presentations=[_public_presentation(p, now) for p in presentation_rows],
+            photos=[
+                PublicPhoto(
+                    card_url=self._url(p["card_key"]), detail_url=self._url(p["detail_key"])
+                )
+                for p in photo_rows
+            ],
         )
 
     async def list_admin(self, *, page: int, size: int, archived: bool) -> AdminPerfumePage:
@@ -377,6 +409,17 @@ class SqlPerfumeQueries:
             if row is None:
                 return None
             presentation_rows = (await session.execute(presentation_statement)).mappings().all()
+            photo_rows = (
+                (
+                    await session.execute(
+                        select(perfume_photos)
+                        .where(perfume_photos.c.perfume_id == perfume_id)
+                        .order_by(perfume_photos.c.position)
+                    )
+                )
+                .mappings()
+                .all()
+            )
         return AdminPerfume(
             id=row["id"],
             slug=row["slug"],
@@ -397,4 +440,16 @@ class SqlPerfumeQueries:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             presentations=[AdminPresentation.model_validate(dict(p)) for p in presentation_rows],
+            photos=[
+                AdminPhoto(
+                    id=p["id"],
+                    position=p["position"],
+                    card_url=self._url(p["card_key"]),
+                    detail_url=self._url(p["detail_key"]),
+                    width=p["width"],
+                    height=p["height"],
+                    created_at=p["created_at"],
+                )
+                for p in photo_rows
+            ],
         )

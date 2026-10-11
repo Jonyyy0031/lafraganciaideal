@@ -182,3 +182,39 @@ class PerfumeNotFound(NotFoundError):
 class PresentationNotFound(NotFoundError):
     code: str = "CATALOG_PRESENTATION_NOT_FOUND"
     message: str = "Presentation not found"
+
+
+@dataclass(frozen=True)
+class PhotoTooLarge(InvalidValueError):
+    code: str = "CATALOG_PHOTO_TOO_LARGE"
+    message: str = "The photo is too large"
+
+
+@dataclass(frozen=True)
+class PhotoFormatInvalid(InvalidValueError):
+    code: str = "CATALOG_PHOTO_FORMAT_INVALID"
+    message: str = "The photo must be a JPEG, PNG or WebP image"
+
+
+@dataclass(frozen=True)
+class PhotoTooSmall(InvalidValueError):
+    code: str = "CATALOG_PHOTO_TOO_SMALL"
+    message: str = "The shorter side of the photo must be at least 600 px"
+
+
+@dataclass(frozen=True)
+class PhotoOrderInvalid(InvalidValueError):
+    code: str = "CATALOG_PHOTO_ORDER_INVALID"
+    message: str = "The order must list every photo of the perfume exactly once"
+
+
+@dataclass(frozen=True)
+class PhotoLimitReached(ConflictError):
+    code: str = "CATALOG_PHOTO_LIMIT_REACHED"
+    message: str = "A perfume has at most 3 photos"
+
+
+@dataclass(frozen=True)
+class PhotoNotFound(NotFoundError):
+    code: str = "CATALOG_PHOTO_NOT_FOUND"
+    message: str = "Photo not found"
