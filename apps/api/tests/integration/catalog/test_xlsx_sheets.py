@@ -12,6 +12,7 @@ import pytest
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 
 from fragancia_api.modules.catalog.domain.import_cells import COLUMNS, header_key
+from fragancia_api.modules.catalog.infrastructure import xlsx_sheets
 from fragancia_api.modules.catalog.infrastructure.xlsx_sheets import (
     XLSX_MAX_ENTRIES,
     XLSX_MAX_UNCOMPRESSED_BYTES,
@@ -476,7 +477,10 @@ async def test_blank_rows_up_to_twice_the_limit_are_scanned_and_skipped() -> Non
     assert [number for number, _ in sheet.rows] == [2, 3, 4, 10]
 
 
-async def test_one_blank_row_past_twice_the_limit_is_too_many_rows() -> None:
+async def test_one_blank_row_past_the_scan_limit_is_too_many_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(xlsx_sheets, "XLSX_MAX_SCANNED_ROWS", 10)
     data = _workbook([[1], [2], [3]] + [[None]] * 7 + [[4]], header=["ML"])
 
     result = await _read(data, max_rows=5)  # 11 physical rows after the header
@@ -484,7 +488,10 @@ async def test_one_blank_row_past_twice_the_limit_is_too_many_rows() -> None:
     assert _code(result) == "CATALOG_IMPORT_TOO_MANY_ROWS"
 
 
-async def test_a_sheet_of_whitespace_rows_stops_at_the_scan_limit() -> None:
+async def test_a_sheet_of_whitespace_rows_stops_at_the_scan_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(xlsx_sheets, "XLSX_MAX_SCANNED_ROWS", 10)
     data = _workbook([["   "]] * 40, header=["ML"])
 
     assert _code(await _read(data, max_rows=5)) == "CATALOG_IMPORT_TOO_MANY_ROWS"

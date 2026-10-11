@@ -4,7 +4,8 @@ worker thread through `asyncio.to_thread`).
 A 5 MB upload can deflate to gigabytes, and a thread cannot be cancelled, so the reader bounds
 the work before and while parsing: the ZIP's entry count and declared uncompressed sizes are
 checked before openpyxl opens it (zipfile never inflates an entry past its declared size), and
-every physical row scanned counts, blank or not."""
+every physical row scanned counts, blank or not, up to Excel's sheet maximum (formatted empty
+cells can make a small file declare thousands of rows)."""
 
 import asyncio
 import zipfile
@@ -32,6 +33,7 @@ log = structlog.get_logger(__name__)
 MAX_COLUMNS = 30
 XLSX_MAX_ENTRIES = 1000
 XLSX_MAX_UNCOMPRESSED_BYTES = 50_000_000  # per entry and in total
+XLSX_MAX_SCANNED_ROWS = 1_048_576  # Excel's sheet maximum; blank rows count
 TEMPLATE_ROWS = 2000  # rows 2-2001 get the dropdowns
 _DROPDOWNS: dict[str, str] = {
     # column → its list in the hidden sheet
@@ -113,12 +115,13 @@ class OpenpyxlSheetReader:
             keys_by_index[index] = key
 
         too_many = Err(_file_issue(ImportTooManyRows(details={"max_rows": max_rows})))
-        max_scanned = max_rows * 2  # blank rows count here, so a sheet of blanks stops early
         rows: list[tuple[int, dict[str, Cell]]] = []
         for number, values in enumerate(
             sheet.iter_rows(min_row=2, max_col=MAX_COLUMNS, values_only=True), start=2
         ):
-            if number - 1 > max_scanned:  # `number - 1` physical rows scanned after the header
+            if (
+                number - 1 > XLSX_MAX_SCANNED_ROWS
+            ):  # `number - 1` physical rows scanned after the header
                 return too_many
             if all(_is_blank(value) for value in values):
                 continue

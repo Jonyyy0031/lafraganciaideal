@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: catalog
 min_implementer: high
 depends_on: ["003", "006"]
@@ -894,6 +894,21 @@ on 2026-10-11 stays valid; only the scan limit is re-verified.
 Then set the status to `testing`. The tester adapts the blank-row scan tests to the new
 constant and adds a regression: 3 data rows plus formatted empty cells down to row 5000 → Ok,
 with the 3 rows.
+
+**Done (repair round 2).** In `infrastructure/xlsx_sheets.py`: added
+`XLSX_MAX_SCANNED_ROWS = 1_048_576`, replaced the `max_rows * 2` scan limit with it, removed
+the local `max_scanned`, and updated the module docstring. The `max_rows` non-empty limit and
+the ZIP limits are unchanged. `uv run just check` green (684 harness passed);
+`uv run just test-integration` 462 passed, 4 skipped.
+
+Two existing tests pinned the old limit and failed:
+`test_one_blank_row_past_twice_the_limit_is_too_many_rows` and
+`test_a_sheet_of_whitespace_rows_stops_at_the_scan_limit`
+(`tests/integration/catalog/test_xlsx_sheets.py`). Minimum change to keep the suite green: the
+first was renamed `test_one_blank_row_past_the_scan_limit_is_too_many_rows`, and both now
+monkeypatch `xlsx_sheets.XLSX_MAX_SCANNED_ROWS` to 10. For the tester: review these two and
+add the regression (3 data rows plus formatted empty cells down to row 5000 gives Ok with the
+3 rows).
 
 ## Test coverage
 
