@@ -194,6 +194,10 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
     - convert embedded colour profiles to sRGB, so iPhone Display P3 photos are not washed out;
     - restrict the formats Pillow probes;
     - set S3 timeouts and retries.
+56. (2026-10-11) Plan 006 is done.
+    - **`python-multipart` is removed**, because no route uses it any more.
+    - **A client disconnect during a photo upload stays visible in the log** (review N1), by
+      the user's choice. It is not silenced.
 
 ## Delivered
 

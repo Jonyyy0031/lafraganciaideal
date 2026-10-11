@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: catalog
 min_implementer: mid
 depends_on: ["003", "004"]
@@ -372,28 +372,28 @@ These are derived from the decisions above.
 
 Checked against `uv run just api`, with RustFS up and the bucket bootstrapped.
 
-- [ ] Uploading a 2000×1500 JPEG (`POST /api/v1/admin/perfumes/{id}/photos`, multipart
+- [x] Uploading a 2000×1500 JPEG (`POST /api/v1/admin/perfumes/{id}/photos`, multipart
       `file`) → 201 `{id}`:
       - `GET /admin/perfumes/{id}` lists the photo at position 1 with width 1200 and height
         900.
       - Both URLs return 200 `image/webp` without credentials.
       - The card rendition's longest side is 400 px.
       - Neither file has EXIF.
-- [ ] A PNG with transparency is accepted and stays transparent. A GIF, a text file renamed
+- [x] A PNG with transparency is accepted and stays transparent. A GIF, a text file renamed
       `.jpg` and a 500×800 image → 422 with `CATALOG_PHOTO_FORMAT_INVALID`,
       `CATALOG_PHOTO_FORMAT_INVALID` and `CATALOG_PHOTO_TOO_SMALL`. A file over 10 MB → 422
       `CATALOG_PHOTO_TOO_LARGE`.
-- [ ] A 4th photo → 409 `CATALOG_PHOTO_LIMIT_REACHED`, and **no new object is left in the
+- [x] A 4th photo → 409 `CATALOG_PHOTO_LIMIT_REACHED`, and **no new object is left in the
       bucket** (compensation).
-- [ ] `PUT …/photos/order` with the three ids reversed → 204, and the positions follow. A list
+- [x] `PUT …/photos/order` with the three ids reversed → 204, and the positions follow. A list
       missing an id, or with a foreign id → 422 `CATALOG_PHOTO_ORDER_INVALID`.
-- [ ] `DELETE …/photos/{id}` → 204: the remaining photos are renumbered 1..n and both objects
+- [x] `DELETE …/photos/{id}` → 204: the remaining photos are renumbered 1..n and both objects
       are gone from the bucket. An unknown photo → 404 `CATALOG_PHOTO_NOT_FOUND`.
-- [ ] While the perfume is archived, upload, delete and reorder → 422 `CATALOG_PERFUME_ARCHIVED`.
-- [ ] The storefront list shows `photo_url` = position 1's card URL, or `null` without photos.
+- [x] While the perfume is archived, upload, delete and reorder → 422 `CATALOG_PERFUME_ARCHIVED`.
+- [x] The storefront list shows `photo_url` = position 1's card URL, or `null` without photos.
       The public detail lists `photos` in order.
-- [ ] Every new route returns 401 without a session.
-- [ ] Migration 0009 applies. `openapi.json` is regenerated and the drift check passes.
+- [x] Every new route returns 401 without a session.
+- [x] Migration 0009 applies. `openapi.json` is regenerated and the drift check passes.
       `uv run just bootstrap` is idempotent with the new policy step.
 
 ## Test layers required
@@ -874,3 +874,95 @@ file was not used.
 checklist green. Status → `verify`.
 
 ## Verification
+
+Verified on 2026-10-11 by the main session, inline, on `feat/catalog-photos` at 5768139,
+including repair round 1. The upload is a raw body (README decision 54), so every upload below
+sends the bytes with a `Content-Type: image/*` header, not multipart.
+
+**Suites (run once)**
+- `uv run just check`: ruff "All checks passed!"; mypy "no issues found in 221 source files";
+  unit `1253 passed, 3 skipped`; harness `684 passed`.
+- `uv run just test-integration`: `329 passed, 2 skipped`.
+- `uv run just db-migrate` on the development database: clean, at 0009.
+- The tester ran the migration round trip on the test database.
+- `uv run just bootstrap` run twice. The second run printed "= bucket fragancia-media already
+  exists" and "= public read on fragancia-media/perfumes/ already exists", so the step is
+  idempotent.
+
+**Setup.** `uv run just api` on port 8100, started and stopped by me, with local RustFS.
+- Signed in as `verifier@example.test`.
+- Created brand "Verif Fotos" and perfume "Foto Uno" (EDT, Floral).
+- Generated the inputs with a scratchpad Pillow script:
+  - a 2000×1500 JPEG carrying an EXIF Artist tag;
+  - a 1000×800 PNG with transparency;
+  - a 500×800 JPEG, a GIF and a text file named `.jpg`;
+  - a 12 MB random blob;
+  - a 900×900 JPEG and a 900×900 WebP.
+
+**Uploads and renditions**
+- The JPEG → 201. The admin detail shows position 1, 1200×900.
+- The PNG → 201, position 2, 1000×800.
+- Each file was fetched **anonymously** from its public URL. All 200 `image/webp`, `public,
+  max-age=31536000, immutable`, no EXIF and no ICC profile:
+  - JPEG card 400×300 RGB, detail 1200×900 RGB;
+  - PNG card 400×320 RGBA, detail 1000×800 RGBA, transparency kept.
+
+**Rejections**
+- The 500×800 JPEG → 422 `CATALOG_PHOTO_TOO_SMALL`.
+- The GIF as `image/gif`, the GIF as `image/jpeg`, and the text file → 422
+  `CATALOG_PHOTO_FORMAT_INVALID`.
+- The 12 MB blob → 422 `CATALOG_PHOTO_TOO_LARGE`, both with `Content-Length` and chunked.
+- The same 12 MB blob **without a session** → 401 `AUTHENTICATION_REQUIRED` (H1).
+
+**Limit and compensation**
+- The 3rd photo (WebP) → 201.
+- A 4th → 409 `CATALOG_PHOTO_LIMIT_REACHED`.
+- Listing the bucket under `perfumes/<perfume>/` gave exactly 6 objects, two per stored photo:
+  the refused photo left nothing.
+
+**Reorder**
+- The three ids reversed → 204, and the positions followed (`1:…fa97e5, 2:…9359c8,
+  3:…df21d3`).
+- A list missing an id, or one with a foreign id → 422 `CATALOG_PHOTO_ORDER_INVALID`.
+
+**Public views**
+- After adding a presentation and publishing, the storefront list showed `photo_url` = the
+  card of the new position 1.
+- The public detail listed the 3 card URLs in position order.
+- A second published perfume without photos showed `photo_url: null` and `photos: []`.
+
+**Removal**
+- `DELETE` of position 1 → 204, and the rest were renumbered `1, 2`.
+- Both of its objects return 404 anonymously, and the bucket held 4 objects.
+- An unknown photo → 404 `CATALOG_PHOTO_NOT_FOUND`.
+
+**Archived perfume**
+- Upload, delete and reorder → 422 `CATALOG_PERFUME_ARCHIVED`.
+- The bucket still held 4 objects, so the refused upload was compensated.
+
+**Without a session**
+- `DELETE` and `PUT …/order` → 401.
+- The server log has no 500 and no traceback.
+
+**Cleanup**
+- The two remaining photos were removed through the API. The bucket prefix then held 0
+  objects.
+- I counted first, then deleted 2 presentations, 2 perfumes and 1 brand, and stopped the API.
+
+**NOT VERIFIED**
+- A real phone MPO and a real Apple Display P3 photo. The tests use Pillow-made MPO and a
+  hand-built P3 profile.
+- S3 timeouts and retries under a real outage. They are asserted as configuration only.
+- The production bucket policy or CDN. It is a rollout step.
+- The reviewer's N1: on a client disconnect mid-upload, a 500 is logged that nobody receives.
+
+Every acceptance criterion passes. The plan is ready for the user to set `done`.
+
+**Follow-up after verification** (2026-10-11, approved by the user together with `done`):
+- **N2:** `python-multipart` was removed from `apps/api/pyproject.toml` and `uv.lock` with
+  `uv remove --package fragancia-api python-multipart`, because no route uses it.
+  - `uv run just check` stayed green: `1253 passed, 3 skipped`, harness `684 passed`.
+  - Live smoke test without the package: a JPEG upload → 201, its removal → 204, and the bucket
+    prefix ended with 0 objects. The smoke rows were then deleted (1 perfume, 1 brand).
+- **N1:** kept as is, by the user's decision (README decision 56). A client disconnect during
+  an upload stays visible in the log.

@@ -13,7 +13,6 @@ dependencies = [
     "pillow>=12.3.0",
     "psycopg[binary]>=3.3.6",
     "pydantic-settings>=2.15.0",
-    "python-multipart>=0.0.32",
     "scalar-fastapi>=1.9.1",
     "sqlalchemy[asyncio]>=2.1.2",
     "structlog>=26.1.0",
