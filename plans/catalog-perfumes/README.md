@@ -179,6 +179,21 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
     - Images are processed **in the request**, in a thread, not in the worker.
     - Renditions are WebP at **quality 82** with a one-year immutable cache.
     - **Orphan objects** left by a failed delete after the commit are only logged.
+54. (2026-10-11) This amends decision 47, after review finding H1 of plan 006. The photo upload
+    sends the image as a **raw binary body** (`Content-Type: image/jpeg|png|webp`), not as
+    multipart.
+    - **Why:** with no form fields, FastAPI checks the admin session **before** reading the body.
+    - **The cap:** the route streams the body and stops at 10 MB.
+    - **What it fixes:** with multipart, an anonymous client could fill the disk before getting
+      the 401.
+55. (2026-10-11) Repair round 1 of plan 006 also fixes every Medium and Low finding:
+    - accept multi-picture JPEGs (MPO, first frame);
+    - cap the image at 40 megapixels;
+    - log per-key delete errors;
+    - correct 16-bit PNGs;
+    - convert embedded colour profiles to sRGB, so iPhone Display P3 photos are not washed out;
+    - restrict the formats Pillow probes;
+    - set S3 timeouts and retries.
 
 ## Delivered
 

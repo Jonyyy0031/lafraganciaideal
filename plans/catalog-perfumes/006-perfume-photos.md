@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: catalog
 min_implementer: mid
 depends_on: ["003", "004"]
@@ -428,6 +428,54 @@ All cosmetic, fixed forward:
 - Step 8: `ensure_public_read` keeps other statements of an existing policy and only manages its
   own `Sid`.
 
+### Repair round 1 (2026-10-11, main session: review → implementing)
+
+**Why.** The review found H1, M1–M3 and L1–L4. The user decided:
+- H1 → the upload becomes a raw binary body (README decision 54).
+- Every Medium and Low finding is fixed in this round (decision 55).
+
+The earlier test and review evidence stays valid for everything else. The tester adapts the
+upload tests and adds regressions afterwards.
+
+**Repair spec:**
+
+1. **H1, the upload route** (`http/perfume_router.py`): `POST
+   /admin/perfumes/{perfume_id}/photos` takes **no form or file parameters**, only
+   `request: Request`, so the admin dependencies run before any body is read.
+   1. Read the `Content-Type` header. Anything other than `image/jpeg`, `image/png` or
+      `image/webp` → 422 `CATALOG_PHOTO_FORMAT_INVALID`. The bytes are still sniffed by
+      Pillow afterwards.
+   2. Read the `Content-Length` header. If present and > `PhotoUploadLimit.max_bytes` → 422
+      `CATALOG_PHOTO_TOO_LARGE` immediately, before reading the body.
+   3. Accumulate `request.stream()` chunks. Stop and answer `CATALOG_PHOTO_TOO_LARGE` as soon
+      as the total passes the limit.
+   4. An empty body → `CATALOG_PHOTO_FORMAT_INVALID`.
+
+   Declare the request body in OpenAPI with `openapi_extra`: three `image/*` content types,
+   `format: binary`. Remove `AddPhotoForm`. Regenerate `openapi.json`.
+2. **M1:** accept Pillow format `MPO` as JPEG, and use its first frame.
+3. **M2:** add a `PHOTO_MAX_PIXELS = 40_000_000` constant. After `Image.open` and **before**
+   `load`/`exif_transpose`, a width × height above it → `PhotoTooLarge` with details
+   `{"max_bytes": …, "max_pixels": 40000000}`.
+4. **M3** (`s3_media_storage.py`): `delete` reads the `Errors` list of each `delete_objects`
+   response. It raises, or returns the failed keys, so that `_delete_quietly` logs them with
+   their codes. Never silent.
+5. **L1:** convert 16-bit and other high bit-depth modes (`I;16*`, `I`, `F`) to 8-bit `L`
+   correctly, by scaling and not clipping, before RGB.
+6. **L2:** when the image has an ICC profile, convert it to sRGB with `ImageCms`
+   (`profileToProfile`, perceptual intent), then drop the profile. On a profile error, fall
+   back to the plain conversion.
+7. **L3:** `Image.open(..., formats=["JPEG", "PNG", "WEBP", "MPO"])`.
+8. **L4:** the boto3 client uses
+   `botocore.config.Config(connect_timeout=5, read_timeout=30, retries={"max_attempts": 3,
+   "mode": "standard"})`.
+9. **Correct the step 1 deviation.** `boto3` was **not** already an `apps/api` dependency: this
+   diff adds it to `apps/api/pyproject.toml`.
+
+Update the plan's "Rules fixed here", or record the differences under this subsection. The
+differences are: raw body instead of multipart, MPO, the pixel cap, and sRGB conversion
+instead of only dropping the ICC profile.
+
 ## Test coverage
 
 Tester phase, 2026-10-11. Source lines are in `apps/api/src/fragancia_api/modules/catalog/`.
@@ -521,5 +569,151 @@ Both are 422. With fewer than 3 photos an extra id reaches the domain and is `OR
 (tested). Left to the reviewer to decide whether the plan text or the contract should change.
 
 ## Review findings
+
+Reviewer, 2026-10-11, `git diff main...HEAD` on `feat/catalog-photos` (worktree clean). Source
+paths below are relative to `apps/api/src/fragancia_api/modules/catalog/` unless they are full.
+
+### Pass 1 — Checklist: 13/15 passed, 1 failed, 1 not applicable
+
+- [x] `plans-scope`: "26 declared, 39 changed … Every change is inside the plan". No hot file
+      (`container.py`, `docs/modules.json`, `.importlinter`) changed.
+- [x] `uv run just check` green (ruff, mypy, arch, 1244 unit passed / 3 skipped, 684 harness,
+      plans-lint, harness-check, compose config).
+- [x] `uv run just test-integration` green (318 passed, 2 skipped, the pre-existing identity
+      round trips).
+- [x] Business rules in `domain/perfume.py` (limit, positions, renumbering, order set). File
+      rules live in the image adapter as the plan says; the router only enforces the byte limit.
+- [x] CQRS-lite: the three commands go `get_for_update` → aggregate → `save` inside
+      `TransactionRunner.run` and return `Result`; reads go through `SqlPerfumeQueries`.
+- [x] Contracts in `contracts.py`; `openapi.json` regenerated (drift check green).
+      `AddPhotoForm` lives in the router (recorded deviation; it is a transport model).
+- [x] Stable codes `CATALOG_PHOTO_*`; expected errors are `Err`.
+- [x] UTC datetime from `Clock`; ids from `new_id()`; no money involved.
+- [x] Migration 0009 new, `0008` → `0009`, no cross-schema FK, constraint
+      `DEFERRABLE INITIALLY DEFERRED`, reversible (round trip run by hand on the test DB by the
+      tester).
+- [x] Routes on `admin_perfumes` (`admin_router` + `catalog:manage`); 401/403 tested.
+- [x] Wiring in `module.py` resolves; adapters created only there.
+- [x] No secrets: `.env.example` gets only `MEDIA_PUBLIC_BASE_URL`; the secret stays a
+      `SecretStr` until `module.py` unwraps it for boto3.
+- [ ] **`## Deviations` honest — FAILED (spot-check).** "Step 1: `boto3` was already a
+      dependency of `apps/api`" is false: `git show main:apps/api/pyproject.toml` has no
+      `boto3`, and this diff adds `"boto3>=1.43.107"` to `apps/api/pyproject.toml`. Harmless
+      (adding it was the plan), but the record is wrong. Second spot-check (structlog allowed in
+      `application/`) is true: `.importlinter` `application-is-framework-free` does not forbid
+      it.
+- [x] Docs: `docs/architecture.md` catalog row updated; `apps/api/README.md` has no per-setting
+      list to update.
+- [n/a] PR body: no PR exists yet for `feat/catalog-photos`.
+
+### Pass 2 — Findings
+
+**High**
+
+- **H1. The 10 MB limit does not bound what the server receives, and the body is received
+  before authentication.** `http/perfume_router.py:248-249` reads at most `max_bytes + 1`
+  from `form.file`, but by then Starlette has already spooled the whole multipart part to a
+  temporary file (Starlette 1.7 `MultiPartParser.max_part_size` caps only non-file fields).
+  FastAPI parses the form before solving dependencies (`.venv/…/fastapi/routing.py:441-443`
+  `await request.form()` precedes `solve_dependencies` at line 499), and `require_admin` /
+  `require_permission` are dependencies. Scenario: an anonymous client streams a 20 GB
+  multipart body to `POST /api/v1/admin/perfumes/<any uuid>/photos`; the API writes 20 GB to
+  the temp directory and only then answers 401. A few in parallel fill the disk of the VPS
+  (PostgreSQL shares it locally). This route is the first multipart route and
+  `python-multipart` is new in this plan, so the vector is new. A FastAPI dependency cannot fix
+  it (it runs after the parse): it needs either a size-checking ASGI middleware / raw
+  `request.stream()` handling for this route, or an explicit decision to rely on a reverse
+  proxy `client_max_body_size` as a rollout step. **Needs a user decision** (fix in this plan
+  vs. accept with a rollout step); the general, pre-existing JSON variant is recorded as
+  finding `plans/findings/platform-unbounded-request-body.md`.
+
+**Medium**
+
+- **M1. Multi-picture JPEGs (MPO) are rejected as `CATALOG_PHOTO_FORMAT_INVALID`.**
+  `infrastructure/pillow_image_processor.py:31` accepts only `{"JPEG","PNG","WEBP"}`, but
+  Pillow 12.3 reports any JPEG carrying an MPF index with more than one image as `"MPO"`.
+  Reproduced: a two-frame JPEG built with Pillow opens as `format == "MPO"` and the processor
+  answers `CATALOG_PHOTO_FORMAT_INVALID`. Scenario: the admin uploads a JPEG straight from a
+  phone or camera that embeds a secondary image (iPhone JPEGs with an HDR gain map, many
+  Samsung/Fujifilm/Nintendo files) and gets "must be a JPEG, PNG or WebP image" for a `.jpg`
+  that is a JPEG. Plan rule: "Pillow must recognize it as JPEG". Fix direction: accept `MPO`
+  (only the first frame is used) — uncertain only in how common such files are among this
+  business's sources.
+- **M2. Pixel-count guard lets a 20 KB file allocate about 1.5 GB.** The plan keeps Pillow's
+  default guard, which only *warns* between 89.5 M and 179 M pixels. Reproduced: a 13000×13000
+  1-bit PNG of 20,588 bytes is accepted, takes 1.3 s and raises the process max RSS to
+  1,542 MB (the `convert("RGB")` plus copies in `_process`, lines 33-42). Scenario: an admin
+  (or a stolen admin session, or plan 007's import of URL images) submits a few such files in
+  parallel; `asyncio.to_thread` runs them concurrently and the API process is OOM-killed on a
+  small VPS. Fix direction: an explicit pixel cap in the processor (e.g. reject above ~40 MP
+  as `FORMAT_INVALID`/a size error) checked on `opened.size` before `load()`, and/or JPEG
+  `draft()` downscaling. This is within the plan's rule ("guard stays on") but defeats the
+  intent of the decompression-bomb rule.
+- **M3. Failed object deletes are not logged.** `infrastructure/s3_media_storage.py:55-61`
+  calls `delete_objects` with `"Quiet": True` and discards the response. S3 (and RustFS)
+  report per-key failures such as `AccessDenied` inside a 200 response (`Errors` list), not as
+  an exception, so `_delete_quietly` (`application/commands/photos.py:32-37`) never sees them.
+  Scenario: production credentials lack `s3:DeleteObject`; every removal and every
+  compensation leaves both objects behind and nothing is logged, contrary to the plan ("A
+  failed delete is logged and leaves an orphan object") and to the later orphan cleanup that
+  relies on those logs. Fix direction: raise (or return) when `response.get("Errors")` is
+  non-empty, keeping "missing key is not an error".
+
+**Low**
+
+- **L1. 16-bit grayscale PNGs come out white.** `pillow_image_processor.py:38`
+  `convert("RGB")` from mode `I;16` clips: an 800×800 PNG at 30000/65535 gray (mid gray) is
+  stored as `(255, 255, 255)` (reproduced). Rare for product photos; fix by
+  normalising `I;16`/`I` to `L` first, or reject them.
+- **L2. ICC profiles are dropped without converting to sRGB.** Plan-level rule ("no EXIF, ICC")
+  implemented as written, but Display P3 / Adobe RGB photos (iPhone JPEGs are P3) will look
+  desaturated. Converting to sRGB with `ImageCms` before stripping keeps the rule and the
+  colours. Product photos of a store; user decision, not a correctness bug against the plan.
+- **L3. `Image.open` tries every Pillow plugin on untrusted bytes.** Line 30 opens without
+  `formats=`, so headers of every supported format (PSD, FITS, TGA, …) are parsed before the
+  format check at line 31. Passing `formats=["JPEG", "MPO", "PNG", "WEBP"]` shrinks the parser
+  attack surface and makes M1's fix explicit. Hardening, no failure observed.
+- **L4. S3 calls have boto3's default timeouts and retries (60 s connect/read, legacy
+  retries).** `s3_media_storage.py:39` sets only the addressing style. Scenario: RustFS/S3
+  unreachable → an upload or removal hangs for minutes, each attempt holding a thread of the
+  default executor that Pillow and argon2 (logins) also use. Suggest `connect_timeout`,
+  `read_timeout` and `retries` in the `Config`. Also the first `boto3.client(...)` is built on
+  the event loop thread (`_s3()` is evaluated before `to_thread`), a one-off blocking of tens
+  of ms — negligible.
+
+**Checked and correct (no finding):** format sniffing ignores name and declared content type;
+EXIF orientation applied before the 600 px check (an invalid orientation value is ignored, not
+a 500 — probed); alpha kept for RGBA/LA/PA and `transparency` (P and RGB tRNS); WebP saved
+without `exif`/`icc_profile`; compensation covers processor Err (nothing uploaded), a failed
+second `put`, a refused or raising transaction, and a failing compensation does not mask the
+Err; removal deletes keys only after commit and a failing delete stays Ok; positions are
+serialized by the perfume row lock and the deferred unique constraint lets reorders and
+renumbering swap positions (the `ON CONFLICT (id)` arbiter is the non-deferrable PK, so the
+upsert is valid); `removed_photo_ids` cleared only after a successful save; URL building
+`f"{base}/{key}"` with a validated base (no trailing `/`) and UUID-only keys;
+`ensure_public_read` grants only `s3:GetObject` on `arn:aws:s3:::<bucket>/perfumes/*`, keeps
+other statements, and is idempotent against the live local RustFS (read-only probe:
+the stored policy equals the managed statement, so a second run returns False).
+
+**Ruling on the tester's observation (4-id reorder body → `VALIDATION_ERROR`).** Not a
+finding. Step 2 of this plan fixes `ReorderPhotosRequest.photo_ids = Field(max_length=3)`, so
+the contract answering first is the planned behaviour, the status is the same 422, and the
+bound keeps unbounded lists out of the use case. The "Rules fixed here" sentence is the
+imprecise one; when the plan is next edited, it could read "… (missing, extra, duplicated or a
+foreign id) gets a 422 `CATALOG_PHOTO_ORDER_INVALID`; a body of more than 3 ids is a 422
+`VALIDATION_ERROR`". No code change.
+
+**Ruling on the implementer's Deviations.** Step 4 (`PhotoUploadLimit` in
+`application/commands/photos.py`, structlog in the application layer): accepted; import-linter
+allows it and it avoided a port change. Step 5 (`type: ignore[import-untyped]` for boto3,
+keyword-only `media_base_url`, in-memory default URL): accepted. Step 7 (`AddPhotoForm`):
+accepted, needed by `test_schema_names_are_readable`. Touched existing tests: accepted
+(additive). Step 8 (manages only its own `Sid`): accepted, safer than the plan. Step 1: the
+text is wrong (see the failed checklist item); correct it to "`uv add` added `boto3`, `pillow`
+and `python-multipart` to `apps/api`" or whatever actually happened.
+
+**Result.** Findings needing code changes (H1 pending a user decision, M1, M2, M3) and a
+Deviations correction: status stays `review`. Low findings are optional for the implementer
+or the user to defer.
 
 ## Verification
