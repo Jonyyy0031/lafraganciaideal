@@ -1,4 +1,4 @@
-"""Plan 006: the photo routes (multipart upload, delete, reorder) and the photo fields of the
+"""Plan 006: the photo routes (raw-body upload, delete, reorder) and the photo fields of the
 admin detail and the public card and detail."""
 
 from collections.abc import AsyncIterator
@@ -112,9 +112,11 @@ def _code(response: Response) -> tuple[int, str]:
 async def _upload(
     rig: Rig, file: tuple[str, bytes, str] | None = JPEG, *, perfume_id: UUID | None = None
 ) -> Response:
-    files = {"file": file} if file is not None else {"other": JPEG}
+    _, body, content_type = file if file is not None else JPEG
     return await rig.client.post(
-        f"{ADMIN}/{perfume_id or rig.perfume.id}/photos", files=files, headers=ADMIN_HEADERS
+        f"{ADMIN}/{perfume_id or rig.perfume.id}/photos",
+        content=body,
+        headers={**ADMIN_HEADERS, "content-type": content_type},
     )
 
 
@@ -137,7 +139,7 @@ async def _admin_photos(rig: Rig) -> list[dict[str, Any]]:
 
 _SOME = str(UNKNOWN_ID)
 _ROUTES: list[tuple[str, str, dict[str, Any]]] = [
-    ("POST", f"{ADMIN}/{_SOME}/photos", {"files": {"file": JPEG}}),
+    ("POST", f"{ADMIN}/{_SOME}/photos", {"content": JPEG[1]}),
     ("DELETE", f"{ADMIN}/{_SOME}/photos/{_SOME}", {}),
     ("PUT", f"{ADMIN}/{_SOME}/photos/order", {"json": {"photo_ids": []}}),
 ]
@@ -166,7 +168,7 @@ async def test_photo_routes_return_403_for_an_admin_without_catalog_manage(
 # --- upload -----------------------------------------------------------------------------------
 
 
-async def test_a_multipart_upload_is_201_and_the_admin_detail_lists_the_photo(rig: Rig) -> None:
+async def test_a_raw_body_upload_is_201_and_the_admin_detail_lists_the_photo(rig: Rig) -> None:
     response = await _upload(rig)
 
     assert response.status_code == 201
@@ -208,39 +210,32 @@ async def test_an_upload_over_the_limit_is_422_too_large_without_calling_the_use
     assert await _admin_photos(rig) == []
 
 
-async def test_a_request_without_the_file_field_is_a_validation_error(rig: Rig) -> None:
-    response = await _upload(rig, None)
-
-    assert _code(response) == (422, "VALIDATION_ERROR")
-    assert rig.images.calls == []
-
-
-async def test_a_json_body_instead_of_multipart_is_a_validation_error(rig: Rig) -> None:
+async def test_a_json_body_is_422_format_invalid_by_its_content_type(rig: Rig) -> None:
     response = await rig.client.post(
         f"{ADMIN}/{rig.perfume.id}/photos", json={"file": "x"}, headers=ADMIN_HEADERS
     )
 
-    assert _code(response) == (422, "VALIDATION_ERROR")
+    assert _code(response) == (422, "CATALOG_PHOTO_FORMAT_INVALID")
     assert rig.images.calls == []
 
 
-async def test_an_empty_file_reaches_the_processor_as_empty_bytes_and_its_error_is_422(
+async def test_an_empty_body_is_422_format_invalid_without_calling_the_processor(
     rig: Rig,
 ) -> None:
-    rig.images.error = PhotoFormatInvalid(details={"formats": ["jpeg", "png", "webp"]})
-
     response = await _upload(rig, ("empty.jpg", b"", "image/jpeg"))
 
     assert _code(response) == (422, "CATALOG_PHOTO_FORMAT_INVALID")
-    assert rig.images.calls == [b""]
+    assert rig.images.calls == []
     assert rig.storage.objects == {}
 
 
-async def test_the_declared_name_and_content_type_do_not_matter_to_the_router(rig: Rig) -> None:
+async def test_a_content_type_outside_the_three_image_types_is_422_format_invalid(
+    rig: Rig,
+) -> None:
     response = await _upload(rig, ("notes.txt", b"bytes", "text/plain"))
 
-    assert response.status_code == 201
-    assert rig.images.calls == [b"bytes"]
+    assert _code(response) == (422, "CATALOG_PHOTO_FORMAT_INVALID")
+    assert rig.images.calls == []
 
 
 @pytest.mark.parametrize(
@@ -292,7 +287,9 @@ async def test_uploading_to_an_archived_perfume_is_422(rig: Rig) -> None:
 
 async def test_a_malformed_perfume_id_is_a_validation_error(rig: Rig) -> None:
     response = await rig.client.post(
-        f"{ADMIN}/not-a-uuid/photos", files={"file": JPEG}, headers=ADMIN_HEADERS
+        f"{ADMIN}/not-a-uuid/photos",
+        content=JPEG[1],
+        headers={**ADMIN_HEADERS, "content-type": "image/jpeg"},
     )
 
     assert _code(response) == (422, "VALIDATION_ERROR")

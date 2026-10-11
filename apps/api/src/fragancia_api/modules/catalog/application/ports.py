@@ -16,7 +16,11 @@ from fragancia_api.modules.catalog.contracts import (
     PublicPerfume,
     PublicPerfumePage,
 )
-from fragancia_api.modules.catalog.domain.errors import PhotoFormatInvalid, PhotoTooSmall
+from fragancia_api.modules.catalog.domain.errors import (
+    PhotoFormatInvalid,
+    PhotoTooLarge,
+    PhotoTooSmall,
+)
 from fragancia_api.shared.kernel import Result
 
 
@@ -35,7 +39,7 @@ class ImageProcessor(Protocol):
 
     async def process(
         self, data: bytes
-    ) -> Result[ProcessedImage, PhotoFormatInvalid | PhotoTooSmall]: ...
+    ) -> Result[ProcessedImage, PhotoFormatInvalid | PhotoTooLarge | PhotoTooSmall]: ...
 
 
 class MediaStorage(Protocol):

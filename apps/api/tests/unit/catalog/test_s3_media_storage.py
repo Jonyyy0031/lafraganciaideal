@@ -15,8 +15,9 @@ class _FakeClient:
     def put_object(self, **kwargs: Any) -> None:
         self.puts.append(kwargs)
 
-    def delete_objects(self, **kwargs: Any) -> None:
+    def delete_objects(self, **kwargs: Any) -> dict[str, Any]:
         self.deletes.append(kwargs)
+        return {}
 
 
 class _Factory:

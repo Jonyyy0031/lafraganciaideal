@@ -18,13 +18,13 @@ FORMATS = ["jpeg", "png", "webp"]
 
 
 async def _ok(data: bytes) -> ProcessedImage:
-    result = await PillowImageProcessor().process(data)
+    result = await PillowImageProcessor(max_bytes=5_000_000).process(data)
     assert isinstance(result, Ok), result
     return result.value
 
 
 async def _err_code(data: bytes) -> tuple[str, object]:
-    result = await PillowImageProcessor().process(data)
+    result = await PillowImageProcessor(max_bytes=5_000_000).process(data)
     assert isinstance(result, Err), result
     return str(result.error.code), result.error.details
 
@@ -71,7 +71,9 @@ async def test_an_image_of_exactly_the_minimum_side_is_accepted_and_kept_at_its_
 
 @pytest.mark.parametrize("size", [(600, 1000), (1000, 600)])
 async def test_the_minimum_applies_to_the_shorter_side_only(size: tuple[int, int]) -> None:
-    assert isinstance(await PillowImageProcessor().process(images.jpeg(size)), Ok)
+    assert isinstance(
+        await PillowImageProcessor(max_bytes=5_000_000).process(images.jpeg(size)), Ok
+    )
 
 
 @pytest.mark.parametrize("size", [(599, 2000), (2000, 599), (500, 800), (1, 1)])

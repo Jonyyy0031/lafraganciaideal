@@ -168,7 +168,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         bucket=platform.settings.s3_bucket,
         region=platform.settings.s3_region,
     )
-    images = PillowImageProcessor()
+    images = PillowImageProcessor(max_bytes=platform.settings.photo_max_bytes)
     for perfume_command in (CreatePerfume, UpdatePerfume):
         services.add(
             perfume_command,

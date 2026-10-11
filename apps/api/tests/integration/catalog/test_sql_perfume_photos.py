@@ -870,7 +870,7 @@ async def test_a_storage_failure_raises_and_leaves_no_row(
     prefix = _watch(bucket, perfume_id)
     add = AddPhoto(
         perfumes=SqlPerfumeRepository(container.database),
-        images=PillowImageProcessor(),
+        images=PillowImageProcessor(max_bytes=5_000_000),
         storage=S3MediaStorage(
             endpoint_url=settings.s3_endpoint_url,
             access_key=settings.s3_access_key,

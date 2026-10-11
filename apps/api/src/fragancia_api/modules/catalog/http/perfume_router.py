@@ -3,8 +3,7 @@
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import Depends, Form, Path, Query, UploadFile
-from pydantic import BaseModel
+from fastapi import Depends, Path, Query, Request
 
 from fragancia_api.modules.catalog.application.commands.perfumes import (
     ArchivePerfume,
@@ -43,7 +42,7 @@ from fragancia_api.modules.catalog.contracts import (
     PublicPerfumePage,
     ReorderPhotosRequest,
 )
-from fragancia_api.modules.catalog.domain.errors import PhotoTooLarge
+from fragancia_api.modules.catalog.domain.errors import PhotoFormatInvalid, PhotoTooLarge
 from fragancia_api.modules.catalog.http.router import CATALOG_MANAGE
 from fragancia_api.shared.contracts import DEFAULT_PAGE_SIZE, MAX_PAGE, MAX_PAGE_SIZE
 from fragancia_api.shared.http import (
@@ -228,27 +227,52 @@ async def restore_presentation(
     unwrap(await use_case.execute(perfume_id, presentation_id))
 
 
-class AddPhotoForm(BaseModel):
-    """The multipart body of a photo upload (a named model keeps the OpenAPI schema readable)."""
+_PHOTO_CONTENT_TYPES = ("image/jpeg", "image/png", "image/webp")
+_PHOTO_BODY_OPENAPI: dict[str, Any] = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            content_type: {"schema": {"type": "string", "format": "binary"}}
+            for content_type in _PHOTO_CONTENT_TYPES
+        },
+    }
+}
 
-    file: UploadFile
 
-
-@admin_perfumes.post("/{perfume_id}/photos", status_code=201, responses=_404_409_422)
+@admin_perfumes.post(
+    "/{perfume_id}/photos",
+    status_code=201,
+    responses=_404_409_422,
+    openapi_extra=_PHOTO_BODY_OPENAPI,
+)
 async def add_photo(
     perfume_id: UUID,
-    form: Annotated[AddPhotoForm, Form()],
+    request: Request,
     use_case: Annotated[AddPhoto, Depends(provide(AddPhoto))],
     limit: Annotated[PhotoUploadLimit, Depends(provide(PhotoUploadLimit))],
 ) -> CreatedResponse:
-    """Upload a photo (multipart field `file`: JPEG, PNG or WebP) as the perfume's next one. 404
-    `CATALOG_PERFUME_NOT_FOUND`; 409 `CATALOG_PHOTO_LIMIT_REACHED` with 3 photos already; 422
-    `CATALOG_PHOTO_TOO_LARGE`, `CATALOG_PHOTO_FORMAT_INVALID`, `CATALOG_PHOTO_TOO_SMALL` or
-    `CATALOG_PERFUME_ARCHIVED`."""
-    data = await form.file.read(limit.max_bytes + 1)
-    if len(data) > limit.max_bytes:
-        unwrap(Err(PhotoTooLarge(details={"max_bytes": limit.max_bytes})))
-    return CreatedResponse(id=unwrap(await use_case.execute(perfume_id, data)))
+    """Upload a photo as the perfume's next one: the raw image bytes are the request body, with
+    `Content-Type` `image/jpeg`, `image/png` or `image/webp`. The body is read only after the
+    admin checks pass, and is cut off at the size limit. 404 `CATALOG_PERFUME_NOT_FOUND`; 409
+    `CATALOG_PHOTO_LIMIT_REACHED` with 3 photos already; 422 `CATALOG_PHOTO_TOO_LARGE`,
+    `CATALOG_PHOTO_FORMAT_INVALID`, `CATALOG_PHOTO_TOO_SMALL` or `CATALOG_PERFUME_ARCHIVED`."""
+    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if media_type not in _PHOTO_CONTENT_TYPES:
+        unwrap(Err(PhotoFormatInvalid(details={"formats": ["jpeg", "png", "webp"]})))
+    too_large = PhotoTooLarge(details={"max_bytes": limit.max_bytes})
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > limit.max_bytes:
+        unwrap(Err(too_large))
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit.max_bytes:
+            unwrap(Err(too_large))
+        chunks.append(chunk)
+    if total == 0:
+        unwrap(Err(PhotoFormatInvalid(details={"formats": ["jpeg", "png", "webp"]})))
+    return CreatedResponse(id=unwrap(await use_case.execute(perfume_id, b"".join(chunks))))
 
 
 @admin_perfumes.put("/{perfume_id}/photos/order", status_code=204, responses=_404_422)

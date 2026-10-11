@@ -3,7 +3,11 @@
 from collections.abc import Sequence
 
 from fragancia_api.modules.catalog.application.ports import ProcessedImage
-from fragancia_api.modules.catalog.domain.errors import PhotoFormatInvalid, PhotoTooSmall
+from fragancia_api.modules.catalog.domain.errors import (
+    PhotoFormatInvalid,
+    PhotoTooLarge,
+    PhotoTooSmall,
+)
 from fragancia_api.shared.kernel import Err, Ok, Result
 
 
@@ -39,7 +43,7 @@ class FakeImageProcessor:
         self,
         image: ProcessedImage | None = None,
         *,
-        error: PhotoFormatInvalid | PhotoTooSmall | None = None,
+        error: PhotoFormatInvalid | PhotoTooLarge | PhotoTooSmall | None = None,
     ) -> None:
         self.image = image or ProcessedImage(card=b"card", detail=b"detail", width=1200, height=900)
         self.error = error
@@ -47,7 +51,7 @@ class FakeImageProcessor:
 
     async def process(
         self, data: bytes
-    ) -> Result[ProcessedImage, PhotoFormatInvalid | PhotoTooSmall]:
+    ) -> Result[ProcessedImage, PhotoFormatInvalid | PhotoTooLarge | PhotoTooSmall]:
         self.calls.append(data)
         if self.error is not None:
             return Err(self.error)

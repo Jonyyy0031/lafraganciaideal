@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: catalog
 min_implementer: mid
 depends_on: ["003", "004"]
@@ -475,6 +475,46 @@ upload tests and adds regressions afterwards.
 Update the plan's "Rules fixed here", or record the differences under this subsection. The
 differences are: raw body instead of multipart, MPO, the pixel cap, and sRGB conversion
 instead of only dropping the ICC profile.
+
+**Repair round 1 implemented (2026-10-11, implementer).** All 9 items done, product code only.
+
+- H1: `add_photo` takes `request: Request` and no form parameters; `AddPhotoForm`, `Form` and
+  `UploadFile` are gone; `openapi_extra` declares the three `image/*` binary bodies;
+  `apps/api/openapi.json` regenerated. Order: content type (422 `CATALOG_PHOTO_FORMAT_INVALID`),
+  declared `Content-Length` (422 `CATALOG_PHOTO_TOO_LARGE`), streamed accumulation cut off at the
+  limit, empty body (`FORMAT_INVALID`). Probe against the in-process app (scratchpad, not
+  committed): an unauthenticated POST with a 1000 x 1 KiB streamed body got 401 with 0 chunks
+  pulled; an admin POST with the same body got 422 `CATALOG_PHOTO_TOO_LARGE` after 1 chunk.
+- M1/L3: `Image.open(..., formats=["JPEG", "PNG", "WEBP"])`; `MPO` is accepted in the format
+  check. Pillow has no MPO opener of its own (the JPEG one returns `MPO` files), so `"MPO"` in
+  `formats=` raises `KeyError`; it is only in the accepted set. Frame 0 is used. Probe: a
+  two-frame MPO is processed.
+- M2: `PHOTO_MAX_PIXELS = 40_000_000`, checked from the header before `load`; `PhotoTooLarge`
+  details `{"max_bytes", "max_pixels"}`. Because the processor needs `max_bytes`,
+  `PillowImageProcessor` now takes a required keyword `max_bytes` (wired in `module.py` from
+  `photo_max_bytes`). The `ImageProcessor` port and `FakeImageProcessor` error unions gained
+  `PhotoTooLarge`.
+- M3: `S3MediaStorage.delete` collects `Errors` of every `delete_objects` response and raises
+  `RuntimeError` listing `key: code`; `_delete_quietly` already logs exceptions with the keys.
+- L1: `_to_8bit` scales `I;16*` (full range to 0..255) and `I`/`F` (by extrema) to `L`.
+- L2: `_to_srgb` converts an ICC profile to sRGB (`profileToProfile`, perceptual) on the RGB/RGBA
+  image and drops the profile; any `PyCMSError`/`OSError`/`ValueError` falls back to the plain
+  conversion.
+- L4: boto3 `Config(connect_timeout=5, read_timeout=30, retries={"max_attempts": 3, "mode":
+  "standard"})` besides path addressing.
+- Item 9: the Step 1 deviation above is wrong. `boto3>=1.43.107` was **not** already a dependency
+  of `apps/api`; the original diff added it to `apps/api/pyproject.toml` (together with `pillow`
+  and `python-multipart`). `python-multipart` is no longer needed by this route; I left the
+  dependency untouched (no dependency change was in the 9 items).
+- Existing tests touched only as the contract change forces (the tester adapts and extends them):
+  `unit/catalog/test_photo_http.py` (upload helper and route kwargs send a raw body with
+  `Content-Type`; the three multipart-only tests became "JSON body is 422 FORMAT_INVALID", "empty
+  body is 422 FORMAT_INVALID without calling the processor", "a non-image content type is 422
+  FORMAT_INVALID"), `unit/catalog/test_s3_media_storage.py` (the fake `delete_objects` returns
+  `{}` like boto3), `integration/catalog/test_pillow_image_processor.py` and
+  `test_sql_perfume_photos.py` (`PillowImageProcessor(max_bytes=5_000_000)`).
+- Results: `uv run just check` green (1243 unit passed, 3 skipped; harness 684 passed);
+  `uv run just test-integration` green (318 passed, 2 skipped). No server was left running.
 
 ## Test coverage
 

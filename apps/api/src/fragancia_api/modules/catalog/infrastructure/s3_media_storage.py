@@ -36,7 +36,12 @@ class S3MediaStorage:
                 aws_access_key_id=self._access_key,
                 aws_secret_access_key=self._secret_key,
                 region_name=self._region,
-                config=Config(s3={"addressing_style": "path"}),
+                config=Config(
+                    s3={"addressing_style": "path"},
+                    connect_timeout=5,
+                    read_timeout=30,
+                    retries={"max_attempts": 3, "mode": "standard"},
+                ),
             )
         return self._client
 
@@ -52,10 +57,17 @@ class S3MediaStorage:
         )
 
     async def delete(self, keys: Sequence[str]) -> None:
+        """Delete the keys; raises, naming each failed key with its S3 code, if any failed."""
+        failed: list[str] = []
         for start in range(0, len(keys), _DELETE_BATCH):
             batch = keys[start : start + _DELETE_BATCH]
-            await asyncio.to_thread(
+            response = await asyncio.to_thread(
                 self._s3().delete_objects,
                 Bucket=self._bucket,
                 Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
             )
+            failed.extend(
+                f"{error.get('Key')}: {error.get('Code')}" for error in response.get("Errors", [])
+            )
+        if failed:
+            raise RuntimeError(f"S3 failed to delete {len(failed)} object(s): {'; '.join(failed)}")

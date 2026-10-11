@@ -3447,7 +3447,7 @@
           "catalog · perfumes"
         ],
         "summary": "Add Photo",
-        "description": "Upload a photo (multipart field `file`: JPEG, PNG or WebP) as the perfume's next one. 404\n`CATALOG_PERFUME_NOT_FOUND`; 409 `CATALOG_PHOTO_LIMIT_REACHED` with 3 photos already; 422\n`CATALOG_PHOTO_TOO_LARGE`, `CATALOG_PHOTO_FORMAT_INVALID`, `CATALOG_PHOTO_TOO_SMALL` or\n`CATALOG_PERFUME_ARCHIVED`.",
+        "description": "Upload a photo as the perfume's next one: the raw image bytes are the request body, with\n`Content-Type` `image/jpeg`, `image/png` or `image/webp`. The body is read only after the\nadmin checks pass, and is cut off at the size limit. 404 `CATALOG_PERFUME_NOT_FOUND`; 409\n`CATALOG_PHOTO_LIMIT_REACHED` with 3 photos already; 422 `CATALOG_PHOTO_TOO_LARGE`,\n`CATALOG_PHOTO_FORMAT_INVALID`, `CATALOG_PHOTO_TOO_SMALL` or `CATALOG_PERFUME_ARCHIVED`.",
         "operationId": "add_photo",
         "security": [
           {
@@ -3466,16 +3466,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/AddPhotoForm"
-              }
-            }
-          }
-        },
         "responses": {
           "201": {
             "description": "Successful Response",
@@ -3536,6 +3526,29 @@
               }
             },
             "description": "Invalid input or a broken business rule"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
           }
         }
       }
@@ -3726,21 +3739,6 @@
           "password"
         ],
         "title": "AcceptInvitationRequest"
-      },
-      "AddPhotoForm": {
-        "properties": {
-          "file": {
-            "type": "string",
-            "contentMediaType": "application/octet-stream",
-            "title": "File"
-          }
-        },
-        "type": "object",
-        "required": [
-          "file"
-        ],
-        "title": "AddPhotoForm",
-        "description": "The multipart body of a photo upload (a named model keeps the OpenAPI schema readable)."
       },
       "AdminBrand": {
         "properties": {
