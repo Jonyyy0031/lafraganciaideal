@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: high
 depends_on: ["003", "006"]
@@ -916,6 +916,32 @@ Paths are under `apps/api/tests/`. Shared builders: `unit/catalog/import_support
 | Downloader: timeout (20 s read, 30 s total) | `http_image_downloader.py:47-52` | integration | `test_http_image_downloader.py` (skipped) | NOT CONFIRMED |
 | Full job on PostgreSQL and RustFS: ready, staged WebP in the bucket, expiry deletes them, invalid leaves none, private hosts blocked, unreadable file, missing header | `commands/catalog_imports.py`, `module.py` | integration | `integration/catalog/test_catalog_import_job.py` | CONFIRMED |
 | Mailpit in the CI integration job | `.github/workflows/ci.yml` | tooling | not testable locally | NOT CONFIRMED |
+
+### Repair round 1 regressions (tester, 2026-10-11)
+
+Baseline before these tests: `uv run just check` green (1696 passed, 3 skipped unit; 684
+harness), `uv run just test-integration` 421 passed, 4 skipped. Closing: check 1704 passed, 3
+skipped, 684 harness; integration 462 passed, 4 skipped (+8 unit, +41 integration). No GAP: all
+six repair items are implemented as specified. The earlier row "cleanup when staging raises"
+still holds for storage failures only; a processor or downloader exception is now an issue
+(row below).
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| M1: bad IPv6 literal, `a..b`, 70-char label, port 99999 / -1 → `IMAGE_URL_INVALID`, never raises | `http_image_downloader.py` `_split`, `_ascii_host` | integration | `integration/catalog/test_http_image_downloader.py::test_a_malformed_url_is_invalid_and_never_raises` | CONFIRMED |
+| M1: a redirect `Location` `urljoin` rejects → `IMAGE_URL_INVALID`, no second request | `_follow` | integration | `test_a_redirect_location_that_cannot_be_parsed_is_invalid` | CONFIRMED |
+| M1: `httpx.InvalidURL` from the request → `IMAGE_URL_INVALID` (the error is injected by patching `_get`: no real URL was found that makes httpx raise it after `_split` passed) | `_fetch_once` | integration | `test_an_httpx_invalid_url_while_building_the_request_is_invalid` | CONFIRMED |
+| M1: a resolver failure → `IMAGE_UNREACHABLE` | `_resolve` | integration | `test_a_resolver_failure_is_unreachable_not_an_exception` (`.invalid` TLD, no network needed) | CONFIRMED |
+| M1: IDN host encoded to IDNA; lookup and `Host` use it | `_ascii_host`, `_fetch_once` | integration | `test_an_internationalized_host_is_encoded_to_idna_and_an_ip_literal_is_left_alone`, `test_an_idn_host_is_resolved_and_sent_in_its_ascii_form` (loop `getaddrinfo` faked to loopback) | CONFIRMED |
+| M1: IDN host is the ASCII `sni_hostname` over https (checked on the arguments passed to `_get`; a real TLS handshake was not exercised) | `_fetch_once` | integration | `test_an_idn_host_is_the_ascii_tls_server_name_over_https` | CONFIRMED (arguments only; real TLS NOT CONFIRMED) |
+| M1 safety net: a downloader or processor exception → `IMAGE_UNREACHABLE` on the first row and `Imagen N`; other URLs stay staged | `import_validation.py` `_fetch_and_process` | application | `unit/catalog/test_import_validation.py::test_a_downloader_exception_becomes_an_unreachable_issue_on_its_cell`, `test_a_processor_exception_becomes_an_unreachable_issue_on_its_cell`, `test_an_unexpected_exception_for_one_url_leaves_the_other_urls_staged` | CONFIRMED |
+| M2: ZIP entry count (1,000 ok, 1,001 refused), one entry over 50 MB, entries together over 50 MB → `FILE_UNREADABLE`; an in-limit 20 MB entry still reads | `xlsx_sheets.py` `_within_zip_limits` | integration | `integration/catalog/test_xlsx_sheets.py` (`test_a_workbook_with_*_entries*`, `test_an_entry_declaring_more_than_the_limit*`, `test_entries_each_within_the_limit*`, `test_a_big_but_in_limit_workbook_is_still_read`) | CONFIRMED |
+| M2: blank and whitespace rows count; 2 × `max_rows` scanned allowed, one more → `TOO_MANY_ROWS` | `xlsx_sheets.py` `_rows` | integration | `test_blank_rows_up_to_twice_the_limit_*`, `test_one_blank_row_past_twice_the_limit_*`, `test_a_sheet_of_whitespace_rows_*` | CONFIRMED |
+| L3: a cron run that finds the previous one going returns 0 without running the job; released after finish and after an exception; one lock per job | `main/worker.py` `_module_cron` | application | `unit/catalog/test_worker_jobs.py` (4 tests; the module is imported with synthetic `DATABASE_URL`/`VALKEY_URL`) | CONFIRMED |
+| L3: the lock under a real arq worker | `main/worker.py` | integration | not exercised (needs a worker and Valkey run) | NOT CONFIRMED |
+| L4: zero budget → no download, every image `IMAGE_UNREACHABLE`; a URL whose turn is after the deadline makes no call while earlier ones stay staged (clock replaced in the module) | `import_validation.py` `_stage_photos` | application | `test_import_validation.py::test_with_no_time_left_*`, `test_a_download_whose_turn_comes_after_the_deadline_makes_no_call` | CONFIRMED |
+| L5: `::ffff:127.0.0.1`, `::ffff:10.0.0.5`, `::/96`, `64:ff9b::/96`, `64:ff9b:1::/48` blocked through the URL; `_is_blocked` table incl. mapped public, `2606:4700::1111` and `8.8.8.8` allowed | `http_image_downloader.py` `_is_blocked` | integration | `test_ipv6_forms_that_reach_ipv4_hosts_are_blocked_by_default`, `test_is_blocked_judges_mapped_addresses_*` | CONFIRMED |
+| L6: `Accept-Encoding: identity` sent; `Content-Encoding: gzip` → `IMAGE_UNREACHABLE` with the encoding; `identity` accepted; undeclared gzip bytes returned raw and counted raw | `_get` | integration | `test_the_request_asks_for_an_uncompressed_body`, `test_a_compressed_response_is_refused_as_unreachable`, `test_an_identity_content_encoding_is_accepted`, `test_the_body_is_counted_and_returned_as_raw_bytes_never_decoded` | CONFIRMED |
 
 ## Review findings
 

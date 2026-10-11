@@ -2,20 +2,28 @@
 (default) and off (`allow_private_hosts`, which is how a local server can be reached at all)."""
 
 import asyncio
+import gzip
+import ipaddress
+import socket
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from typing import Any
 
+import httpx
 import pytest
 
 from fragancia_api.modules.catalog.infrastructure.http_image_downloader import (
     MAX_REDIRECTS,
     HttpImageDownloader,
+    _ascii_host,
+    _is_blocked,
 )
 from fragancia_api.shared.kernel import Err, Ok, Result
 
 pytestmark = pytest.mark.integration
 
 BODY = b"image-bytes" * 10
+GZIP = gzip.compress(b"x" * 5000)
 
 
 @dataclass
@@ -45,6 +53,21 @@ async def _handle(
         response = b"HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\n\r\n"
     elif path == "/declared-big":
         response = b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n"
+    elif path == "/gzip":
+        response = (
+            b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n" % len(GZIP)
+            + GZIP
+        )
+    elif path == "/gzip-undeclared":  # gzip bytes with no Content-Encoding: nothing decodes them
+        response = b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % len(GZIP) + GZIP
+    elif path == "/identity-encoded":
+        response = (
+            b"HTTP/1.1 200 OK\r\nContent-Encoding: identity\r\nContent-Length: %d\r\n\r\n"
+            % len(BODY)
+            + BODY
+        )
+    elif path == "/bad-location":
+        response = b"HTTP/1.1 302 Found\r\nLocation: http://[bad/x.jpg\r\nContent-Length: 0\r\n\r\n"
     elif path == "/streamed-big":
         response = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n" + b"x" * 5000
     else:
@@ -183,6 +206,182 @@ async def test_the_default_guard_never_contacts_a_loopback_server(server: Server
 )
 async def test_non_http_urls_userinfo_and_bad_ports_are_invalid(url: str) -> None:
     assert _code(await _open().fetch(url)) == "CATALOG_IMPORT_IMAGE_URL_INVALID"
+
+
+# --- repair round 1 (M1): a bad URL never raises -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://[bad/x.jpg",  # an unclosed IPv6 literal: urlsplit raises ValueError
+        "http://[::1/x.jpg",
+        "http://a..b/x.jpg",  # an empty IDNA label
+        "http://" + "a" * 70 + ".test/x.jpg",  # a label over 63 characters
+        "http://example.test:99999/x.jpg",  # a port out of range
+        "http://example.test:-1/x.jpg",
+    ],
+)
+async def test_a_malformed_url_is_invalid_and_never_raises(url: str) -> None:
+    assert _code(await _open().fetch(url)) == "CATALOG_IMPORT_IMAGE_URL_INVALID"
+
+
+async def test_a_redirect_location_that_cannot_be_parsed_is_invalid(server: Server) -> None:
+    result = await _open().fetch(server.url("/bad-location"))
+
+    assert _code(result) == "CATALOG_IMPORT_IMAGE_URL_INVALID"
+    assert [path for path, _ in server.requests] == ["/bad-location"]
+
+
+async def test_an_httpx_invalid_url_while_building_the_request_is_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def refuse(self: Any, target: str, host_header: str, extensions: dict[str, str]) -> Any:
+        raise httpx.InvalidURL("bad target")
+
+    monkeypatch.setattr(HttpImageDownloader, "_get", refuse)
+
+    assert _code(await _open().fetch("http://127.0.0.1/x.jpg")) == (
+        "CATALOG_IMPORT_IMAGE_URL_INVALID"
+    )
+
+
+async def test_a_resolver_failure_is_unreachable_not_an_exception() -> None:
+    result = await _open().fetch("http://nonexistent.invalid/x.jpg")
+
+    assert _code(result) == "CATALOG_IMPORT_IMAGE_UNREACHABLE"
+
+
+# --- repair round 1 (M1): IDN hosts --------------------------------------------------------------
+
+
+def test_an_internationalized_host_is_encoded_to_idna_and_an_ip_literal_is_left_alone() -> None:
+    assert _ascii_host("perfumería.mx") == "xn--perfumera-n5a.mx"
+    assert _ascii_host("example.test") == "example.test"
+    assert _ascii_host("::1") == "::1"
+    assert _ascii_host("a..b") is None
+    assert _ascii_host("a" * 70 + ".test") is None
+
+
+def _fake_lookup(
+    monkeypatch: pytest.MonkeyPatch, looked_up: list[tuple[str, int]], address: str = "127.0.0.1"
+) -> None:
+    loop = asyncio.get_running_loop()
+
+    async def getaddrinfo(host: str, port: int, **kwargs: Any) -> list[Any]:
+        looked_up.append((host, port))
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port))]
+
+    monkeypatch.setattr(loop, "getaddrinfo", getaddrinfo)
+
+
+async def test_an_idn_host_is_resolved_and_sent_in_its_ascii_form(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    looked_up: list[tuple[str, int]] = []
+    _fake_lookup(monkeypatch, looked_up)
+
+    result = await _open().fetch(f"http://perfumería.mx:{server.port}/ok")
+
+    assert result == Ok(BODY)
+    assert looked_up == [("xn--perfumera-n5a.mx", server.port)]
+    [(_, headers)] = server.requests
+    assert headers["host"] == f"xn--perfumera-n5a.mx:{server.port}"
+
+
+async def test_an_idn_host_is_the_ascii_tls_server_name_over_https(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_lookup(monkeypatch, [])
+    seen: list[tuple[str, str, dict[str, str]]] = []
+
+    async def get(self: Any, target: str, host_header: str, extensions: dict[str, str]) -> Any:
+        seen.append((target, host_header, extensions))
+        return Ok(BODY)
+
+    monkeypatch.setattr(HttpImageDownloader, "_get", get)
+
+    assert await _open().fetch("https://perfumería.mx/a.jpg") == Ok(BODY)
+
+    [(target, host_header, extensions)] = seen
+    assert target == "https://127.0.0.1:443/a.jpg"  # connects to the checked address
+    assert host_header == "xn--perfumera-n5a.mx"
+    assert extensions == {"sni_hostname": "xn--perfumera-n5a.mx"}
+
+
+# --- repair round 1 (L5): blocked IPv6 forms -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://[::ffff:127.0.0.1]/a.jpg",  # IPv4-mapped loopback
+        "http://[::ffff:10.0.0.5]/a.jpg",
+        "http://[::127.0.0.1]/a.jpg",  # ::/96, IPv4-compatible
+        "http://[::808:808]/a.jpg",  # ::/96 even when the embedded IPv4 is public
+        "http://[64:ff9b::7f00:1]/a.jpg",  # NAT64 of 127.0.0.1
+        "http://[64:ff9b::808:808]/a.jpg",  # 64:ff9b::/96 of a public IPv4
+        "http://[64:ff9b:1::1]/a.jpg",  # 64:ff9b:1::/48 (local-use NAT64)
+    ],
+)
+async def test_ipv6_forms_that_reach_ipv4_hosts_are_blocked_by_default(url: str) -> None:
+    result = await HttpImageDownloader(max_bytes=1000, allow_private_hosts=False).fetch(url)
+
+    assert _code(result) == "CATALOG_IMPORT_IMAGE_HOST_BLOCKED"
+
+
+@pytest.mark.parametrize(
+    ("address", "blocked"),
+    [
+        ("::ffff:127.0.0.1", True),
+        ("::ffff:8.8.8.8", False),  # a mapped public address is judged by its IPv4 address
+        ("::127.0.0.1", True),
+        ("64:ff9b::7f00:1", True),
+        ("64:ff9b:1::1", True),
+        ("::1", True),
+        ("ff02::1", True),
+        ("2606:4700::1111", False),
+        ("8.8.8.8", False),
+        ("10.0.0.1", True),
+    ],
+)
+def test_is_blocked_judges_mapped_addresses_by_their_ipv4_and_blocks_the_transition_ranges(
+    address: str, blocked: bool
+) -> None:
+    assert _is_blocked(ipaddress.ip_address(address)) is blocked
+
+
+# --- repair round 1 (L6): no compressed bodies ---------------------------------------------------
+
+
+async def test_the_request_asks_for_an_uncompressed_body(server: Server) -> None:
+    await _open().fetch(server.url("/ok"))
+
+    [(_, headers)] = server.requests
+    assert headers["accept-encoding"] == "identity"
+
+
+async def test_a_compressed_response_is_refused_as_unreachable(server: Server) -> None:
+    result = await _open(max_bytes=10_000).fetch(server.url("/gzip"))
+
+    assert _code(result) == "CATALOG_IMPORT_IMAGE_UNREACHABLE"
+    assert isinstance(result, Err)
+    assert result.error.details == {"content_encoding": "gzip"}
+
+
+async def test_an_identity_content_encoding_is_accepted(server: Server) -> None:
+    assert await _open().fetch(server.url("/identity-encoded")) == Ok(BODY)
+
+
+async def test_the_body_is_counted_and_returned_as_raw_bytes_never_decoded(
+    server: Server,
+) -> None:
+    # gzip bytes without a Content-Encoding stay gzip bytes: 5,000 decoded bytes would exceed
+    # the limit below, the raw ones do not.
+    result = await _open(max_bytes=len(GZIP)).fetch(server.url("/gzip-undeclared"))
+
+    assert result == Ok(GZIP)
+    assert len(GZIP) < 5000
 
 
 @pytest.mark.skip(

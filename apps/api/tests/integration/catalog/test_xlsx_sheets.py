@@ -13,6 +13,8 @@ from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 
 from fragancia_api.modules.catalog.domain.import_cells import COLUMNS, header_key
 from fragancia_api.modules.catalog.infrastructure.xlsx_sheets import (
+    XLSX_MAX_ENTRIES,
+    XLSX_MAX_UNCOMPRESSED_BYTES,
     OpenpyxlSheetReader,
     OpenpyxlTemplateWriter,
 )
@@ -398,3 +400,91 @@ async def test_a_formula_without_a_cached_value_is_empty_not_the_formula_text() 
         (3, {"marca": "real"}),
     ]
     assert "evil.test" not in str(sheet.rows)
+
+
+# --- the reader: bounded expansion (repair round 1, M2) ----------------------------------------
+
+
+def _with_entries(data: bytes, entries: dict[str, bytes]) -> bytes:
+    """The same workbook with extra ZIP entries (deflated, so big ones stay small on disk)."""
+    output = BytesIO()
+    with (
+        zipfile.ZipFile(BytesIO(data)) as source,
+        zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as target,
+    ):
+        for item in source.infolist():
+            target.writestr(item, source.read(item.filename))
+        for name, content in entries.items():
+            target.writestr(name, content)
+    return output.getvalue()
+
+
+def _entry_count(data: bytes) -> int:
+    with zipfile.ZipFile(BytesIO(data)) as archive:
+        return len(archive.infolist())
+
+
+GOOD = _workbook([["Versace"]], header=["Marca"])
+
+
+async def test_a_workbook_with_exactly_the_maximum_entries_is_read() -> None:
+    padding = {f"padding/{n}.txt": b"x" for n in range(XLSX_MAX_ENTRIES - _entry_count(GOOD))}
+    data = _with_entries(GOOD, padding)
+    assert _entry_count(data) == XLSX_MAX_ENTRIES
+
+    assert unwrap_ok(await _read(data)).rows == [(2, {"marca": "Versace"})]
+
+
+async def test_a_workbook_with_one_entry_over_the_maximum_is_unreadable() -> None:
+    padding = {f"padding/{n}.txt": b"x" for n in range(XLSX_MAX_ENTRIES - _entry_count(GOOD) + 1)}
+    data = _with_entries(GOOD, padding)
+    assert _entry_count(data) == XLSX_MAX_ENTRIES + 1
+
+    assert _code(await _read(data)) == "CATALOG_IMPORT_FILE_UNREADABLE"
+
+
+async def test_an_entry_declaring_more_than_the_limit_is_unreadable_before_it_is_parsed() -> None:
+    bomb = b"\x00" * (XLSX_MAX_UNCOMPRESSED_BYTES + 1)
+    data = _with_entries(GOOD, {"xl/bomb.bin": bomb})
+    assert len(data) < 1_000_000  # it deflates to almost nothing, like a real bomb
+
+    assert _code(await _read(data)) == "CATALOG_IMPORT_FILE_UNREADABLE"
+
+
+async def test_entries_each_within_the_limit_but_together_over_it_are_unreadable() -> None:
+    half = b"\x00" * (XLSX_MAX_UNCOMPRESSED_BYTES // 2 + 1)
+    data = _with_entries(GOOD, {"xl/a.bin": half, "xl/b.bin": half})
+
+    assert _code(await _read(data)) == "CATALOG_IMPORT_FILE_UNREADABLE"
+
+
+async def test_a_big_but_in_limit_workbook_is_still_read() -> None:
+    data = _with_entries(GOOD, {"xl/ok.bin": b"\x00" * 20_000_000})
+
+    assert unwrap_ok(await _read(data)).rows == [(2, {"marca": "Versace"})]
+
+
+# --- the reader: blank rows count toward the scan limit (repair round 1, M2) --------------------
+
+
+async def test_blank_rows_up_to_twice_the_limit_are_scanned_and_skipped() -> None:
+    # max_rows=5: 10 physical rows after the header are allowed, blank or not.
+    data = _workbook([[1], [2], [3]] + [[None]] * 5 + [[4]] + [[None]], header=["ML"])
+
+    sheet = unwrap_ok(await _read(data, max_rows=5))
+
+    assert [number for number, _ in sheet.rows] == [2, 3, 4, 10]
+
+
+async def test_one_blank_row_past_twice_the_limit_is_too_many_rows() -> None:
+    data = _workbook([[1], [2], [3]] + [[None]] * 7 + [[4]], header=["ML"])
+
+    result = await _read(data, max_rows=5)  # 11 physical rows after the header
+
+    assert _code(result) == "CATALOG_IMPORT_TOO_MANY_ROWS"
+
+
+async def test_a_sheet_of_whitespace_rows_stops_at_the_scan_limit() -> None:
+    data = _workbook([["   "]] * 40, header=["ML"])
+
+    assert _code(await _read(data, max_rows=5)) == "CATALOG_IMPORT_TOO_MANY_ROWS"

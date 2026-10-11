@@ -1128,3 +1128,86 @@ async def test_a_processor_exception_becomes_an_unreachable_issue_on_its_cell() 
 
     assert _report(issues) == [(2, "Imagen 1", "CATALOG_IMPORT_IMAGE_UNREACHABLE")]
     assert keys == []
+
+
+async def test_a_downloader_exception_becomes_an_unreachable_issue_on_its_cell() -> None:
+    # Repair round 1 (M1 safety net): the fetch side, not only the processor.
+    rig = make_rig(downloads=BOTH)
+
+    async def boom(url: str):  # type: ignore[no-untyped-def]
+        raise RuntimeError("socket exploded")
+
+    rig.downloader.fetch = boom  # type: ignore[method-assign]
+
+    issues, _, _, keys = await _validate(rig, sheet(row(Imagen_1=URL_1)))
+
+    assert _report(issues) == [(2, "Imagen 1", "CATALOG_IMPORT_IMAGE_UNREACHABLE")]
+    assert keys == []
+
+
+async def test_an_unexpected_exception_for_one_url_leaves_the_other_urls_staged() -> None:
+    rig = make_rig(downloads=BOTH)
+    real_fetch = rig.downloader.fetch
+
+    async def fetch(url: str):  # type: ignore[no-untyped-def]
+        if url == URL_1:
+            raise RuntimeError("socket exploded")
+        return await real_fetch(url)
+
+    rig.downloader.fetch = fetch  # type: ignore[method-assign]
+
+    issues, _, _, keys = await _validate(rig, sheet(row(Imagen_1=URL_1, Imagen_2=URL_2)))
+
+    assert _report(issues) == [(2, "Imagen 1", "CATALOG_IMPORT_IMAGE_UNREACHABLE")]
+    assert len(keys) == 2  # the second image was staged; the caller deletes it
+
+
+# --- images: time budget (repair round 1, L4) ---------------------------------------------------
+
+
+def _validator_with_budget(rig: ValidatorRig, budget: timedelta) -> ImportValidator:
+    return ImportValidator(
+        references=rig.references,
+        downloader=rig.downloader,
+        images=rig.images,
+        storage=rig.storage,
+        image_budget=budget,
+    )
+
+
+async def test_with_no_time_left_no_download_starts_and_every_image_is_unreachable() -> None:
+    rig = make_rig(downloads=BOTH)
+    validator = _validator_with_budget(rig, timedelta(0))
+
+    issues, _, plan, keys = await validator.validate(sheet(row(Imagen_1=URL_1, Imagen_2=URL_2)))
+
+    assert _report(issues) == [
+        (2, "Imagen 1", "CATALOG_IMPORT_IMAGE_UNREACHABLE"),
+        (2, "Imagen 2", "CATALOG_IMPORT_IMAGE_UNREACHABLE"),
+    ]
+    assert rig.downloader.calls == []
+    assert rig.images.calls == []
+    assert plan is None
+    assert keys == []
+
+
+async def test_a_download_whose_turn_comes_after_the_deadline_makes_no_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from fragancia_api.modules.catalog.application import import_validation
+
+    # The deadline is set at 0 + 10 s; the first URL's turn comes at 5 s, the second's at 11 s.
+    readings = iter([0.0, 5.0, 11.0])
+    monkeypatch.setattr(
+        import_validation, "time", SimpleNamespace(monotonic=lambda: next(readings))
+    )
+    rig = make_rig(downloads=BOTH)
+    validator = _validator_with_budget(rig, timedelta(seconds=10))
+
+    issues, _, _, keys = await validator.validate(sheet(row(Imagen_1=URL_1, Imagen_2=URL_2)))
+
+    assert _report(issues) == [(2, "Imagen 2", "CATALOG_IMPORT_IMAGE_UNREACHABLE")]
+    assert rig.downloader.calls == [URL_1]  # the late URL never reached the network
+    assert len(keys) == 2  # the first image was staged and is returned for cleanup
