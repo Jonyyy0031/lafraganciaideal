@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: catalog
 min_implementer: high
 depends_on: ["003", "006"]
@@ -1140,5 +1140,82 @@ stays `review`.
   deviation, or accept the risk as a finding in `plans/findings/`.
 - **Low findings 3 to 6:** fix them in the same repair, or record them as findings, as the
   main session decides.
+
+*The outcome above is superseded by the re-review below.*
+
+### Re-review after repair round 1 (reviewer, 2026-10-11)
+
+This re-review covers only the repair diff, `git diff 50a1404..HEAD`: commit 487a293 (the
+fix) and commit afa2560 (the tests). The worktree was clean.
+
+**Checklist: 14/15 passed, 1 not applicable**
+
+- [x] `plans-scope`: "30 declared, 43 changed … Every change is inside the plan". Step 12 now
+      declares the test directories, so the earlier failure is closed.
+- [x] `uv run just check` passed: 247 files type-checked, 1704 unit tests passed with 3
+      skipped, 684 harness tests, plans-lint OK.
+- [x] `uv run just test-integration` passed: 462 passed, 4 skipped.
+- [x] The remaining items still hold. The repair adds no contract, migration, route or
+      settings change, and no new error codes. The docs (`docs/architecture.md`) cover the
+      one-run-at-a-time rule and the 20-minute image budget.
+- [-] PR body: not applicable, because no PR has been opened yet.
+
+**Findings**
+
+1. **M1: closed.**
+   - URL parsing errors now return `IMAGE_URL_INVALID` instead of raising. `_split` wraps
+     `urlsplit`, `.hostname` and `.port`, and `urljoin` on a redirect `Location` is guarded
+     (`infrastructure/http_image_downloader.py:86-89`, `:96-115`).
+   - IDN hosts work. `_ascii_host` IDNA-encodes the host, and that ASCII form is what gets
+     resolved and sent in `Host` and `sni_hostname`.
+   - Resolver errors are covered: `getaddrinfo` catches `OSError` and `UnicodeError`.
+   - `httpx.InvalidURL` is mapped to `IMAGE_URL_INVALID`.
+   - The validator's safety net (`application/import_validation.py`, `_fetch_and_process`)
+     catches `Exception` but not `CancelledError`, and does not log the URL.
+   - I re-ran my original probes. `http://[bad/x.jpg`, `http://a..b/x.jpg`, a 70-character
+     label and port 99999 now return `ImportImageUrlInvalid`. An IDN host that does not
+     resolve returns `ImportImageUnreachable`. None of them raises.
+   - Not exercised: a real IDN host that resolves, and a real TLS handshake with an IDNA SNI.
+     The tests pin the arguments only, as Test coverage says.
+2. **M2: closed.**
+   - The ZIP limits run before `load_workbook`, and a bad ZIP is still reported as
+     `FILE_UNREADABLE` through the outer `except`.
+   - The declared-size bound is real. I checked it against stdlib `zipfile`: `ZipExtFile`
+     truncates at the central directory's `file_size`, and openpyxl opens entries through
+     `ZipFile.open`.
+   - Blank rows now count toward a scan limit of `2 × max_rows`, as the repair spec asks.
+3. **L3: closed.**
+   - Each module job's cron closure has its own `asyncio.Lock`, and a run that finds it held
+     returns 0 without awaiting. So at most one validation and one expiry run per worker
+     process, and the outbox relay keeps its slots.
+   - The lock is created at import time, which is safe from Python 3.10 on (it binds to no
+     loop).
+4. **L4: closed.**
+   - Downloads not started within 20 minutes become `IMAGE_UNREACHABLE`.
+   - Downloads already started finish within their own 30 s, so the validation ends well
+     inside the 1800 s job timeout.
+5. **L5: closed.** `_is_blocked` judges an IPv4-mapped address by its IPv4 address, and also
+   refuses `::/96`, `64:ff9b::/96` and `64:ff9b:1::/48`.
+6. **L6: closed.** The request asks for an uncompressed body, any other `Content-Encoding` is
+   refused, and the size check counts `aiter_raw()`.
+
+**Notes (no change required for this plan)**
+
+- **The blank-row limit can reject a legitimate file (Low, from reading the code).** The
+  limit was chosen in the spec, but it also counts empty rows that only carry formatting.
+  openpyxl in `read_only` mode yields every row present in the XML, and also fills any gaps
+  in the row numbering with empty rows.
+  - **Example:** a file with 100 data rows whose cleared or formatted area reaches past row
+    4001 gets `TOO_MANY_ROWS` (`infrastructure/xlsx_sheets.py:120-121`).
+  - **Effect:** the message says "too many rows" for what is really a blank formatted tail.
+    The workaround is to delete the empty rows.
+  - The verifier can try it with a sheet styled down to row 5000. If it matters, it belongs
+    in a finding or in plan 008, not in this repair.
+- **The `IMAGE_URL_INVALID` message is misleading (cosmetic).** Its English message is "An
+  image URL must start with http:// or https://", which is also what a bad host or port
+  gets. The code is correct, and the panel translates codes.
+
+**Outcome:** every finding from the first review is closed and the checklist passes. Status
+is set to `verify`.
 
 ## Verification
