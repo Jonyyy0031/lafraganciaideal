@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: mid
 depends_on: ["003", "004"]
@@ -429,6 +429,96 @@ All cosmetic, fixed forward:
   own `Sid`.
 
 ## Test coverage
+
+Tester phase, 2026-10-11. Source lines are in `apps/api/src/fragancia_api/modules/catalog/`.
+
+**Runs.**
+- Baseline, before any test: `uv run just check` green (1136 passed, 3 skipped; harness 684 passed),
+  `uv run just test-integration` green (236 passed, 2 skipped).
+- Closing: `uv run just check` green (ruff, mypy 221 files, arch, 1244 unit passed, 3 skipped, harness
+  684 passed, plans-lint, harness-check); `uv run just test-integration` green (318 passed, 2 skipped,
+  both skips pre-existing identity migration round trips). Difference: +108 unit, +82 integration, 0
+  failures, 0 new skips, 0 xfail.
+- Local RustFS (`127.0.0.1:9100`, bucket `fragancia-media`, public-read `perfumes/*`) was reachable, so
+  no S3 test was skipped. If it is not, the `bucket` fixture
+  (`tests/integration/catalog/conftest.py`) skips with `NOT CONFIRMED: ...`; a bad credential is a
+  failure, not a skip.
+
+**Migration 0009 round trip, test database only** (`fragancia_test`, by hand; not automated for the
+same race reason as the identity ones):
+1. `alembic -x test=true current` -> `0009 (head)`.
+2. `alembic -x test=true downgrade 0008` -> `Running downgrade 0009 -> 0008`; `current` -> `0008`;
+   `\d catalog.perfume_photos` -> `Did not find any relation`.
+3. `uv run just db-migrate --test` -> `Running upgrade 0008 -> 0009, catalog perfume photos`.
+4. `\d catalog.perfume_photos` shows the 8 columns, all not null, `pk_perfume_photos`,
+   `ix_perfume_photos_perfume_id`, `fk_perfume_photos_perfume_id_perfumes` and
+   `uq_perfume_photos_position UNIQUE ... DEFERRABLE INITIALLY DEFERRED`.
+   The development database was not touched.
+
+**Tests added.**
+
+| Layer | Count | Files (`apps/api/tests/`) |
+| ----- | ----- | ------------------------- |
+| domain | 25 | `unit/catalog/test_perfume_photos_domain.py` |
+| application | 22 | `unit/catalog/test_photo_commands.py` |
+| http | 40 | `unit/catalog/test_photo_http.py` |
+| adapter (unit, fake boto3) | 7 | `unit/catalog/test_s3_media_storage.py` |
+| settings | 14 | `unit/test_settings.py` (appended) |
+| integration | 82 | `integration/catalog/test_pillow_image_processor.py` (35), `test_s3_media_storage.py` (7), `test_sql_perfume_photos.py` (40); helpers `images.py`, `conftest.py` |
+
+**Matrix.** Every row is CONFIRMED (code read plus a local run); there are no GAP and no NOT
+CONFIRMED rows, except the one marked below.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| Constants 3 / 600 / 400 / 1200; `photo_keys` names | `domain/perfume.py:106-107, 297-300` | domain | `test_perfume_photos_domain.py::test_the_photo_rules_are_the_ones_fixed_by_the_plan`, `::test_photo_keys_live_under_the_perfume_prefix_and_name_both_renditions` | CONFIRMED |
+| `add_photo`: next position, 4th refused with `{"max": 3}`, archived refused first | `domain/perfume.py:534-559` | domain | `::test_a_new_photo_takes_the_next_position_and_keeps_its_fields`, `::test_rejects_a_fourth_photo_with_the_limit_in_the_details`, `::test_rejects_adding_a_photo_to_an_archived_perfume`, `::test_an_archived_perfume_at_the_limit_answers_archived_first` | CONFIRMED |
+| `remove_photo`: returns the photo, renumbers 1..n, records the id, not found, archived | `domain/perfume.py:561-571` | domain | `::test_removing_*`, `::test_removed_ids_accumulate_across_removals`, `::test_a_removed_slot_can_be_filled_again`, `::test_rejects_removing_*` | CONFIRMED |
+| `reorder_photos`: exact set (missing, extra, duplicated, foreign, empty), archived | `domain/perfume.py:573-583` | domain | `::test_reordering_*`, `::test_rejects_an_order_that_is_not_the_current_set[*]`, `::test_rejects_reordering_an_archived_perfume` | CONFIRMED |
+| Publishing needs no photo (decision 24) | `domain/perfume.py:434-442` | domain | `::test_publishing_does_not_need_a_photo` | CONFIRMED |
+| `AddPhoto`: both renditions uploaded as `image/webp`, saved with the clock, fresh id and next position | `application/commands/photos.py:AddPhoto.execute` | application | `test_photo_commands.py::test_adds_the_photo_uploads_both_renditions_and_saves_it_with_the_clock`, `::test_each_upload_gets_a_fresh_id_and_the_next_position` | CONFIRMED |
+| Processor Err passes through, no upload, no change | same | application | `::test_a_processor_error_passes_through_without_uploading_or_touching_the_perfume[*]` | CONFIRMED |
+| Compensation deletes both keys on not-found, limit (only its own keys), archived, save conflict, transaction exception, failed second put | same | application | `::test_an_unknown_perfume_is_not_found_and_the_uploaded_objects_are_deleted`, `::test_the_fourth_photo_is_refused_and_only_its_own_objects_are_deleted`, `::test_an_archived_perfume_refuses_the_photo_and_the_objects_are_deleted`, `::test_a_save_conflict_is_returned_and_compensated`, `::test_an_exception_in_the_transaction_deletes_the_objects_and_propagates`, `::test_a_failing_upload_deletes_what_was_put_and_raises` | CONFIRMED |
+| A failing compensation delete does not mask the Err and is logged with the keys | same | application | `::test_a_failing_compensation_delete_does_not_mask_the_domain_error`, `::test_a_failed_compensation_delete_is_logged_with_the_keys` | CONFIRMED |
+| `RemovePhoto`: deletes keys only after the transaction; failing delete still Ok and logged; not found / archived delete nothing | `application/commands/photos.py:RemovePhoto.execute` | application | `::test_removes_the_photo_*`, `::test_the_objects_are_deleted_only_after_the_transaction_finished`, `::test_a_failing_object_delete_still_removes_the_photo_and_is_logged`, `::test_unknown_perfume_or_photo_is_not_found_and_deletes_nothing[*]`, `::test_an_archived_perfume_refuses_the_removal_and_deletes_nothing` | CONFIRMED |
+| `ReorderPhotos`: saves positions; invalid / unknown / archived | `application/commands/photos.py:ReorderPhotos.execute` | application | `::test_reorders_the_photos_and_saves_the_positions`, `::test_rejects_an_order_*`, `::test_reordering_an_*` | CONFIRMED |
+| Multipart upload: field `file`, 201 `{id}`, admin detail lists the photo with URLs | `http/perfume_router.py:231-251` | http | `test_photo_http.py::test_a_multipart_upload_is_201_and_the_admin_detail_lists_the_photo` | CONFIRMED |
+| Size limit: exactly max accepted; max+1 is 422 `CATALOG_PHOTO_TOO_LARGE` with `max_bytes`, use case not called | `http/perfume_router.py:249-251` | http | `::test_an_upload_exactly_at_the_limit_is_accepted`, `::test_an_upload_over_the_limit_is_422_too_large_without_calling_the_use_case` | CONFIRMED |
+| Missing `file`, JSON body, malformed id are `VALIDATION_ERROR`; empty file reaches the processor as `b""`; name and content type ignored | same | http | `::test_a_request_without_the_file_field_is_a_validation_error`, `::test_a_json_body_instead_of_multipart_is_a_validation_error`, `::test_an_empty_file_reaches_the_processor_as_empty_bytes_and_its_error_is_422`, `::test_the_declared_name_and_content_type_do_not_matter_to_the_router`, `::test_a_malformed_perfume_id_is_a_validation_error` | CONFIRMED |
+| Error codes: 422 format / too small, 409 limit, 404, 422 archived (upload, delete, reorder); delete 204 renumbers and deletes objects; reorder 204; order invalid 422; `PUT .../photos/order` not swallowed by `{photo_id}` | `http/perfume_router.py:254-273` | http | `::test_processor_errors_are_422_with_their_codes[*]`, `::test_the_fourth_upload_is_409_and_leaves_no_new_object`, `::test_delete_*`, `::test_deleting_*`, `::test_reorder_is_204_and_the_positions_follow`, `::test_an_order_that_is_not_the_current_set_is_422[*]`, `::test_order_is_a_route_of_its_own_not_a_photo_id` | CONFIRMED |
+| More than 3 ids in the reorder body is `VALIDATION_ERROR` from the contract (the plan names `ORDER_INVALID` for "extra"; with 4 ids the contract answers first, still 422; a 3rd extra id with 2 photos is `ORDER_INVALID`) | `contracts.py:211-214` | http | `::test_more_than_three_ids_is_a_validation_error_from_the_contract` | CONFIRMED (see Deviations note below) |
+| 401 without session and 403 without `catalog:manage` on the 3 routes; all admin routes protected | `assert_admin_routes_are_protected` | http | `::test_photo_routes_return_401_without_a_session[*]`, `::test_photo_routes_return_403_for_an_admin_without_catalog_manage[*]` | CONFIRMED |
+| New contract fields: admin `photos`, public card `photo_url` (null / position 1 / follows reorder), public detail `photos` (order, only two URLs, removed disappears) | `contracts.py:199-333`, `in_memory_perfumes.py` | http | `::test_the_admin_detail_has_an_empty_photo_list_*`, `::test_the_public_card_*`, `::test_the_public_detail_*`, `::test_a_removed_photo_disappears_from_the_public_detail` | CONFIRMED |
+| `S3MediaStorage` talks to boto3 correctly: lazy single client, path addressing, `put_object` args incl. immutable cache header, quiet batched `delete_objects` (1000 per call), no call for no keys | `infrastructure/s3_media_storage.py` | adapter (unit) | `test_s3_media_storage.py::*` | CONFIRMED |
+| Settings: defaults, `MEDIA_PUBLIC_BASE_URL` scheme and no trailing slash, `photo_max_bytes >= 1`, secret key masked | `config.py:73-90` | settings (unit) | `test_settings.py::test_media_*`, `::test_photo_max_bytes_*`, `::test_the_s3_secret_key_is_a_secret_that_does_not_show_in_the_repr` | CONFIRMED |
+| `PillowImageProcessor`: JPEG 2000x1500 gives 1200x900 / 400x300 WebP, portrait, never upscaled, 600 boundary (600 accepted, 599 too small, shorter side only) | `infrastructure/pillow_image_processor.py:32-50` | integration | `test_pillow_image_processor.py::test_a_large_jpeg_*`, `::test_a_portrait_*`, `::test_renditions_are_never_upscaled`, `::test_an_image_of_exactly_the_minimum_side_*`, `::test_the_minimum_applies_*`, `::test_an_image_with_a_shorter_side_under_600_is_too_small[*]` | CONFIRMED |
+| No EXIF / ICC in the renditions even when the source has both; colors survive | same | integration | `::test_the_source_has_exif_and_an_icc_profile_but_the_renditions_have_none`, `::test_the_red_and_blue_halves_survive_the_conversion` | CONFIRMED |
+| EXIF orientation applied before sizing and to the pixels | same | integration | `::test_exif_orientation_is_applied_before_sizing`, `::test_exif_orientation_rotates_the_pixels_not_just_the_size`, `::test_an_image_without_orientation_keeps_its_pixels` | CONFIRMED |
+| Alpha kept for RGBA PNG and palette PNG with transparency, RGB otherwise; L and CMYK JPEG become RGB; JPEG/PNG/WebP all accepted | same | integration | `::test_a_png_with_transparency_stays_transparent`, `::test_an_opaque_png_*`, `::test_a_palette_png_*`, `::test_grayscale_and_cmyk_jpegs_come_out_as_rgb[*]`, `::test_jpeg_png_and_webp_inputs_all_come_out_as_webp[*]` | CONFIRMED |
+| GIF / BMP / garbage / empty / truncated / decompression bomb are `FORMAT_INVALID` with `{"formats": [...]}`; a small GIF is a format error, not a size error; the guard is not disabled | same | integration | `::test_a_gif_*`, `::test_a_bmp_*`, `::test_a_small_gif_*`, `::test_garbage_is_a_format_error[*]`, `::test_a_truncated_jpeg_is_a_format_error[*]`, `::test_a_decompression_bomb_is_a_format_error`, `::test_the_decompression_guard_is_not_disabled_for_the_whole_process` | CONFIRMED |
+| `S3MediaStorage` on RustFS: put then public GET without credentials (200, `image/webp`, immutable cache), delete removes and the URL 404s, missing key not an error, empty list no-op, overwrite, wrong secret raises, only `perfumes/*` is public | `infrastructure/s3_media_storage.py` | integration | `test_s3_media_storage.py::*` | CONFIRMED |
+| Table: unique `(perfume_id, position)` per perfume, constraint deferred (two-statement swap passes, a duplicate left at commit fails and writes nothing), FK, truncate cascade | `infrastructure/tables.py:111-130`, migration 0009 | integration | `test_sql_perfume_photos.py::test_a_position_is_unique_*`, `::test_the_position_constraint_is_deferred_until_commit`, `::test_a_duplicate_position_left_at_commit_*`, `::test_a_photo_needs_an_existing_perfume`, `::test_truncating_the_perfumes_*` | CONFIRMED |
+| Repository load: ordered by position, every field, only that perfume's photos, empty list | `sql_perfume_repository.py:224-235` | integration | `::test_get_for_update_loads_*`, `::test_a_perfume_without_photos_loads_an_empty_list` | CONFIRMED |
+| Repository save: insert, deferrable reorder (reverse and swap), removal with renumbering and cleared `removed_photo_ids`, remove + add in one save, other perfumes untouched, only `position` is updated for an existing photo | `sql_perfume_repository.py:258-285` | integration | `::test_save_inserts_*`, `::test_reordering_rewrites_*`, `::test_swapping_two_photos_is_saved`, `::test_removing_*`, `::test_save_only_updates_the_position_of_an_existing_photo` | CONFIRMED |
+| Row lock serializes concurrent uploads (5 concurrent: 3 Ok, 2 `LIMIT_REACHED`, positions 1..3, refused uploads compensated) | `sql_perfume_repository.py` `get_for_update` + `AddPhoto` | integration | `::test_concurrent_uploads_to_one_perfume_are_serialized_by_the_row_lock` | CONFIRMED |
+| Queries: `get_admin` / `get_public` photos by position with URLs `f"{base}/{key}"`, retired slug keeps photos, `photo_url` is position 1's card URL (own perfume per card, follows reorder, none without photos, no duplicated cards), hidden perfume leaks nothing | `sql_perfume_queries.py:156-158, 305-335, 412-453` | integration | `::test_get_admin_*`, `::test_a_trailing_part_of_the_base_url_is_kept_verbatim`, `::test_list_public_*`, `::test_each_card_gets_the_photo_of_its_own_perfume`, `::test_get_public_*`, `::test_a_hidden_perfume_does_not_leak_its_photos_publicly` | CONFIRMED |
+| Real stack (container wiring: Pillow + S3 + SQL): upload gives two public WebP objects with the right sizes, no EXIF, URLs under `media_public_base_url`; PNG alpha stays transparent in the stored object | `module.py:149-215` | integration | `::test_an_uploaded_jpeg_is_stored_as_two_public_webp_renditions_and_listed`, `::test_a_png_with_transparency_stays_transparent_in_the_stored_object` | CONFIRMED |
+| Real stack: refused file / 4th photo / archived / unknown perfume leave no new object in the bucket and no row; remove deletes both objects, renumbers, keeps the others; unknown photo deletes nothing; objects already gone is still Ok; reorder and invalid order; a storage failure raises and leaves no row | same | integration | `::test_a_refused_file_leaves_no_object_and_no_row[*]`, `::test_the_fourth_photo_is_refused_and_no_new_object_is_left_in_the_bucket`, `::test_an_archived_perfume_refuses_every_photo_operation_and_keeps_its_objects`, `::test_uploading_to_an_unknown_perfume_leaves_no_object`, `::test_removing_*`, `::test_reordering_through_the_container_*`, `::test_a_storage_failure_raises_and_leaves_no_row` | CONFIRMED |
+| The 0009 migration round trip | `migrations/versions/0009_catalog_perfume_photos.py` | by hand | see "Migration 0009 round trip" above | NOT CONFIRMED in the suite (run by hand, passed; downgrading `fragancia_test` inside the suite would race the other integration tests) |
+
+**Not covered, said plainly.**
+- Offloading to a thread (`asyncio.to_thread`) is not asserted; only behavior is.
+- The processor's WebP `quality=82` / `method=6` are not asserted (Pillow does not expose the quality of a
+  decoded WebP).
+- Large-scale delete batching (more than 1000 keys) is tested only against the fake boto3 client, not
+  against RustFS.
+- The production bucket policy and CDN are out of scope (plan).
+- `plans-scope` was not run by the tester; no product file was touched (only tests and this section).
+
+**Observation (no GAP).** The plan's reorder rule lists "extra" ids as `CATALOG_PHOTO_ORDER_INVALID`;
+`ReorderPhotosRequest(max_length=3)` makes a body of 4 ids a `VALIDATION_ERROR` before the use case.
+Both are 422. With fewer than 3 photos an extra id reaches the domain and is `ORDER_INVALID`
+(tested). Left to the reviewer to decide whether the plan text or the contract should change.
 
 ## Review findings
 
