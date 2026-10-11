@@ -1219,3 +1219,103 @@ fix) and commit afa2560 (the tests). The worktree was clean.
 is set to `verify`.
 
 ## Verification
+
+**2026-10-11, verifier (main session, inline).**
+
+**Setup.** Branch `feat/catalog-import-validation` at `68ff57a`. The API and worker ran
+through a scratchpad launcher:
+- First run: `CATALOG_IMPORT_TTL_MINUTES=1` and
+  `CATALOG_IMPORT_IMAGE_ALLOW_PRIVATE_HOSTS=true`.
+- Second run: default settings, for the host-blocking check.
+- Images were served by `python -m http.server 8765` on 127.0.0.1.
+- The synthetic owner was `verifier007@example.test`.
+- Seeded through the API: the brands "QA Versace" and "QA Dior"; "QA Existente" (EDT, 100 ml,
+  one photo); "QA Archivado" (archived). The family "Chipre" was archived for the run and
+  restored afterwards (204).
+- The `source_url` of the existing photo was set by SQL (`UPDATE … WHERE id = …`, 1 row
+  counted first), as the acceptance criterion allows.
+
+**Suites.**
+- `uv run just check`: "All checks passed!", "no issues found in 247 source files", "1704
+  passed, 3 skipped", "684 passed", "plans OK", "24 adapters up to date".
+- `uv run just test-integration`: "462 passed, 4 skipped".
+- Dev DB: `uv run just db-migrate` is at `0010`. `\d catalog.imports` shows every planned
+  column and `ix_catalog_imports_status_created_at`.
+
+**Acceptance criteria.**
+- [x] **Template:** 200 with the xlsx media type and `attachment;
+  filename="plantilla-catalogo.xlsx"`.
+  - The 21 headers are identical to `COLUMNS`.
+  - The sheets are `Catálogo` and `Listas`, and `Listas` is hidden.
+  - There are dropdowns on E, C, D, K and N for rows 2–2001.
+  - The family list holds the 8 active families (archived Chipre excluded), plus the 5
+    concentration names, Mujer/Hombre/Unisex, En existencia/Sobre pedido and Sí/No.
+- [x] **Valid upload:** 202, then the statuses `pending` → `ready`.
+  - `summary={'perfumes_new': 1, 'perfumes_updated': 1, 'presentations_new': 2,
+    'presentations_updated': 1, 'photos_new': 3}`, `error_count=0`.
+  - `finished=21:19:45.900261Z`, `expires=21:20:45.900261Z`, matching the 1-minute QA TTL.
+  - The file column is NULL on every finished import (0 rows hold it).
+- [x] **Staged photos:** the 6 card/detail WebP objects of the 3 planned photos returned 200
+  from `MEDIA_PUBLIC_BASE_URL`. They were 800×800, 900×700 (PNG) and 1000×800.
+- [x] **Row errors** (`invalid`, `error_count=9`), each with its Excel row, header and code:
+  - row 2, Marca: `BRAND_UNKNOWN`;
+  - row 3, Familia olfativa: `FAMILY_ARCHIVED`;
+  - row 4, ML: `VALUE_INVALID`;
+  - row 5, Precio: `VALUE_INVALID` (10.555);
+  - row 6, Precio oferta: `CATALOG_PRESENTATION_SALE_INVALID`;
+  - row 7, Disponibilidad: `CATALOG_PRESENTATION_AVAILABILITY_INVALID`;
+  - row 9, Descripción: `PERFUME_MISMATCH`;
+  - row 11, ML: `DUPLICATE_ROW`;
+  - row 12, Nombre: `PERFUME_ARCHIVED`.
+- [x] **No leftovers:** a file with one clean perfume (image `c.jpg`, downloaded at
+  21:20:45 per the server log) and one bad row ended `invalid`. The object count under
+  `perfumes/` was 8 before and 8 after.
+- [x] **Image checks:**
+  - A 404 URL gives row 2, Imagen 1: `IMAGE_UNREACHABLE`.
+  - A text file gives row 3, Imagen 1: `CATALOG_PHOTO_FORMAT_INVALID`.
+  - With default settings, a 127.0.0.1 URL gives row 2, Imagen 1: `IMAGE_HOST_BLOCKED`, and
+    the image server got no request.
+- [x] **Sale dates:** the plan has `2026-11-01T00:00:00-05:00 -> 2026-12-01T00:00:00-05:00`
+  and price 189950 (1899.5), sale 150000. The made-to-order row is 7–10 days.
+- [x] **Existing photos:** for "QA Existente", Imagen 1 (same `source_url`) was not planned
+  and photo 1 is kept. Imagen 2 is a new URL and was planned at position 2 with
+  `replaces=None`. `a.jpg` was fetched once for the whole file. The existing 100 ml carries
+  its `presentation_id`, and the concentration was matched from `edt`. The *replace* branch
+  (`replaces_photo_id`) was not driven live; it is covered by the unit and integration tests.
+- [x] **File-level rejects:**
+  - 6 MB declared → 422 `CATALOG_IMPORT_TOO_LARGE`; 6 MB chunked → 422 `TOO_LARGE`.
+  - `text/csv` → 422 `FORMAT_INVALID`; a non-ZIP body → 422 `FORMAT_INVALID`.
+  - 2,001 rows → `invalid` with `TOO_MANY_ROWS`.
+  - No Precio header → `HEADER_MISSING` (column `Precio`).
+- [x] **Access:** without a session, the template, the upload and the GET each return 401.
+  An unknown id returns 404 `CATALOG_IMPORT_NOT_FOUND`. The 403 case (admin without
+  `catalog:manage`) is NOT VERIFIED live: owner and staff both have the permission. It is
+  covered in `test_catalog_import_http.py`.
+- [x] **Expiry:** at 21:21:37 the valid import was `expired` and all 6 objects returned 404.
+- [ ] **CI Mailpit:** NOT VERIFIED until the PR's CI run.
+
+**Worker.**
+- It started with `cron:relay_outbox, cron:catalog_validate_imports,
+  cron:catalog_expire_imports`.
+- One `job.processed … processed=1` line was logged per import, about 5 s apart. The cron
+  claims one import per run, and idle runs are silent.
+
+**Problem found: false `TOO_MANY_ROWS`.** A sheet with 3 data rows whose cells were
+formatted (number format only) down to row 5000 ended `invalid` with `TOO_MANY_ROWS`. This
+is the reviewer's note, now reproduced. The blank-row scan limit of repair item M2
+(`infrastructure/xlsx_sheets.py:116-121`) counts formatted empty rows. Spreadsheets edited by
+hand often carry such formatting, so the client could be told "too many rows" for a 100-row
+file. The cause is the repair spec itself (main session), not the implementation. Recorded in
+`plans/findings/catalog-import-formatted-blank-rows-too-many.md`.
+
+**NOT VERIFIED:**
+- the CI Mailpit job;
+- a real https host with an IDN name;
+- a redirect chain;
+- the 403 route case;
+- the job lock under concurrent long validations.
+
+**Cleanup.**
+- Ports 8100 and 8765 are free; no API or worker process remains.
+- The QA brands and perfumes stay in the dev DB, since the catalog never deletes; the
+  validated imports and their expired or invalid rows stay too.
