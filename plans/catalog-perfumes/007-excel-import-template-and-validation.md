@@ -1409,3 +1409,20 @@ file. The cause is the repair spec itself (main session), not the implementation
 - Ports 8100 and 8765 are free; no API or worker process remains.
 - The QA brands and perfumes stay in the dev DB, since the catalog never deletes; the
   validated imports and their expired or invalid rows stay too.
+
+**2026-10-11, re-verification after repair round 2 (main session, inline).**
+
+Branch at `502d01a`. The reviewer reported `uv run just check` green and
+`uv run just test-integration` at "463 passed, 4 skipped". The API and worker ran with default
+settings.
+- The same `formatted.xlsx` that failed before (3 data rows, number format down to row 5000)
+  now goes `pending` → `ready`, with `row_count=3`, `error_count=0` and
+  `summary={'perfumes_new': 3, 'perfumes_updated': 0, 'presentations_new': 3,
+  'presentations_updated': 0, 'photos_new': 0}`.
+- `expires_at` is `finished_at` + 60 minutes, the default TTL.
+- Finding `catalog-import-formatted-blank-rows-too-many` is resolved.
+- The earlier evidence for every other criterion stands.
+- The API and worker are stopped, and port 8100 is free.
+
+**Result:** every acceptance criterion that can be exercised locally passes. The CI Mailpit
+criterion is checked on the PR's CI run. Ready for the user to mark `done`.

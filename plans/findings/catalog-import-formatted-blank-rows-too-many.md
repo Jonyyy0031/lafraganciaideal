@@ -1,5 +1,5 @@
 ---
-status: planned
+status: resolved
 plan: catalog-perfumes/007
 module: catalog
 found: 2026-10-11
