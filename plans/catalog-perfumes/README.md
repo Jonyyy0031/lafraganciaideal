@@ -238,6 +238,14 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
     - **007:** Mailpit in CI, the template, the upload, the background validation with its
       report, and the expiry of unconfirmed imports.
     - **008:** confirming, which applies the import all or nothing.
+70. (2026-10-11) **Repair round for the 007 review.** The user chose to fix M1, M2 and every
+    Low finding (L3–L6) in plan 007 now, rather than filing findings:
+    - M1: a malformed image URL must never fail the whole import.
+    - M2: limit how far an `.xlsx` may expand when it is unzipped.
+    - L3: validation jobs must not starve the outbox relay.
+    - L4: give image work an overall time budget.
+    - L5: block the remaining IPv6 ranges.
+    - L6: refuse compressed image responses.
 
 ## Delivered
 

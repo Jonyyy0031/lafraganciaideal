@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: catalog
 min_implementer: high
 depends_on: ["003", "006"]
@@ -610,6 +610,14 @@ deletes them.
         to mention the catalog import jobs.
     - Observable result: docs describe the new jobs; `uv run just check` stays green.
 
+12. **Tests**
+    - Files: `apps/api/tests/unit/catalog/` (modify), `apps/api/tests/integration/catalog/`
+      (modify)
+    - Do: the tester writes the layered tests; see "Test layers required". This step was added
+      after the review: the test directories were missing from every `Files:` line, so
+      `plans-scope` failed. It is recorded under "Deviations".
+    - Observable result: `plans-scope` is clean.
+
 ## Acceptance criteria
 
 - [ ] **Template:** `GET /api/v1/admin/catalog-imports/template`, with an admin session that
@@ -736,6 +744,66 @@ Implementation evidence (2026-10-11):
   - downloader refusals for loopback, link-local, userinfo and non-http URLs;
   - a 404 and a too-large body against local services.
 
+### Repair round 1 (2026-10-11, main session: review → implementing)
+
+**Why.** The review found two Medium (M1, M2) and four Low (L3–L6) findings. The user chose to
+fix all of them now (README decision 70). The earlier evidence stays valid for everything
+else. The tester adds regressions afterwards.
+
+**Scope fix.** Step 12 declares the test directories. They were missing from every `Files:`
+line, which made `plans-scope` fail. No product code change comes from this.
+
+**Repair spec.** Product code only. Any file outside the existing step `Files:` lines needs a
+recorded deviation.
+
+1. **M1: the downloader never raises on a bad URL**
+   (`infrastructure/http_image_downloader.py`):
+   - A `ValueError` from `urlsplit`, `urljoin` (redirect `Location`) or port parsing →
+     `CATALOG_IMPORT_IMAGE_URL_INVALID`.
+   - Encode the host to IDNA (`host.encode("idna").decode("ascii")`) before resolving. A
+     `UnicodeError` → `IMAGE_URL_INVALID`.
+   - Use the ASCII host in the `Host` header and in `sni_hostname`, so `perfumería.mx` works.
+   - `getaddrinfo` failures, `OSError` or `UnicodeError` alike → `IMAGE_UNREACHABLE`.
+
+   **Safety net** (`application/import_validation.py`): an unexpected exception from
+   `downloader.fetch` or `images.process` for one URL is logged
+   (`catalog_import_image_error`, `exc_info`). It becomes `IMAGE_UNREACHABLE` on that
+   group's first row and that `Imagen N` column. It never fails the import.
+2. **M2: bounded `.xlsx` expansion** (`infrastructure/xlsx_sheets.py`):
+   - Before `load_workbook`, open the bytes with `zipfile.ZipFile`. The file is
+     `FILE_UNREADABLE` if any of these holds:
+     - it has more than 1,000 entries;
+     - any single entry has a `file_size` over 50,000,000 bytes;
+     - the `file_size` total is over 50,000,000 bytes.
+
+     Name the constants `XLSX_MAX_ENTRIES` and `XLSX_MAX_UNCOMPRESSED_BYTES`.
+   - Count every physical row after the header that `iter_rows` yields, including blank and
+     whitespace-only ones. Beyond `max_rows * 2` scanned rows → `TOO_MANY_ROWS`. The existing
+     non-empty-row limit stays.
+3. **L3: one run of each module job at a time** (`main/worker.py`):
+   - Each `ScheduledJob` cron closure owns an `asyncio.Lock`. When it is already held, the run
+     returns 0 at once, without awaiting the job.
+   - So at most one validation runs per worker process, and the other arq slots stay free for
+     the outbox relay.
+4. **L4: time budget for images** (`application/import_validation.py`):
+   - `ImportValidator` takes `image_budget: timedelta`, wired as 20 minutes in `module.py`,
+     which is below the 1800 s job timeout.
+   - It measures the budget with `time.monotonic()`. A download not *started* before the
+     deadline makes no network call and becomes an `IMAGE_UNREACHABLE` issue.
+   - The import then ends `invalid` with a full report instead of being `INTERRUPTED`.
+5. **L5: more blocked addresses** (`http_image_downloader.py`):
+   - Besides `not is_global` and multicast, block IPv4-compatible IPv6 (`::/96`), `64:ff9b::/96`
+     and `64:ff9b:1::/48`.
+   - For an IPv4-mapped address, check the mapped IPv4 address.
+6. **L6: no compressed bodies** (`http_image_downloader.py`):
+   - Send `Accept-Encoding: identity`.
+   - A response with a `Content-Encoding` other than `identity` (or absent) →
+     `IMAGE_UNREACHABLE`.
+   - Count the bytes from `response.aiter_raw()`.
+
+`uv run just check` and `uv run just test-integration` must stay green. Then set the status to
+`testing`.
+
 ## Test coverage
 
 Baseline (before the tests): `uv run just check` green (1253 passed, 3 skipped unit;
@@ -780,5 +848,201 @@ Paths are under `apps/api/tests/`. Shared builders: `unit/catalog/import_support
 | Mailpit in the CI integration job | `.github/workflows/ci.yml` | tooling | not testable locally | NOT CONFIRMED |
 
 ## Review findings
+
+Reviewer, 2026-10-11. Compared `git diff main...HEAD` on `feat/catalog-import-validation`
+with a clean worktree; no PR exists yet. Unless a path is given in full, source paths below are
+relative to `apps/api/src/fragancia_api/modules/catalog/`.
+
+### Pass 1: checklist (13/15 passed, 1 failed, 1 not applicable)
+
+- [ ] **`plans-scope`: FAILED.** The run reported "28 declared, 42 changed" and flagged 12
+      files as out of scope. They are all the tester's files: `apps/api/tests/unit/catalog/`
+      (`import_support.py` and `test_catalog_import_{commands,domain,http,wiring}.py`,
+      `test_import_cells_domain.py`, `test_import_validation.py`) and
+      `apps/api/tests/integration/catalog/` (`import_fixtures.py`,
+      `test_catalog_import_job.py`, `test_http_image_downloader.py`,
+      `test_sql_catalog_imports.py`, `test_xlsx_sheets.py`). No `Files:` line declares the test
+      directories, unlike plan 006, which declared `apps/api/tests/unit/catalog/` and
+      `apps/api/tests/integration/catalog/` on a `Files:` line. The cause is the plan, not the
+      code. The repair is to add those two directories to a `Files:` line and record that as a
+      deviation. No hot file (`container.py`, `docs/modules.json`, `.importlinter`) changed. The
+      initiative README and `uv.lock` changes are allowed companions.
+- [x] `uv run just check` passed: ruff, actionlint, mypy (246 files), import-linter,
+      1696 unit tests passed with 3 skipped, plans-lint, 684 harness tests, harness-check and
+      compose config.
+- [x] `uv run just test-integration` passed: 421 passed and 4 skipped. The 4 skips are the 2
+      older identity skips plus the 2 downloader tests marked NOT CONFIRMED in Test coverage.
+- [x] Business rules are in the domain: `domain/import_cells.py` holds the cell rules,
+      `domain/catalog_import.py` the lifecycle, and the value objects are reused. The router
+      only checks the media type and the size. The SQL adapters only map data.
+- [x] CQRS-lite holds. Upload, claim, save and expire run `get_for_update` or claim, then the
+      aggregate transition, then `save`, all inside `TransactionRunner.run`, and the commands
+      return `Result`. The status read goes through `CatalogImportQueries`.
+- [x] The contracts live in `contracts.py`, and `openapi.json` was regenerated (the drift check
+      in `check` passed).
+- [x] Errors use stable `CATALOG_IMPORT_*` codes and are expected `Err`s. The internals of an
+      unreadable file are logged by class name only.
+- [x] Prices are integer cents and are never floats at the boundary (`Decimal(str(...))`). Ids
+      come from `new_id()` and datetimes from the `Clock`.
+- [x] Migration 0010 is new, on top of 0009, with no cross-schema foreign key. Its `downgrade`
+      drops the column, the index and the table, and the round trip was recorded by the
+      implementer.
+- [x] All routes are on `admin_router` with `catalog:manage`. The 401 and 403 cases are tested.
+- [x] Wiring is only in `module.py`, and `test_container.py` passes. `ScheduledJob` validates
+      `every_seconds`.
+- [x] No secrets. `.env.example` gains commented defaults only.
+- [x] `## Deviations` is honest. I spot-checked deviation 6: the downloader tries each checked
+      address and moves to the next one on `ConnectError`
+      (`infrastructure/http_image_downloader.py:92-100`), and it sets `trust_env=False`
+      (`:130`).
+- [x] Docs are updated: `docs/architecture.md` (jobs section) and `apps/api/README.md` (worker
+      lines).
+- [-] PR body: not applicable, because no PR has been opened yet.
+
+### Pass 2: bug hunt
+
+The areas the review was asked to focus on came out sound here, and no change is needed for
+them:
+
+- **Claiming.** `claim_next_pending` copies the outbox pattern
+  (`infrastructure/sql_catalog_import_repository.py:229-238`). The `validating` status is
+  committed before the work starts, so concurrent cron runs claim different imports.
+- **Saving the result.** The result save re-reads the row with `get_for_update`. A
+  validation that finishes after the expiry job already failed it as stale makes
+  `finish_ready` or `finish_invalid` raise. That is caught, the staged keys are deleted, and
+  `_fail` is a no-op (`application/commands/catalog_imports.py:126-131`, `:175-185`).
+- **Staged keys.** Keys are recorded before the `put`s (`application/import_validation.py:524`),
+  so a partial upload is still cleaned up. When staging raises, the validator deletes its own
+  uploads (`:498-505`). On the invalid path the keys are deleted only after the commit
+  (`commands/catalog_imports.py:148-150`). Expiry deletes after the commit (`:225-230`).
+- **Expiry never deletes live photos.** Staged keys always use a fresh `photo_id`, so expiring
+  never deletes the objects of a live photo, even for replacements.
+- **SSRF.** These protections work as the plan describes:
+  - every resolved address is checked;
+  - the connection goes to the checked IP, with the original `Host` header and SNI;
+  - proxies from the environment are ignored;
+  - each redirect hop is checked again, up to 3 hops;
+  - the size is checked both on the declared `Content-Length` and on the streamed total.
+
+  A probe confirmed that `127.1`, `0x7f.1`, `[::ffff:127.0.0.1]`, link-local addresses and
+  bad ports are all refused.
+
+**Medium**
+
+1. **The downloader raises on some malformed hosts, which fails the whole import instead of
+   one cell.** Reproduced with a scratch script against `HttpImageDownloader.fetch`, with
+   `allow_private_hosts=False`. The cell rule `import_cells.image_url` accepts these URLs,
+   because it only checks the scheme prefix and the length.
+   - `http://[bad/x.jpg`: `urlsplit` raises `ValueError: Invalid IPv6 URL` at
+     `infrastructure/http_image_downloader.py:66`, which is outside the `try` at `:68`. The
+     same thing happens to a redirect `Location`, through `urljoin` at `:58`.
+   - `http://a..b/x.jpg` and a host label longer than 63 characters: `loop.getaddrinfo`
+     raises `UnicodeEncodeError` (the idna codec), and `:111` catches only `OSError`.
+   - A real IDN host that resolves, such as `https://perfumería.mx/...`: the `Host` header at
+     `:133` carries non-ASCII text, and httpx encodes header values as ASCII
+     (`httpx/_models.py:82`). That raises `UnicodeEncodeError`, which is not an
+     `httpx.HTTPError`, so `:101` does not catch it. This case was reasoned from the httpx
+     source, not reproduced: the probe's IDN host did not resolve.
+
+   Any of these breaks out of the `TaskGroup` (`application/import_validation.py:498-505`).
+   `ValidateNextCatalogImport` then marks the import `failed` with a single
+   `CATALOG_IMPORT_FAILED` issue (row and column None).
+
+   **Failure scenario:** an admin uploads 1,999 good rows and one image cell with a typo
+   (`https://cdn..example.com/a.jpg`). Or a third-party image host answers with
+   `Location: http://[x/`. Either way the admin gets "failed" with no row and no column, and
+   cannot find the cause. Per the plan, the result should be `IMAGE_URL_INVALID` or
+   `IMAGE_UNREACHABLE` on `Imagen N` of the perfume's first row.
+
+   **Expected:** `fetch` returns an `Err` for every URL- or host-derived exception. For IDN
+   hosts, encode the host with IDNA for the `Host` header (and for SNI).
+
+2. **Reading the .xlsx has no limit on uncompressed size.** This was reasoned, not
+   reproduced. The upload is capped at 5 MB compressed. But openpyxl in `read_only` mode
+   still loads `xl/sharedStrings.xml` fully into a Python list
+   (`openpyxl/reader/excel.py:139-147`). Highly repetitive XML deflates at roughly 1000:1,
+   so a 5 MB upload can expand to gigabytes in memory.
+
+   Rows made only of blank or whitespace cells are skipped without counting toward
+   `max_rows` (`infrastructure/xlsx_sheets.py:94-95`). So a sheet with a million such rows is
+   parsed in full, which is CPU-bound.
+
+   Both run in `asyncio.to_thread` (`:53`). Arq's job timeout cancels the awaiting coroutine
+   but cannot stop the thread. The worker process also hosts the outbox relay.
+   - defusedxml is not installed, so openpyxl uses stdlib expat. Expat's own
+     billion-laughs protection covers entity expansion, but not plain zip-ratio expansion.
+
+   **Failure scenario:** a corrupted or crafted upload by a `catalog:manage` admin OOM-kills
+   the worker, or ties up a thread for a long time. While the worker is down, the outbox
+   relay stops too.
+
+   The plan only required the row limit, so fixing this widens scope a little. A suggested
+   fix is to cap the sum of `ZipFile.infolist()` `file_size`, and the size of
+   `sharedStrings.xml`, before `load_workbook`, and report `FILE_UNREADABLE` (or a new code)
+   when it is over. That needs a recorded deviation, or a decision to accept the risk and
+   move it to `plans/findings/`.
+
+**Low**
+
+3. **Validation jobs can fill every arq slot and starve the outbox relay.** Arq gives each
+   cron run its own job id (`arq/worker.py:758`, `unique=True`), and `WorkerSettings` keeps
+   the default `max_jobs=10`. Each 5-second run that finds a pending import holds a slot
+   for the whole validation, which can last up to 1800 s.
+
+   **Failure scenario:** ten uploads in a row, each with slow image hosts. That holds all 10
+   slots, and `cron:relay_outbox` and `cron:catalog_expire_imports` cannot start until a slot
+   frees.
+
+   **Suggested fix:** cap concurrent validations (one per run, or a lock), or raise
+   `max_jobs`.
+
+4. **The 1800 s ceiling is fixed, but the workload has no limit.** The plan allows 2,000 rows
+   with up to 3 images per perfume, downloaded 4 at a time, each fetch allowed up to 30 s.
+   The worst case is far above the `catalog_validate_imports` timeout of 1800 s
+   (`module.py`).
+
+   On timeout, `CancelledError` is not caught by the `except Exception` at
+   `application/commands/catalog_imports.py:128`. The validator still cleans up its uploads
+   (`import_validation.py:502`). The import stays `validating` until the expiry job marks it
+   `CATALOG_IMPORT_INTERRUPTED`.
+
+   **Failure scenario:** a large but valid file whose image hosts are slow times out every
+   time, and the admin never gets a report.
+
+   This follows from the design in the plan (decision 63 and step 10), so it may simply be
+   accepted. If so, record it as a finding.
+
+5. **Uncertain: two address forms pass `is_global`.** On Python 3.14:
+   - `::127.0.0.1` (IPv4-compatible IPv6, deprecated);
+   - `64:ff9b::/96` (NAT64), for example `64:ff9b::7f00:1`.
+
+   An AAAA record pointing at these passes the check at
+   `infrastructure/http_image_downloader.py:116-118`. On a stock Linux host, `::127.0.0.1`
+   is not routed to loopback. NAT64 matters only on a VPS with a NAT64 gateway. The impact
+   is likely nil on the planned deployment.
+
+   **Suggested fix:** also refuse these: unwrap `ipv4_mapped` and `sixtofour`, and reject
+   `::/96` and `64:ff9b::/96`.
+
+6. **Uncertain: compressed image responses can expand in memory before the size check.**
+   `response.aiter_bytes()` (`infrastructure/http_image_downloader.py:146`) decodes
+   `Content-Encoding`. The `max_bytes` check runs after each chunk is decoded, so the cap
+   holds. But one compressed network chunk can expand to tens of MB before the check runs,
+   and up to 4 downloads run at once.
+
+   **Suggested fix:** send `Accept-Encoding: identity`, or iterate `aiter_raw()`.
+
+### Outcome
+
+The checklist failed (`plans-scope`), and findings 1 and 2 need code changes, so the status
+stays `review`.
+- **Plan correction:** add the test directories to a `Files:` line, with a deviation.
+- **In-scope repair (finding 1):** the downloader must turn every URL- or host-derived
+  exception into an `Err`. Add regression tests for `http://[bad/`, `http://a..b/` and an IDN
+  host.
+- **User decision (finding 2):** add an uncompressed-size cap to the reader under a recorded
+  deviation, or accept the risk as a finding in `plans/findings/`.
+- **Low findings 3 to 6:** fix them in the same repair, or record them as findings, as the
+  main session decides.
 
 ## Verification
