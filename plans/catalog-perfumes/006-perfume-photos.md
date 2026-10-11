@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: catalog
 min_implementer: mid
 depends_on: ["003", "004"]
@@ -791,6 +791,86 @@ and `python-multipart` to `apps/api`" or whatever actually happened.
 
 **Result.** Findings needing code changes (H1 pending a user decision, M1, M2, M3) and a
 Deviations correction: status stays `review`. Low findings are optional for the implementer
-or the user to defer.
+or the user to defer. *(Superseded by the re-review below.)*
+
+### Re-review (repair round 1)
+
+Reviewer, 2026-10-11, `git diff cf78ccb..HEAD` (`f539635` fix + `72e0e7a` tests) on
+`feat/catalog-photos`, worktree clean. Scope: H1, M1-M3, L1-L4 and the deviation correction
+only. Paths relative to `apps/api/src/fragancia_api/modules/catalog/`.
+
+**Checklist (re-run for this diff): all applicable items pass.**
+
+- [x] `plans-scope`: "26 declared, 40 changed (base main) ✔ Every change is inside the plan".
+      No hot file changed.
+- [x] `uv run just check` green (1253 unit passed / 3 skipped, 684 harness, lint, mypy, arch,
+      plans-lint, harness-check, compose config).
+- [x] `uv run just test-integration` green (329 passed, 2 skipped, the pre-existing identity
+      round trips).
+- [x] `openapi.json` regenerated (drift check green); `AddPhotoForm` gone from the schemas.
+- [x] Error codes unchanged and stable (`CATALOG_PHOTO_TOO_LARGE` gains `max_pixels` in
+      details on the pixel path only).
+- [x] Deviations: item 9 recorded under "Repair round 1 implemented" (the original step 1 line
+      is kept as history and corrected there). Spot-check of the new deviation "`MPO` in
+      `formats=` raises `KeyError`": true, Pillow 12.3 `MpoImagePlugin.py:194-196` does not
+      register an opener ("MPO shares a factory with JPEG"), `JpegImagePlugin.jpeg_factory`
+      adopts MPO.
+
+**Findings closed.**
+
+- **H1 closed.** `http/perfume_router.py:add_photo` has no body parameter, so FastAPI 0.142.2
+  builds no `body_field` and skips the pre-dependency read (`fastapi/routing.py:441-446` runs
+  only `if body_field`); `require_admin`/`require_permission` and `provide(...)` are solved
+  first (line 499) and the body is pulled in the handler. The only app middleware
+  (`RequestContextMiddleware`, CORS) does not touch the body. Both paths are bounded: a
+  declared `Content-Length` over the limit is refused before any read; a chunked body is
+  refused as soon as the running total passes the limit, so memory is at most `max_bytes` plus
+  one chunk. The tests use httpx's lazy ASGI body, so "0 chunks pulled" on 401/403 and "stopped
+  early" on 422 are meaningful. The OpenAPI body (three `image/*`, `format: binary`, required)
+  is sound; it also removes the previous, wrong `application/x-www-form-urlencoded` media type.
+- **M1 closed.** `Image.open(..., formats=["JPEG", "PNG", "WEBP"])` plus `"MPO"` in the
+  accepted set; regression test with a two-frame MPO.
+- **M2 closed.** Pixel cap checked on the header size before `load()`. Probe: a 6324 x 6324
+  1-bit PNG (15 KB, just under 40 MP) is accepted with peak RSS 457 MB (was 1.5 GB at 169 MP);
+  above the cap it is `TOO_LARGE` without decoding (test patches `ImageFile.load`).
+- **M3 closed.** `s3_media_storage.py:delete` collects `Errors` from every batch and raises
+  `RuntimeError` with `key: code`; `_delete_quietly` (`application/commands/photos.py:32-37`)
+  logs it with `exc_info`. Removal stays Ok, compensation still never masks the Err.
+- **L1 closed.** `_to_8bit` scales `I;16*` over the full range; probe: 16-bit gray with `tRNS`
+  also processes without error.
+- **L2 closed.** `_to_srgb` after the RGB/RGBA conversion. Probes: alpha survives (RGBA + sRGB
+  profile → `(201, 50, 51, 128)`, no ICC in the output); mismatched profiles (LAB profile on
+  RGB/LA, sRGB profile on a CMYK JPEG) and a garbage profile fall back without an exception.
+- **L3 closed** (as M1; `MPO` cannot be in `formats=`, see Deviations spot-check). GIF, BMP,
+  TIFF remain `FORMAT_INVALID` (probed).
+- **L4 closed.** `Config(connect_timeout=5, read_timeout=30, retries=standard/3)`.
+
+**No regression.** The JPEG/PNG/WebP raw upload (201 and admin detail), compensation (processor
+Err, failed put, refused or raising transaction, failing compensation), delete (keys after
+commit, renumbering) and reorder tests all pass unchanged in behavior; the processor still
+returns `FORMAT_INVALID` for non-images whatever the declared `Content-Type` (sniffing kept).
+
+**New findings (all Low, none blocking).**
+
+- **N1 (Low, uncertain, not reproduced).** `http/perfume_router.py:add_photo` iterates
+  `request.stream()` itself. If the client disconnects mid-upload, Starlette raises
+  `ClientDisconnect`, which reaches `RequestContextMiddleware` and is logged as
+  `request.unhandled_error` with a 500 nobody receives (FastAPI's own body read turns this into a
+  400). Scenario: an admin on a flaky mobile connection cancels an upload → a stack trace in the
+  error log. Log noise only; no data effect.
+- **N2 (Low).** `apps/api/pyproject.toml:16` still declares `python-multipart`, now unused (the
+  implementer recorded leaving it). Removing it later avoids shipping a parser no route uses.
+- **N3 (Low, plan text).** "Rules fixed here" (line 96: "whatever its name or declared content
+  type") and acceptance criterion 1 ("multipart `file`") still describe the pre-repair contract.
+  The differences are recorded in "Repair round 1" as the spec allowed, so this is not a
+  failure, but the verifier must send the raw bytes with `Content-Type: image/jpeg` (and a
+  non-image `Content-Type` is now `FORMAT_INVALID` before sniffing).
+
+**Not verified here.** The H1 bound was checked through FastAPI's source and the in-process ASGI
+tests, not against a running uvicorn (that is for the verifier); a real phone MPO or Apple P3
+file was not used.
+
+**Result.** H1, M1-M3, L1-L4 and the deviation correction are closed; nothing regressed;
+checklist green. Status → `verify`.
 
 ## Verification
