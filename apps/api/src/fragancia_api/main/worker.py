@@ -1,9 +1,11 @@
 """Worker entrypoint: `arq fragancia_api.main.worker.WorkerSettings`.
 
 Runs background jobs on Valkey: relaying the outbox every 2 seconds, plus the scheduled jobs
-modules declare (`AppModule.jobs`), each as an arq cron named `cron:<job name>`.
+modules declare (`AppModule.jobs`), each as an arq cron named `cron:<job name>` that runs at
+most once at a time per worker process.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -51,9 +53,16 @@ async def relay_outbox(ctx: dict[str, Any]) -> int:
 
 
 def _module_cron(job: ScheduledJob) -> CronJob:
+    # One run of each module job at a time per worker: a run that finds the previous one still
+    # going returns at once, so long jobs never fill arq's slots and starve the outbox relay.
+    running = asyncio.Lock()
+
     async def run(ctx: dict[str, Any]) -> int:
-        container: Container = ctx["container"]
-        processed = await job.run(container.services)
+        if running.locked():
+            return 0
+        async with running:
+            container: Container = ctx["container"]
+            processed = await job.run(container.services)
         if processed > 0:
             log.info("job.processed", job=job.name, processed=processed)
         return processed

@@ -258,6 +258,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         ),
         images=images,
         storage=media,
+        image_budget=timedelta(minutes=20),  # below the 1800 s timeout of the validation job
     )
     services.add(
         StartCatalogImport,

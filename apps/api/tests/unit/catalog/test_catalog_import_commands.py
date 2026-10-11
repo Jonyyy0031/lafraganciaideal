@@ -345,6 +345,7 @@ class _ExplodingValidator(ImportValidator):
             downloader=rig.downloader,
             images=rig.images,
             storage=rig.storage,
+            image_budget=timedelta(minutes=20),
         )
 
     async def validate(self, data: SheetRows) -> ValidationResult:
@@ -444,6 +445,7 @@ async def test_an_import_the_expiry_job_already_failed_is_left_as_interrupted() 
         downloader=rig.downloader,
         images=rig.images,
         storage=rig.storage,
+        image_budget=timedelta(minutes=20),
     )
     job = _Job(rig, FakeSheetReader(sheet(row(Imagen_1=URL_1))), store, validator=validator)
 

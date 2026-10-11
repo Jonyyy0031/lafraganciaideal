@@ -1,7 +1,13 @@
 """The import sheet reader and the template writer (openpyxl, which blocks: both run in a
-worker thread through `asyncio.to_thread`)."""
+worker thread through `asyncio.to_thread`).
+
+A 5 MB upload can deflate to gigabytes, and a thread cannot be cancelled, so the reader bounds
+the work before and while parsing: the ZIP's entry count and declared uncompressed sizes are
+checked before openpyxl opens it (zipfile never inflates an entry past its declared size), and
+every physical row scanned counts, blank or not."""
 
 import asyncio
+import zipfile
 from io import BytesIO
 from typing import Any
 
@@ -24,6 +30,8 @@ from fragancia_api.shared.kernel import Err, Ok, Result
 log = structlog.get_logger(__name__)
 
 MAX_COLUMNS = 30
+XLSX_MAX_ENTRIES = 1000
+XLSX_MAX_UNCOMPRESSED_BYTES = 50_000_000  # per entry and in total
 TEMPLATE_ROWS = 2000  # rows 2-2001 get the dropdowns
 _DROPDOWNS: dict[str, str] = {
     # column → its list in the hidden sheet
@@ -46,6 +54,20 @@ def _file_issue(error: ImportFileUnreadable | ImportEmpty | ImportTooManyRows) -
     return ImportIssue.of(error, row=None, column=None)
 
 
+def _within_zip_limits(data: bytes) -> bool:
+    """The archive's entry count and declared uncompressed sizes are within the limits."""
+    with zipfile.ZipFile(BytesIO(data)) as archive:
+        entries = archive.infolist()
+    if len(entries) > XLSX_MAX_ENTRIES:
+        return False
+    total = 0
+    for entry in entries:
+        if entry.file_size > XLSX_MAX_UNCOMPRESSED_BYTES:
+            return False
+        total += entry.file_size
+    return total <= XLSX_MAX_UNCOMPRESSED_BYTES
+
+
 class OpenpyxlSheetReader:
     """Reads the first worksheet: the header from row 1, then the non-empty data rows."""
 
@@ -55,6 +77,9 @@ class OpenpyxlSheetReader:
     def _read(self, data: bytes, max_rows: int) -> Result[SheetRows, ImportIssue]:
         workbook = None
         try:
+            if not _within_zip_limits(data):
+                log.info("catalog_import_file_unreadable", error="ZipLimitsExceeded")
+                return Err(_file_issue(ImportFileUnreadable()))
             workbook = load_workbook(BytesIO(data), read_only=True, data_only=True)
             sheet = workbook.worksheets[0]
             sheet.reset_dimensions()  # some writers store a wrong size: read every row
@@ -87,14 +112,18 @@ class OpenpyxlSheetReader:
             headers.append(key)
             keys_by_index[index] = key
 
+        too_many = Err(_file_issue(ImportTooManyRows(details={"max_rows": max_rows})))
+        max_scanned = max_rows * 2  # blank rows count here, so a sheet of blanks stops early
         rows: list[tuple[int, dict[str, Cell]]] = []
         for number, values in enumerate(
             sheet.iter_rows(min_row=2, max_col=MAX_COLUMNS, values_only=True), start=2
         ):
+            if number - 1 > max_scanned:  # `number - 1` physical rows scanned after the header
+                return too_many
             if all(_is_blank(value) for value in values):
                 continue
             if len(rows) == max_rows:  # this is row max_rows + 1
-                return Err(_file_issue(ImportTooManyRows(details={"max_rows": max_rows})))
+                return too_many
             rows.append(
                 (
                     number,

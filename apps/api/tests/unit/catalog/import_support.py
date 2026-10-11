@@ -1,6 +1,7 @@
 """Builders shared by the catalog import tests (validator, commands, http)."""
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -151,6 +152,7 @@ class ValidatorRig:
             downloader=self.downloader,
             images=self.images,
             storage=self.storage,
+            image_budget=timedelta(minutes=20),
         )
 
 

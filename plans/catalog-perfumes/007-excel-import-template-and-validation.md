@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: catalog
 min_implementer: high
 depends_on: ["003", "006"]
@@ -803,6 +803,76 @@ recorded deviation.
 
 `uv run just check` and `uv run just test-integration` must stay green. Then set the status to
 `testing`.
+
+**What was done (implementer, 2026-10-11).** All six items, product code only, every file
+inside the existing `Files:` lines (`plans-scope`: "Every change is inside the plan").
+
+1. **M1** (`infrastructure/http_image_downloader.py`, `application/import_validation.py`):
+   - `_split` wraps `urlsplit`, `.hostname` and `.port` in one `try`: a `ValueError` →
+     `IMAGE_URL_INVALID`. A redirect `Location` that `urljoin` rejects → `IMAGE_URL_INVALID`.
+   - `_ascii_host` encodes a name with IDNA and leaves an IPv6 literal (contains `:`) as it
+     is. A `UnicodeError` (empty label, label over 63) → `IMAGE_URL_INVALID`. The ASCII host is
+     what is resolved and what goes into `Host` and `sni_hostname`.
+   - `getaddrinfo` catches `(OSError, UnicodeError)` → `IMAGE_UNREACHABLE`.
+   - Small addition: `httpx.InvalidURL` (not an `httpx.HTTPError`) from building the request →
+     `IMAGE_URL_INVALID`.
+   - Safety net: `_fetch_and_process` catches `Exception`, logs `catalog_import_image_error`
+     with `exc_info` (the URL is not logged: it may carry tokens) and returns
+     `IMAGE_UNREACHABLE`, which the existing code puts on the group's first row and `Imagen N`.
+     Deviation 4's cleanup when staging raises still applies to storage failures.
+2. **M2** (`infrastructure/xlsx_sheets.py`): `XLSX_MAX_ENTRIES = 1000` and
+   `XLSX_MAX_UNCOMPRESSED_BYTES = 50_000_000`. `_within_zip_limits` checks the entry count,
+   each entry's `file_size` and their total before `load_workbook`; over → `FILE_UNREADABLE`
+   (logged as `error=ZipLimitsExceeded`). The declared size is a real bound: stdlib `zipfile`
+   truncates an entry's output at its `file_size` (`ZipExtFile._read1`, `data[:self._left]`).
+   Every physical row after the header counts; row number minus 1 over `max_rows * 2` →
+   `TOO_MANY_ROWS`. The non-empty limit is unchanged.
+3. **L3** (`main/worker.py`): `_module_cron` creates one `asyncio.Lock` per job; a run that
+   finds it held returns 0 without awaiting. The outbox relay cron is untouched.
+4. **L4** (`application/import_validation.py`, `module.py`): `ImportValidator` takes a
+   required `image_budget: timedelta`, wired as `timedelta(minutes=20)`. The deadline is
+   `time.monotonic()` at the start of `_stage_photos` plus the budget. A URL whose turn (after
+   the semaphore) comes at or after the deadline makes no call and gets `IMAGE_UNREACHABLE`.
+5. **L5** (`http_image_downloader.py`): `_is_blocked` judges an IPv4-mapped address by its
+   IPv4 address and refuses `::/96`, `64:ff9b::/96` and `64:ff9b:1::/48`, on top of
+   `not is_global` and multicast.
+6. **L6** (`http_image_downloader.py`): the request sends `Accept-Encoding: identity`; a 200
+   whose `Content-Encoding` is present and not `identity` → `IMAGE_UNREACHABLE` (details
+   `content_encoding`); the body is counted from `aiter_raw()`.
+
+Docs: `docs/architecture.md` (jobs section) gains the one-run-at-a-time rule and the 20-minute
+image budget.
+
+**Existing tests adapted** (only where the repair changes what they pin):
+
+- `ImportValidator(...)` gained the required `image_budget`, so the four constructions in
+  `tests/unit/catalog/import_support.py`, `test_import_validation.py` (the concurrency test)
+  and `test_catalog_import_commands.py` (`_ExplodingValidator`, `SlowValidator`) pass
+  `timedelta(minutes=20)`.
+- `test_a_processor_exception_propagates_to_the_caller` pinned the behavior M1 removes. It is
+  now `test_a_processor_exception_becomes_an_unreachable_issue_on_its_cell`: the report is
+  `(2, "Imagen 1", IMAGE_UNREACHABLE)` and no keys are returned. The Test coverage row
+  "cleanup when staging raises" still holds for storage failures; the tester should update the
+  table and add the regressions (bad URLs, IDN host, blocked IPv6 forms, compressed body, ZIP
+  limits, blank-row scan limit, budget, cron lock).
+
+**Evidence (2026-10-11):**
+
+- `uv run just check`: green (1696 passed, 3 skipped unit; 684 harness; plans-lint;
+  harness-check).
+- `uv run just test-integration`: 421 passed, 4 skipped.
+- `uv run just plans-scope`: "30 declared, 42 changed. Every change is inside the plan".
+- A scratch probe (not committed) against the real classes:
+  - `http://[bad/x.jpg`, `http://a..b/x.jpg`, a 70-character label and port 99999 →
+    `ImportImageUrlInvalid`; `https://perfumería.invalid/` → `ImportImageUnreachable` (the
+    resolver failed, no exception);
+  - `_ascii_host("perfumería.mx")` → `xn--perfumera-n5a.mx`;
+  - `[::ffff:127.0.0.1]`, `[::127.0.0.1]`, `[64:ff9b::7f00:1]`, `[64:ff9b:1::1]` →
+    `ImportImageHostBlocked`; `::ffff:8.8.8.8`, `2606:4700::1111`, `8.8.8.8` are allowed;
+  - a 58 KB ZIP with a 60 MB entry and a ZIP of 1,001 entries → `FILE_UNREADABLE` before
+    openpyxl; 3 rows + 10 blank rows with `max_rows=5` → `TOO_MANY_ROWS`, + 6 blank rows → Ok.
+- Not exercised here: a real IDN host that resolves, a real gzip response, the budget and the
+  cron lock at run time (no API or worker was started in this round).
 
 ## Test coverage
 

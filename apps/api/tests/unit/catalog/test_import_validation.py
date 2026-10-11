@@ -1,6 +1,7 @@
 """Plan 007: `ImportValidator` over in-memory references, a fake downloader and image processor."""
 
 import asyncio
+from datetime import timedelta
 from uuid import UUID
 
 import pytest
@@ -988,6 +989,7 @@ async def test_at_most_four_downloads_run_at_the_same_time() -> None:
         downloader=SlowDownloader(),
         images=rig.images,
         storage=rig.storage,
+        image_budget=timedelta(minutes=20),
     )
     rows = [row(Nombre=f"Perfume {n}", Imagen_1=f"https://img.test/{n}.jpg") for n in range(12)]
 
@@ -1113,7 +1115,8 @@ async def test_a_failing_cleanup_does_not_hide_the_original_error() -> None:
     assert raised.group_contains(RuntimeError, match="storage put failed")
 
 
-async def test_a_processor_exception_propagates_to_the_caller() -> None:
+async def test_a_processor_exception_becomes_an_unreachable_issue_on_its_cell() -> None:
+    # Repair round 1 (M1): an unexpected exception for one URL never fails the import.
     rig = make_rig(downloads=BOTH)
 
     async def boom(data: bytes):  # type: ignore[no-untyped-def]
@@ -1121,7 +1124,7 @@ async def test_a_processor_exception_propagates_to_the_caller() -> None:
 
     rig.images.process = boom  # type: ignore[method-assign]
 
-    with pytest.raises(ExceptionGroup) as raised:
-        await rig.validator.validate(sheet(row(Imagen_1=URL_1)))
+    issues, _, _, keys = await _validate(rig, sheet(row(Imagen_1=URL_1)))
 
-    assert raised.group_contains(RuntimeError, match="pillow exploded")
+    assert _report(issues) == [(2, "Imagen 1", "CATALOG_IMPORT_IMAGE_UNREACHABLE")]
+    assert keys == []

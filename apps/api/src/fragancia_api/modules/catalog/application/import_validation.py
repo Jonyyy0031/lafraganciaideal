@@ -15,14 +15,17 @@ The algorithm, in order:
 5. Groups without issues get their images: a URL equal to the stored `source_url` of that
    position is skipped (decision 58), a position with a photo is replaced, others append. Each
    URL is downloaded and processed once (at most 4 at a time), and its renditions are
-   uploaded to their final keys.
+   uploaded to their final keys. A download not started within the image budget, or one that
+   raises, becomes `IMAGE_UNREACHABLE` on that cell instead of failing the import.
 6. Any issue → the issues and the uploaded keys (the caller deletes them). Otherwise the
    summary, the plan and the keys.
 """
 
 import asyncio
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Literal
 from uuid import UUID
 
@@ -58,6 +61,7 @@ from fragancia_api.modules.catalog.domain.errors import (
     ImportFamilyUnknown,
     ImportHeaderDuplicated,
     ImportHeaderMissing,
+    ImportImageUnreachable,
     ImportPerfumeArchived,
     ImportPerfumeMismatch,
     ImportPresentationArchived,
@@ -196,11 +200,15 @@ class ImportValidator:
         downloader: ImageDownloader,
         images: ImageProcessor,
         storage: MediaStorage,
+        image_budget: timedelta,
     ) -> None:
         self._references = references
         self._downloader = downloader
         self._images = images
         self._storage = storage
+        # Downloads not started within this time become issues, so a file with slow image
+        # hosts still gets a full report before the job's timeout.
+        self._image_budget = image_budget
 
     async def validate(self, sheet: SheetRows) -> ValidationResult:
         header_issues = self._check_headers(sheet)
@@ -484,10 +492,15 @@ class ImportValidator:
         if not by_url:
             return
         semaphore = asyncio.Semaphore(DOWNLOADS_MAX)
+        deadline = time.monotonic() + self._image_budget.total_seconds()
 
         async def stage(url: str, jobs: list[_PhotoJob]) -> None:
             async with semaphore:
-                match await self._fetch_and_process(url):
+                if time.monotonic() >= deadline:  # out of time: no download, a full report
+                    result: Result[ProcessedImage, DomainError] = Err(ImportImageUnreachable())
+                else:
+                    result = await self._fetch_and_process(url)
+                match result:
                     case Err(error):
                         for job in jobs:
                             job.group.first.add(error, f"Imagen {job.image_number}")
@@ -507,16 +520,22 @@ class ImportValidator:
             group.photos.sort(key=lambda photo: photo.position)
 
     async def _fetch_and_process(self, url: str) -> Result[ProcessedImage, DomainError]:
-        match await self._downloader.fetch(url):
-            case Err(unreachable):
-                return Err(unreachable)
-            case Ok(data):
-                pass
-        match await self._images.process(data):
-            case Err(invalid):
-                return Err(invalid)
-            case Ok(image):
-                return Ok(image)
+        """Downloads and processes one URL. An unexpected exception becomes an issue on that
+        cell, never a failed import."""
+        try:
+            match await self._downloader.fetch(url):
+                case Err(unreachable):
+                    return Err(unreachable)
+                case Ok(data):
+                    pass
+            match await self._images.process(data):
+                case Err(invalid):
+                    return Err(invalid)
+                case Ok(image):
+                    return Ok(image)
+        except Exception:
+            log.warning("catalog_import_image_error", exc_info=True)
+            return Err(ImportImageUnreachable())
 
     async def _upload(self, job: _PhotoJob, image: ProcessedImage, uploaded: list[str]) -> None:
         photo_id = new_id()
