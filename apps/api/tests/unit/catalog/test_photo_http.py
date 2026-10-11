@@ -210,6 +210,85 @@ async def test_an_upload_over_the_limit_is_422_too_large_without_calling_the_use
     assert await _admin_photos(rig) == []
 
 
+class _Stream:
+    """A chunked request body that counts how many chunks the server pulled from it."""
+
+    def __init__(self, chunks: int, size: int = 1024) -> None:
+        self.total = chunks
+        self._size = size
+        self.pulled = 0
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for _ in range(self.total):
+            self.pulled += 1
+            yield b"x" * self._size
+
+
+async def _stream_upload(
+    rig: Rig, stream: _Stream, headers: dict[str, str] | None = None
+) -> Response:
+    return await rig.client.post(
+        f"{ADMIN}/{rig.perfume.id}/photos",
+        content=stream,
+        headers={**(ADMIN_HEADERS if headers is None else headers), "content-type": "image/jpeg"},
+    )
+
+
+async def test_a_streamed_body_over_the_limit_is_422_too_large_and_cut_off(rig: Rig) -> None:
+    stream = _Stream(chunks=1000)  # 1 MB announced by nobody (chunked), limit is 100 bytes
+
+    response = await _stream_upload(rig, stream)
+
+    assert _code(response) == (422, "CATALOG_PHOTO_TOO_LARGE")
+    assert response.json()["details"] == {"max_bytes": MAX_BYTES}
+    assert 1 <= stream.pulled < stream.total  # stopped as soon as the limit passed
+    assert rig.images.calls == []
+    assert rig.storage.objects == {}
+
+
+async def test_a_streamed_body_exactly_at_the_limit_is_accepted(rig: Rig) -> None:
+    response = await _stream_upload(rig, _Stream(chunks=4, size=MAX_BYTES // 4))
+
+    assert response.status_code == 201, response.text
+    assert rig.images.calls == [b"x" * MAX_BYTES]
+
+
+async def test_a_declared_content_length_over_the_limit_is_422_without_reading_the_body(
+    rig: Rig,
+) -> None:
+    stream = _Stream(chunks=3)
+
+    response = await _stream_upload(
+        rig, stream, {**ADMIN_HEADERS, "content-length": str(MAX_BYTES + 1)}
+    )
+
+    assert _code(response) == (422, "CATALOG_PHOTO_TOO_LARGE")
+    assert response.json()["details"] == {"max_bytes": MAX_BYTES}
+    assert stream.pulled == 0
+    assert rig.images.calls == []
+
+
+async def test_an_unauthenticated_streamed_body_is_401_and_no_chunk_is_consumed(rig: Rig) -> None:
+    stream = _Stream(chunks=1000)
+
+    response = await _stream_upload(rig, stream, headers={})
+
+    assert _code(response) == (401, "AUTHENTICATION_REQUIRED")
+    assert stream.pulled == 0
+    assert rig.images.calls == []
+
+
+async def test_a_streamed_body_without_catalog_manage_is_403_and_no_chunk_is_consumed(
+    rig: Rig,
+) -> None:
+    stream = _Stream(chunks=1000)
+
+    response = await _stream_upload(rig, stream, headers=NO_PERMISSION_HEADERS)
+
+    assert _code(response) == (403, "FORBIDDEN")
+    assert stream.pulled == 0
+
+
 async def test_a_json_body_is_422_format_invalid_by_its_content_type(rig: Rig) -> None:
     response = await rig.client.post(
         f"{ADMIN}/{rig.perfume.id}/photos", json={"file": "x"}, headers=ADMIN_HEADERS

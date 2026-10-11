@@ -1,5 +1,6 @@
 """Plan 006: how `S3MediaStorage` talks to boto3 (a recording fake client; no network)."""
 
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -15,9 +16,14 @@ class _FakeClient:
     def put_object(self, **kwargs: Any) -> None:
         self.puts.append(kwargs)
 
+    delete_response: dict[str, Any] | None = {}
+    delete_responses: Iterator[dict[str, Any]] | None = None
+
     def delete_objects(self, **kwargs: Any) -> dict[str, Any]:
         self.deletes.append(kwargs)
-        return {}
+        if self.delete_responses is not None:
+            return next(self.delete_responses)
+        return self.delete_response or {}
 
 
 class _Factory:
@@ -115,6 +121,60 @@ async def test_delete_splits_more_than_1000_keys_into_batches(factory: _Factory)
     assert sizes == [1000, 1000, 1]
     sent = [obj["Key"] for call in factory.client.deletes for obj in call["Delete"]["Objects"]]
     assert sent == keys
+
+
+async def test_the_client_has_timeouts_and_standard_retries(factory: _Factory) -> None:
+    await _storage().put("k", b"x", "image/webp")
+
+    config = factory.calls[0][1]["config"]
+    assert config.connect_timeout == 5
+    assert config.read_timeout == 30
+    assert config.retries == {"max_attempts": 3, "mode": "standard"}
+
+
+async def test_delete_errors_reported_in_the_response_are_raised_with_key_and_code(
+    factory: _Factory,
+) -> None:
+    """S3 answers 200 with an `Errors` list for per-key failures such as AccessDenied."""
+    factory.client.delete_response = {
+        "Errors": [
+            {"Key": "perfumes/a/b-card.webp", "Code": "AccessDenied", "Message": "no"},
+            {"Key": "perfumes/a/b-detail.webp", "Code": "InternalError", "Message": "boom"},
+        ]
+    }
+
+    with pytest.raises(RuntimeError) as raised:
+        await _storage().delete(["perfumes/a/b-card.webp", "perfumes/a/b-detail.webp"])
+
+    message = str(raised.value)
+    assert "perfumes/a/b-card.webp: AccessDenied" in message
+    assert "perfumes/a/b-detail.webp: InternalError" in message
+    assert "2 object(s)" in message
+
+
+async def test_errors_of_every_batch_are_collected_before_raising(factory: _Factory) -> None:
+    responses = iter(
+        [
+            {"Errors": [{"Key": "k0", "Code": "AccessDenied"}]},
+            {},
+            {"Errors": [{"Key": "k2000", "Code": "SlowDown"}]},
+        ]
+    )
+    factory.client.delete_response = None
+    factory.client.delete_responses = responses
+
+    with pytest.raises(RuntimeError) as raised:
+        await _storage().delete([f"k{n}" for n in range(2001)])
+
+    assert len(factory.client.deletes) == 3  # no batch is skipped after a failure
+    assert "k0: AccessDenied" in str(raised.value)
+    assert "k2000: SlowDown" in str(raised.value)
+
+
+async def test_an_empty_errors_list_is_success(factory: _Factory) -> None:
+    factory.client.delete_response = {"Errors": []}
+
+    await _storage().delete(["k1"])
 
 
 async def test_a_client_error_propagates_to_the_caller(factory: _Factory) -> None:

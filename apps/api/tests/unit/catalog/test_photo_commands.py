@@ -1,6 +1,7 @@
 """Plan 006: add, remove and reorder photos (use cases over in-memory adapters and fakes)."""
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -23,6 +24,7 @@ from fragancia_api.modules.catalog.infrastructure.in_memory_media import (
     InMemoryMediaStorage,
 )
 from fragancia_api.modules.catalog.infrastructure.in_memory_perfumes import InMemoryPerfumes
+from fragancia_api.modules.catalog.infrastructure.s3_media_storage import S3MediaStorage
 from fragancia_api.shared.infrastructure.in_memory import FixedClock, InMemoryTransactionRunner
 from fragancia_api.shared.kernel import Err, Ok, Result
 from tests.unit.catalog.perfume_support import (
@@ -326,6 +328,41 @@ async def test_a_failing_object_delete_still_removes_the_photo_and_is_logged() -
     assert _stored(world, perfume.id).photos == []
     assert len(storage.objects) == 2  # the orphans stay in the bucket
     assert [log["event"] for log in logs] == ["catalog_photo_objects_not_deleted"]
+
+
+async def test_s3_per_key_delete_errors_are_logged_and_the_removal_still_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S3 reports AccessDenied inside a 200 response; the adapter raises and the command logs."""
+
+    class _DeniesDeletes:
+        def delete_objects(self, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "Errors": [
+                    {"Key": item["Key"], "Code": "AccessDenied"}
+                    for item in kwargs["Delete"]["Objects"]
+                ]
+            }
+
+    monkeypatch.setattr("boto3.client", lambda *args, **kwargs: _DeniesDeletes())
+    s3 = S3MediaStorage(
+        endpoint_url="http://s3.test", access_key="a", secret_key="s", bucket="b", region="r"
+    )
+    memory = InMemoryMediaStorage()
+    world, perfume, (photo_id,) = await _perfume_with_photos(1, memory)
+    command = RemovePhoto(
+        perfumes=world.perfumes, storage=s3, transactions=InMemoryTransactionRunner()
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        result = await command.execute(perfume.id, photo_id)
+
+    assert isinstance(result, Ok)
+    assert _stored(world, perfume.id).photos == []
+    [entry] = [log for log in logs if log["event"] == "catalog_photo_objects_not_deleted"]
+    assert sorted(entry["keys"]) == sorted(photo_keys(perfume.id, photo_id))
+    assert entry["log_level"] == "warning"
+    assert entry["exc_info"] is True
 
 
 @pytest.mark.parametrize(

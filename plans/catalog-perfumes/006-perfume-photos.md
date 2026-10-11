@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: mid
 depends_on: ["003", "004"]
@@ -570,9 +570,9 @@ CONFIRMED rows, except the one marked below.
 | A failing compensation delete does not mask the Err and is logged with the keys | same | application | `::test_a_failing_compensation_delete_does_not_mask_the_domain_error`, `::test_a_failed_compensation_delete_is_logged_with_the_keys` | CONFIRMED |
 | `RemovePhoto`: deletes keys only after the transaction; failing delete still Ok and logged; not found / archived delete nothing | `application/commands/photos.py:RemovePhoto.execute` | application | `::test_removes_the_photo_*`, `::test_the_objects_are_deleted_only_after_the_transaction_finished`, `::test_a_failing_object_delete_still_removes_the_photo_and_is_logged`, `::test_unknown_perfume_or_photo_is_not_found_and_deletes_nothing[*]`, `::test_an_archived_perfume_refuses_the_removal_and_deletes_nothing` | CONFIRMED |
 | `ReorderPhotos`: saves positions; invalid / unknown / archived | `application/commands/photos.py:ReorderPhotos.execute` | application | `::test_reorders_the_photos_and_saves_the_positions`, `::test_rejects_an_order_*`, `::test_reordering_an_*` | CONFIRMED |
-| Multipart upload: field `file`, 201 `{id}`, admin detail lists the photo with URLs | `http/perfume_router.py:231-251` | http | `test_photo_http.py::test_a_multipart_upload_is_201_and_the_admin_detail_lists_the_photo` | CONFIRMED |
-| Size limit: exactly max accepted; max+1 is 422 `CATALOG_PHOTO_TOO_LARGE` with `max_bytes`, use case not called | `http/perfume_router.py:249-251` | http | `::test_an_upload_exactly_at_the_limit_is_accepted`, `::test_an_upload_over_the_limit_is_422_too_large_without_calling_the_use_case` | CONFIRMED |
-| Missing `file`, JSON body, malformed id are `VALIDATION_ERROR`; empty file reaches the processor as `b""`; name and content type ignored | same | http | `::test_a_request_without_the_file_field_is_a_validation_error`, `::test_a_json_body_instead_of_multipart_is_a_validation_error`, `::test_an_empty_file_reaches_the_processor_as_empty_bytes_and_its_error_is_422`, `::test_the_declared_name_and_content_type_do_not_matter_to_the_router`, `::test_a_malformed_perfume_id_is_a_validation_error` | CONFIRMED |
+| Raw-body upload (superseded multipart, repair round 1): the body is the image, `Content-Type` image/jpeg, png or webp; 201 `{id}`; admin detail lists the photo with URLs | `http/perfume_router.py:add_photo` | http | `test_photo_http.py::test_a_raw_body_upload_is_201_and_the_admin_detail_lists_the_photo` | CONFIRMED |
+| Size limit: exactly max accepted; max+1 is 422 `CATALOG_PHOTO_TOO_LARGE` with `max_bytes`, use case not called | `http/perfume_router.py:add_photo` | http | `::test_an_upload_exactly_at_the_limit_is_accepted`, `::test_an_upload_over_the_limit_is_422_too_large_without_calling_the_use_case` | CONFIRMED |
+| JSON body, empty body and a non-image content type are `CATALOG_PHOTO_FORMAT_INVALID` without calling the processor; malformed id is `VALIDATION_ERROR` | same | http | `::test_a_json_body_is_422_format_invalid_by_its_content_type`, `::test_an_empty_body_is_422_format_invalid_without_calling_the_processor`, `::test_a_content_type_outside_the_three_image_types_is_422_format_invalid`, `::test_a_malformed_perfume_id_is_a_validation_error` | CONFIRMED |
 | Error codes: 422 format / too small, 409 limit, 404, 422 archived (upload, delete, reorder); delete 204 renumbers and deletes objects; reorder 204; order invalid 422; `PUT .../photos/order` not swallowed by `{photo_id}` | `http/perfume_router.py:254-273` | http | `::test_processor_errors_are_422_with_their_codes[*]`, `::test_the_fourth_upload_is_409_and_leaves_no_new_object`, `::test_delete_*`, `::test_deleting_*`, `::test_reorder_is_204_and_the_positions_follow`, `::test_an_order_that_is_not_the_current_set_is_422[*]`, `::test_order_is_a_route_of_its_own_not_a_photo_id` | CONFIRMED |
 | More than 3 ids in the reorder body is `VALIDATION_ERROR` from the contract (the plan names `ORDER_INVALID` for "extra"; with 4 ids the contract answers first, still 422; a 3rd extra id with 2 photos is `ORDER_INVALID`) | `contracts.py:211-214` | http | `::test_more_than_three_ids_is_a_validation_error_from_the_contract` | CONFIRMED (see Deviations note below) |
 | 401 without session and 403 without `catalog:manage` on the 3 routes; all admin routes protected | `assert_admin_routes_are_protected` | http | `::test_photo_routes_return_401_without_a_session[*]`, `::test_photo_routes_return_403_for_an_admin_without_catalog_manage[*]` | CONFIRMED |
@@ -607,6 +607,43 @@ CONFIRMED rows, except the one marked below.
 `ReorderPhotosRequest(max_length=3)` makes a body of 4 ids a `VALIDATION_ERROR` before the use case.
 Both are 422. With fewer than 3 photos an extra id reaches the domain and is `ORDER_INVALID`
 (tested). Left to the reviewer to decide whether the plan text or the contract should change.
+
+### Test coverage: repair round 1 (2026-10-11, tester)
+
+Regressions for H1, M1-M3 and L1, L2, L4 (L3 is covered by M1: only JPEG/PNG/WebP/MPO inputs are
+accepted and GIF/BMP/garbage stay `FORMAT_INVALID`). Product code untouched. Superseded: the three
+multipart-only http rows above (replaced by the raw-body rows); the earlier closing counts.
+
+**Runs.**
+- Baseline (repair code, before any new test): `uv run just check` green, `uv run just
+  test-integration` green (318 passed, 2 skipped).
+- Closing: `uv run just check` green (ruff, mypy 221 files, arch, 1253 unit passed, 3 skipped,
+  harness 684 passed, plans-lint, harness-check, compose config); `uv run just test-integration`
+  green (329 passed, 2 skipped, the pre-existing identity round trips). Difference: +10 unit, +11
+  integration, 0 failures, 0 xfail, 0 new skips. RustFS was reachable.
+
+| Finding | Behavior | Layer | Test (`apps/api/tests/`) | State |
+| ------- | -------- | ----- | ------------------------ | ----- |
+| H1 | A chunked body over the limit is 422 `CATALOG_PHOTO_TOO_LARGE` and the read stops early (fewer chunks pulled than offered); a chunked body exactly at the limit is accepted | http | `unit/catalog/test_photo_http.py::test_a_streamed_body_over_the_limit_is_422_too_large_and_cut_off`, `::test_a_streamed_body_exactly_at_the_limit_is_accepted` | CONFIRMED |
+| H1 | A declared `Content-Length` over the limit is 422 `TOO_LARGE` with zero chunks pulled | http | `::test_a_declared_content_length_over_the_limit_is_422_without_reading_the_body` | CONFIRMED |
+| H1 | Unauthenticated streamed body (1000 x 1 KiB) is 401 with 0 chunks consumed; admin without `catalog:manage` is 403 with 0 chunks | http | `::test_an_unauthenticated_streamed_body_is_401_and_no_chunk_is_consumed`, `::test_a_streamed_body_without_catalog_manage_is_403_and_no_chunk_is_consumed` | CONFIRMED |
+| M1 | A two-frame MPO (a phone JPEG) is accepted, first frame used (size and colors) | integration | `integration/catalog/test_pillow_image_processor.py::test_a_multi_picture_jpeg_is_accepted_and_uses_its_first_frame` | CONFIRMED |
+| M2 | A 42 MP 1-bit PNG (a few KB) is `CATALOG_PHOTO_TOO_LARGE` with `{"max_bytes", "max_pixels": 40000000}`; refused before any decode (`ImageFile.load` patched to fail); exactly 40 MP accepted | integration | `::test_more_than_40_megapixels_is_refused_with_the_cap_in_the_details`, `::test_the_pixel_cap_is_checked_before_any_pixel_is_decoded`, `::test_exactly_40_megapixels_is_accepted` | CONFIRMED |
+| M3 | `delete_objects` `Errors` are raised naming `key: code`; errors of every batch are collected and no batch is skipped; an empty `Errors` is success | adapter (unit, fake boto3) | `unit/catalog/test_s3_media_storage.py::test_delete_errors_reported_in_the_response_are_raised_with_key_and_code`, `::test_errors_of_every_batch_are_collected_before_raising`, `::test_an_empty_errors_list_is_success` | CONFIRMED |
+| M3 | With the real `S3MediaStorage` reporting `AccessDenied`, `RemovePhoto` is still Ok, the row is gone and a warning `catalog_photo_objects_not_deleted` is logged with both keys and `exc_info` | application | `unit/catalog/test_photo_commands.py::test_s3_per_key_delete_errors_are_logged_and_the_removal_still_succeeds` | CONFIRMED |
+| L1 | A 16-bit grayscale PNG is scaled over the full range (0 -> 0, 10000 -> 39, 30000 -> 117, 65535 -> 255), not clipped to white | integration | `::test_a_16_bit_grayscale_png_is_scaled_not_clipped[*]` | CONFIRMED |
+| L2 | A Display P3 image (profile built by hand in `images.display_p3_profile`) is converted: red up, green and blue down versus the raw values, no ICC profile in either rendition; no profile means no color shift; an unreadable profile falls back to the plain conversion | integration | `::test_a_display_p3_image_is_converted_to_srgb_and_leaves_no_profile`, `::test_an_image_without_a_profile_is_not_color_shifted`, `::test_an_unreadable_profile_falls_back_to_the_plain_conversion` | CONFIRMED |
+| L4 | boto3 client is built with `connect_timeout=5`, `read_timeout=30`, `retries={"max_attempts": 3, "mode": "standard"}` | adapter (unit) | `unit/catalog/test_s3_media_storage.py::test_the_client_has_timeouts_and_standard_retries` | CONFIRMED |
+
+**Not covered, said plainly.**
+- The logged exception text (the `key: code` list) is asserted on the adapter's exception, not in the
+  rendered log line: `structlog.testing.capture_logs` records `exc_info=True`, not the message.
+- The P3 profile is a hand-built matrix/TRC profile with the Display P3 primaries, not Apple's file;
+  the assertions are directional (red up, green and blue down), not exact values.
+- The retries and timeouts are asserted as configuration; no network failure was simulated.
+- The MPO test builds the file with Pillow's own MPO writer, not a real phone photo.
+- The existing 196 MP bomb test still passes (Pillow refuses it on open, `FORMAT_INVALID`); the 40 MP
+  cap is the `TOO_LARGE` path for 40-179 MP.
 
 ## Review findings
 

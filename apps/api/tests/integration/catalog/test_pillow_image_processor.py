@@ -3,7 +3,7 @@
 from io import BytesIO
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageFile
 
 from fragancia_api.modules.catalog.application.ports import ProcessedImage
 from fragancia_api.modules.catalog.infrastructure.pillow_image_processor import (
@@ -258,3 +258,99 @@ async def test_a_decompression_bomb_is_a_format_error() -> None:
 
 async def test_the_decompression_guard_is_not_disabled_for_the_whole_process() -> None:
     assert Image.MAX_IMAGE_PIXELS is not None
+
+
+# --- repair round 1: MPO, pixel cap, bit depth, color profile ---------------------------------
+
+
+async def test_a_multi_picture_jpeg_is_accepted_and_uses_its_first_frame() -> None:
+    data = images.mpo((900, 700))
+    assert Image.open(BytesIO(data)).format == "MPO"  # what a phone JPEG with a gain map is
+
+    image = await _ok(data)
+
+    assert images.open_webp(image.detail).size == (900, 700)
+    assert images.open_webp(image.card).size == (400, 311)
+    detail = images.open_webp(image.detail).convert("RGB")
+    assert _color_close(detail.getpixel((100, 350)), images.RED)  # type: ignore[arg-type]
+
+
+async def test_more_than_40_megapixels_is_refused_with_the_cap_in_the_details() -> None:
+    """A 1-bit PNG of 42 MP is a few KB: only the pixel count can stop it."""
+    data = images.encode(Image.new("1", (7000, 6000)), "PNG")
+    assert len(data) < 100_000
+
+    code, details = await _err_code(data)
+
+    assert code == "CATALOG_PHOTO_TOO_LARGE"
+    assert details == {"max_bytes": 5_000_000, "max_pixels": 40_000_000}
+
+
+async def test_the_pixel_cap_is_checked_before_any_pixel_is_decoded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the image was decoded before the pixel cap")
+
+    monkeypatch.setattr(ImageFile.ImageFile, "load", forbidden)
+    data = images.encode(Image.new("1", (7000, 6000)), "PNG")
+
+    assert (await _err_code(data))[0] == "CATALOG_PHOTO_TOO_LARGE"
+
+
+async def test_exactly_40_megapixels_is_accepted() -> None:
+    data = images.encode(Image.new("L", (8000, 5000), 128), "PNG")
+
+    image = await _ok(data)
+
+    assert (image.width, image.height) == (1200, 750)
+
+
+@pytest.mark.parametrize(("level", "expected"), [(0, 0), (30000, 117), (10000, 39), (65535, 255)])
+async def test_a_16_bit_grayscale_png_is_scaled_not_clipped(level: int, expected: int) -> None:
+    """Clipping 30000/65535 to 8 bits made mid-gray white; the full range maps to 0..255."""
+    data = images.encode(Image.new("I;16", (800, 800), level), "PNG")
+    assert Image.open(BytesIO(data)).mode == "I;16"
+
+    image = await _ok(data)
+
+    pixel = images.open_webp(image.detail).convert("RGB").getpixel((400, 400))
+    assert all(abs(channel - expected) <= 4 for channel in pixel)  # type: ignore[union-attr]
+
+
+async def test_a_display_p3_image_is_converted_to_srgb_and_leaves_no_profile() -> None:
+    """P3 (200, 100, 50) is a more saturated color than sRGB (200, 100, 50): the conversion
+    raises red and lowers green and blue instead of just dropping the profile."""
+    profile = images.display_p3_profile()
+    data = images.encode(Image.new("RGB", (800, 800), (200, 100, 50)), "PNG", icc_profile=profile)
+    assert Image.open(BytesIO(data)).info["icc_profile"] == profile
+
+    image = await _ok(data)
+
+    for rendition in (image.card, image.detail):
+        assert "icc_profile" not in images.open_webp(rendition).info
+    red, green, blue = images.open_webp(image.detail).convert("RGB").getpixel((400, 400))  # type: ignore[misc]
+    assert red >= 210
+    assert green <= 98
+    assert blue <= 30
+
+
+async def test_an_image_without_a_profile_is_not_color_shifted() -> None:
+    data = images.encode(Image.new("RGB", (800, 800), (200, 100, 50)), "PNG")
+
+    image = await _ok(data)
+
+    pixel = images.open_webp(image.detail).convert("RGB").getpixel((400, 400))
+    assert _color_close(pixel, (200, 100, 50), tolerance=6)  # type: ignore[arg-type]
+
+
+async def test_an_unreadable_profile_falls_back_to_the_plain_conversion() -> None:
+    data = images.encode(
+        Image.new("RGB", (800, 800), (200, 100, 50)), "PNG", icc_profile=b"\x00" * 32
+    )
+
+    image = await _ok(data)
+
+    decoded = images.open_webp(image.detail)
+    assert "icc_profile" not in decoded.info
+    assert _color_close(decoded.convert("RGB").getpixel((400, 400)), (200, 100, 50), 6)  # type: ignore[arg-type]
