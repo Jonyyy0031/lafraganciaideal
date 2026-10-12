@@ -10,7 +10,7 @@ from fragancia_api.config import Settings
 from fragancia_api.container import Container, build_container
 from fragancia_api.shared.http import health
 from fragancia_api.shared.http.errors import install_error_handlers
-from fragancia_api.shared.http.middleware import RequestContextMiddleware
+from fragancia_api.shared.http.middleware import BodySizeLimitMiddleware, RequestContextMiddleware
 from fragancia_api.shared.http.openapi import install_openapi, operation_id
 from fragancia_api.shared.http.reference import reference_router
 from fragancia_api.shared.http.services import ServiceRegistry
@@ -21,7 +21,8 @@ TITLE = "La Fragancia Ideal API"
 DESCRIPTION = (
     "Online perfume store and back office. Admin routes (`/api/v1/admin/*`) need the "
     "`fragancia_session` session cookie set by `POST /api/v1/auth/login`. Errors always have "
-    "the shape `{code, message, details?}`."
+    "the shape `{code, message, details?}`. Request bodies over the size limit get 413 "
+    "`REQUEST_TOO_LARGE`."
 )
 
 
@@ -42,6 +43,8 @@ def create_app(container: Container | None = None) -> FastAPI:
         container.routers,
         docs=not container.settings.is_production,
         cors_origins=container.settings.cors_origin_list,
+        max_body_bytes=container.settings.request_max_bytes,
+        max_upload_bytes=container.settings.upload_max_bytes,
         lifespan=lifespan,
     )
 
@@ -52,6 +55,8 @@ def build_app(
     *,
     docs: bool = True,
     cors_origins: Sequence[str] = (),
+    max_body_bytes: int = 1_048_576,
+    max_upload_bytes: int = 10_485_760,
     lifespan: object = None,
 ) -> FastAPI:
     """Assemble the FastAPI app from a service registry; tests call it with in-memory adapters."""
@@ -69,6 +74,11 @@ def build_app(
     app.state.services = services
     install_error_handlers(app)
     app.add_middleware(RequestContextMiddleware)
+    # Added after RequestContextMiddleware, so it is the outer layer: the 413 is sent before
+    # any route code runs.
+    app.add_middleware(
+        BodySizeLimitMiddleware, max_body_bytes=max_body_bytes, max_upload_bytes=max_upload_bytes
+    )
     if cors_origins:
         app.add_middleware(
             CORSMiddleware,

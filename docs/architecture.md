@@ -102,6 +102,12 @@ Pydantic v2 request/response models in each module's `http/` are the single sour
 for the HTTP API. FastAPI generates the OpenAPI document; `packages/api-client` is generated
 from it for Angular. No hand-written duplicate types in the frontend.
 
+- **Request body limits**: `BodySizeLimitMiddleware` (outermost layer, before any route code
+  runs) answers 413 `REQUEST_TOO_LARGE` when a body passes the limit, whether declared in
+  `Content-Length` or streamed. JSON, form, text and body-less requests are limited to
+  `REQUEST_MAX_BYTES` (1 MiB); any other media type is a binary upload, limited to the larger of
+  the photo and catalog-import limits. The upload routes keep their own smaller limits.
+
 ## The order lifecycle _(to be built)_
 
 ```

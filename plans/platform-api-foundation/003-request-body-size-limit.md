@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -141,6 +141,21 @@ Today nothing limits the size of a request body.
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+- Step 2/3, `X-Request-ID`: the middleware is the outer layer, so `RequestContextMiddleware`
+  never sees the 413. The middleware therefore adds `X-Request-ID` itself (the request's own
+  header or a new uuid4 hex), to meet the acceptance criterion. Cosmetic.
+- Step 2, streamed bodies: FastAPI catches the `_BodyTooLarge` raised in `receive` while
+  parsing the body and answers 400 "error parsing the body" (found by a scratch run). The
+  middleware now also sets an `exceeded` flag and, when the app starts any response after the
+  limit was passed, replaces it with the 413 and drops the app's remaining messages. The
+  re-raise path for a started response is kept as planned. Same behavior as the plan, extra
+  mechanism.
+- `plans-scope` reports 4 out-of-scope files (`.claude/hooks/format_file.py`,
+  `catalog_imports.py`, `test_sql_catalog_import_confirm.py`, `scripts/harness/test_hooks.py`).
+  They come from earlier commits on this branch versus `main`, not from this plan's
+  working-tree changes.
+- Step 5 tests are left to the tester phase.
 
 ## Test coverage
 
