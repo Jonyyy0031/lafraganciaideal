@@ -6,6 +6,7 @@ and the lock between concurrent confirms and the expiry job.
 Ready imports are built with the real clock (the container's `ConfirmCatalogImport` reads it)."""
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -57,7 +58,7 @@ from fragancia_api.modules.catalog.infrastructure.tables import (
     perfumes,
     presentations,
 )
-from fragancia_api.shared.infrastructure.database import SqlTransactionRunner
+from fragancia_api.shared.infrastructure.database import Database, SqlTransactionRunner
 from fragancia_api.shared.infrastructure.in_memory import FixedClock
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result, new_id
 from tests.integration.catalog.conftest import Bucket
@@ -757,6 +758,85 @@ async def test_concurrent_confirms_of_the_same_import_have_exactly_one_winner(
     item = await _load_import(container, import_id)
     assert item.status is ImportStatus.APPLIED
     assert item.applied_by in {f"admin-{n}" for n in range(4)}
+
+
+async def test_confirms_touching_the_same_perfumes_in_opposite_order_do_not_deadlock(
+    container: Container,
+    world: World,  # noqa: F811
+) -> None:
+    """Repair round 1: the confirm locks perfumes in ascending id, whatever the file order.
+
+    A gate makes the old (file order) behavior deadlock deterministically: after its first
+    perfume lock each confirm waits, up to half a second, for the other one to hold its own
+    first lock. With one global order the second confirm is blocked on the first lock and
+    never arrives, so the gate times out and the first one goes on."""
+    names = {
+        await seed_perfume(container, world, "Zz Imp Lock A", presentation_ml=(100,)): (
+            "Zz Imp Lock A"
+        ),
+        await seed_perfume(container, world, "Zz Imp Lock B", presentation_ml=(100,)): (
+            "Zz Imp Lock B"
+        ),
+    }
+    low, high = sorted(names)
+
+    async def update(perfume_id: UUID, price: int, row: int) -> PlannedPerfume:
+        presentation_id = await _presentation_id(container, perfume_id, 100)
+        return _planned(
+            world,
+            perfume_id,
+            names[perfume_id],
+            is_new=False,
+            first_row=row,
+            presentations_=(_presentation(100, price, presentation_id=presentation_id, row=row),),
+        )
+
+    ascending = await _store_ready(
+        container, await update(low, 111_100, 2), await update(high, 111_100, 3)
+    )
+    descending = await _store_ready(
+        container, await update(high, 222_200, 2), await update(low, 222_200, 3)
+    )
+    arrived = 0
+    both_locked = asyncio.Event()
+
+    class Gated(SqlPerfumeRepository):
+        def __init__(self, database: Database) -> None:
+            super().__init__(database)
+            self._first = True
+
+        async def get_for_update(self, perfume_id: UUID) -> Perfume | None:
+            nonlocal arrived
+            found = await super().get_for_update(perfume_id)
+            if self._first:
+                self._first = False
+                arrived += 1
+                if arrived == 2:
+                    both_locked.set()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(both_locked.wait(), timeout=0.5)
+            return found
+
+    def gated_confirm() -> ConfirmCatalogImport:
+        return _confirm_with(
+            container, SqlTransactionRunner(container.database), Gated(container.database)
+        )
+
+    results = await asyncio.gather(
+        gated_confirm().execute(ascending, "admin-1"),
+        gated_confirm().execute(descending, "admin-2"),
+    )  # a deadlock would raise out of the gather
+
+    assert any(isinstance(r, Ok) for r in results), results
+    for result in results:
+        assert isinstance(result, Ok) or _code(result) in {
+            "CATALOG_IMPORT_STALE",
+            "CATALOG_IMPORT_NOT_READY",
+        }
+    statuses = {
+        (await _load_import(container, import_id)).status for import_id in (ascending, descending)
+    }
+    assert ImportStatus.APPLIED in statuses
 
 
 async def test_a_confirm_waits_for_the_expiry_that_holds_the_import_and_is_then_refused(

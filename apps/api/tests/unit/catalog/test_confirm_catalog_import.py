@@ -737,6 +737,45 @@ async def test_every_stale_row_is_reported_together_in_plan_order_one_issue_per_
     assert taken.id in rig.world.perfumes.by_id
 
 
+async def test_perfumes_are_processed_in_ascending_perfume_id_whatever_the_plan_order() -> None:
+    """Repair round 1: one global lock order, so two confirms cannot deadlock."""
+    rig = _rig()
+    import_id = await _store(
+        rig,
+        _new(rig, 9, "Nueve", first_row=2),
+        _new(rig, 3, "Tres", first_row=3),
+        _new(rig, 5, "Cinco", first_row=4),
+    )
+
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+
+    # The in-memory repository inserts in call order.
+    assert list(rig.world.perfumes.by_id) == [UUID(int=3), UUID(int=5), UUID(int=9)]
+
+
+async def test_issues_come_out_sorted_by_row_even_when_processing_order_differs() -> None:
+    rig = _rig()
+    first, first_presentation = _stored(rig, "Uno")
+    second, second_presentation = _stored(rig, "Dos")
+    for stored in (first, second):
+        stored.archive()
+        rig.world.seed(stored)
+    presentation_of = {first.id: first_presentation, second.id: second_presentation}
+    low, high = sorted((first, second), key=lambda p: p.id)
+    # Plan order is the reverse of the row order (rows 6, 4, 2), and the processing order
+    # (ascending id) differs from the plan order: the issues still come out as rows 2, 4, 6.
+    import_id = await _store(
+        rig,
+        _existing(rig, high, presentation_of[high.id], first_row=6),
+        _new(rig, 1, "Tres", presentations=(), photos=(), publish=True, first_row=4),
+        _existing(rig, low, presentation_of[low.id], first_row=2),
+    )
+
+    result = await rig.confirm.execute(import_id, ACTOR)
+
+    assert [row for row, _ in _issues(result)] == [2, 4, 6]
+
+
 async def test_an_issue_carries_row_column_code_and_message() -> None:
     rig = _rig()
     stored, presentation_id = _stored(rig)

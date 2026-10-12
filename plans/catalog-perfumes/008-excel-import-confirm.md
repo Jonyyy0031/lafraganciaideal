@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: high
 depends_on: ["007"]
@@ -483,6 +483,26 @@ skipped). No product code was touched.
 No GAP found: nothing the plan promises is missing in the code, and no assertion was weakened.
 Observations that are not gaps: each perfume reports at most its first issue (a recorded
 deviation), and a photo or publish issue carries the perfume's `first_row`, not the photo's.
+
+### Repair round 1
+
+Tester run, 2026-10-12, after the lock-order repair (commit 99065d3). Product code untouched.
+Closing run: `uv run just check` green (1826 unit passed, 3 skipped; 684 harness) and
+`uv run just test-integration` green (476 passed, 5 skipped). The implementer's run was 1824
+unit and 475 integration, so the difference is exactly the three new tests.
+
+| Behavior | Source | Layer | Test | Status |
+| --- | --- | --- | --- | --- |
+| Perfumes are processed in ascending `perfume_id` whatever the plan order (plan 9, 3, 5; the in-memory repository inserts in call order, so the stored order is 3, 5, 9) | `catalog_imports.py:393` | application | `test_confirm_catalog_import.py::test_perfumes_are_processed_in_ascending_perfume_id_whatever_the_plan_order` | CONFIRMED |
+| Issues come out sorted by row although plan and processing order differ (plan rows 6, 4, 2; reported 2, 4, 6) | `catalog_imports.py:400` | application | `::test_issues_come_out_sorted_by_row_even_when_processing_order_differs` | CONFIRMED |
+| Two concurrent confirms of different ready imports touching the same two existing perfumes in opposite file order finish without a deadlock; one applies, the other applies or answers STALE/NOT_READY, nothing raises (PostgreSQL) | `catalog_imports.py:393` | integration | `test_sql_catalog_import_confirm.py::test_confirms_touching_the_same_perfumes_in_opposite_order_do_not_deadlock` | CONFIRMED |
+
+The integration test puts a gate on `get_for_update`: after its first perfume lock each
+confirm waits up to 0.5 s for the other to hold its own first lock, which forces the
+file-order interleaving that deadlocks. With the global order the second confirm is blocked on
+the first lock, the gate times out and both finish. NOT CONFIRMED: that this test fails
+against the pre-repair code was not run (the tester does not touch product code); it is argued
+from the gate, not demonstrated.
 
 ## Review findings
 
