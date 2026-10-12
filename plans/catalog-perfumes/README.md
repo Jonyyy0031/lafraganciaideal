@@ -267,6 +267,39 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
 
 ## Delivered
 
+The series closed on 2026-10-12, when all eight plans were `done`. What shipped is in the
+`catalog` module (`apps/api/src/fragancia_api/modules/catalog/`); the contract is in
+`apps/api/openapi.json`.
+
+- **Reference lists (001, 002):** olfactory families, concentrations and brands. Each can be
+  created, renamed, archived and restored; families and concentrations are seeded.
+- **Perfumes (003):** perfumes and their presentations in the back office, with price, an
+  optional sale with a date window, and availability (in stock, or made to order with a
+  delivery range). Perfumes can be published or hidden, and are archived rather than deleted.
+- **Public catalog (004, 005):**
+  - filters by brand, gender, family, accent-insensitive text and effective price;
+  - sorting, a "from" price, and pages bounded by `MAX_PAGE`;
+  - a detail page by slug that also finds old slugs.
+- **Photos (006):** up to 3 per perfume, stored in S3 as WebP renditions and served through
+  `MEDIA_PUBLIC_BASE_URL`.
+- **Excel import (007, 008):**
+  - a downloadable template;
+  - a raw-body upload, checked in the background by the worker, with a per-row report;
+  - SSRF-hardened image downloads;
+  - an all-or-nothing confirm that applies nothing and answers 409 when the catalog changed
+    in the meantime;
+  - a discard route, and expiry for imports nobody confirmed.
+- **Platform:**
+  - modules can declare scheduled jobs (`ScheduledJob`) that the worker runs;
+  - the CI integration job runs RustFS and Mailpit.
+
+Architecture notes are in `docs/architecture.md` ("Events, outbox and jobs").
+
+Open findings for this module:
+- `catalog-import-confirm-same-new-perfume-deadlock`
+- `platform-unbounded-request-body` (platform)
+- `platform-format-hook-fix-rewrites-code-mid-edit` (platform)
+
 ## Considered and discarded
 
 - **One row = one perfume (a single size)**: the shop sells several sizes of the same perfume
