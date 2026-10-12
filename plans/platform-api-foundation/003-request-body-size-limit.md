@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -186,5 +186,139 @@ functions, 49 cases with parametrization). Domain, application and integration d
 | 2 MiB JSON to real login both ways; 12 MiB photo 413; 6 MiB photo and 4/6 MiB xlsx reach the real routes (criteria 1, 4, 5) | photo and import routers | e2e-ish | not unit-testable without real routes and multipart bodies at that size | NOT CONFIRMED here: left to the verify phase against the running app |
 
 ## Review findings
+
+Reviewed 2026-10-12 on `fix/open-findings` against `main` (commits 6396b30..6bf0244 for this
+plan, plus the two fast-lane commits 9462e59 and 1331836 noted at the end).
+
+**Checklist: 15/15 passed** (items that do not apply to this diff count as passed).
+
+- [x] `plans-scope`. The command exits 1 and lists 4 files outside the plan. All 4 come from the
+  fast-lane commits 9462e59 and 1331836 (`git diff --stat 1331836 HEAD` shows only this plan's
+  commits). This plan's own diff touches exactly the 7 declared files plus allowed plan files
+  (its finding, the initiative README, this plan). No hot files changed.
+- [x] `uv run just check` is green: 1865 unit tests and 685 harness tests pass, and the exit
+  status is 0.
+- [x] `test-integration`: not required, since this plan changes no infrastructure. It was run
+  anyway for the fast-lane commit 1331836: 477 passed, 5 skipped.
+- [x] Business rules: none live in routers. The limit is platform HTTP code in `shared/http`.
+- [x] CQRS-lite: not applicable.
+- [x] Contracts: no contract models changed. `openapi.json` differs only in the description and
+  was regenerated, which matches `main/http.py:21-26`.
+- [x] Errors: `REQUEST_TOO_LARGE` uses the shared `error_response` shape. It does not follow the
+  `<MODULE>_` code pattern, which is correct for a platform-level code (like
+  `VALIDATION_ERROR`).
+- [x] Money, time and ids: not applicable. The uuid4 hex request id copies
+  `RequestContextMiddleware`.
+- [x] Migrations: none.
+- [x] Routes: none added.
+- [x] Wiring: `create_app` passes both settings (`main/http.py:46-47`). The settings test is
+  green.
+- [x] No secrets: `.env.example` gains only a commented default.
+- [x] Deviations: spot-checked deviation 2 with a scratch probe through `build_app`. A chunked
+  `application/json` body over the limit gets 413, not FastAPI's 400. The claim holds.
+- [x] Docs: `docs/architecture.md` was updated (see nit N1).
+- [x] PR body: no PR exists yet, so nothing to check. The PR must carry the reverse-proxy
+  `client_max_body_size` risk that "Out of scope" promises.
+
+**Bug hunt.** I traced the middleware against the Starlette stack. Order: `ServerErrorMiddleware`
+→ CORS (when configured) → `BodySizeLimitMiddleware` → `RequestContextMiddleware` →
+`ExceptionMiddleware` → router. Results:
+
+- **Media types.** The classification matches the plan. It is case-insensitive and ignores
+  parameters, and only the first `content-type` header counts, as in Starlette and FastAPI.
+- **Declared path.** It refuses without calling the app. A malformed `Content-Length` falls back
+  to counting the stream, and the ASGI server enforces the length framing.
+- **Chunked path.** It counts only `http.request` messages, so a body cannot get through
+  unbounded.
+- **Replacement path.** When the app answers after the limit was passed, the middleware
+  replaces the answer with the 413 and drops the app's remaining messages. The re-raise path for
+  an already-started response is correct.
+- **Raw-body routes.** Photo (`perfume_router.py:259-275`) and import (`import_router.py:79-96`)
+  are unaffected: their media types are binary, so the 10 MiB limit applies, which is at or above
+  their own limits.
+- **CORS.** CORS stays the outer layer, so a browser can read the 413.
+
+Scratch probe (scratchpad, `build_app`, limits 100 and 1000 bytes, 30 chunks of 50 bytes):
+
+| Request | Result |
+| --- | --- |
+| raw `image/jpeg` route | 413, `max_bytes` 1000 |
+| JSON route, `application/json` | 413, `max_bytes` 100 |
+| JSON route, `application/octet-stream` | 413, `max_bytes` 1000 |
+
+### High / Medium
+
+None.
+
+### Low (non-blocking; no code change needed to accept the plan)
+
+- **L1. A chunked body over the limit on a raw-stream route is logged as an unhandled error, and
+  its request id does not match the log.**
+  - Where: `shared/http/middleware.py:67-75` together with `:113-120`.
+  - What happens:
+    - `_BodyTooLarge` is raised inside `request.stream()` in the photo or import route.
+    - No exception handler matches it, so `RequestContextMiddleware` catches it. It calls
+      `log.exception("request.unhandled_error")`, with a traceback at error level, and builds a
+      500.
+    - The 500 is then replaced with the 413. The client gets the right answer, but the logs
+      show a 500-class error.
+    - When the client sent no `X-Request-ID`, the 413's id comes from `_refuse` (a new uuid4).
+      It differs from the `request_id` bound in that log line, so the two cannot be correlated.
+  - Confirmed by the probe: `unhandled_logs=1` for the raw route, and 0 for the JSON routes,
+    where FastAPI swallows the error into a 400.
+  - Failure scenario: an admin client uploads a 12 MiB photo with `Transfer-Encoding: chunked`.
+    The client correctly gets 413, but an error-level traceback is logged. It would page if
+    error logs alert.
+  - Reach: only after the admin checks. A browser `fetch` with a `File` declares
+    `Content-Length` and takes the declared path, so this case is rare.
+  - Possible fix, for a later plan or a fast lane: have `RequestContextMiddleware` re-raise or
+    ignore `_BodyTooLarge` instead of logging it, and reuse the request id it bound.
+
+### Info
+
+- **I1. The client chooses which limit applies.**
+  - An anonymous client can label a body `application/octet-stream` and send it to a JSON route
+    such as `/auth/login`. It then gets the 10 MiB budget, and FastAPI reads the whole body
+    (`request.body()`) before answering 422 (probe: a 750 B octet body to the JSON route gave
+    422).
+  - The body is bounded, so the finding's "unbounded" risk is closed. This is the documented
+    trade-off of README decision 7, not a defect.
+- **I2. Future multipart uploads.** `multipart/form-data` falls under the 1 MiB limit. No route
+  uses multipart today. A future multipart upload route would be refused above 1 MiB unless the
+  classification changes.
+
+### Nits
+
+- **N1. Wording in `docs/architecture.md:105-109`.**
+  - "Outermost layer" is not exact when `CORS_ORIGINS` is set, because CORS sits outside it.
+  - "The upload routes keep their own smaller limits": the photo limit equals the upload limit
+    (10 MiB), so it is not smaller.
+  - The "A request, end to end" flow (`:130-133`) still starts at `RequestContextMiddleware`.
+  - None of these changes behavior.
+
+### Fast-lane commits (sanity look, not part of this plan)
+
+- **9462e59: the format hook sorts imports only.** It is correct.
+  - `ruff check --fix --select I` only sorts imports, and `ruff format` runs after it.
+  - `just check` still enforces every rule.
+  - The regression test `test_format_file_keeps_imports_not_used_yet_and_only_sorts_them`
+    proves that unused imports survive and are sorted. The older formatting test was adjusted
+    because it relied on the removed autofix (dropping `import os`).
+  - The harness suite is green.
+- **1331836: import confirm in identity order.** It is correct.
+  - The sort key `(str(brand_id), slugify(name), str(concentration_id))` matches the unique
+    constraint `uq_perfumes_identity` (`tables.py:84`), whose `name_slug` is `Perfume.name.slug`.
+  - It also matches how existing perfumes are found (`sql_import_references.py:75`). So the same
+    perfume gets the same key in every import, whether the import creates it or updates it, and
+    the lock order is global.
+  - The unit test was updated, and the integration regression test passes; the full integration
+    suite passed as well.
+
+**Result:** no finding requires a code change, so the status is set to `verify`. The verify
+phase still has to cover the acceptance criteria marked NOT CONFIRMED in "Test coverage":
+
+- the real login, chunked and declared;
+- 12 MiB and 6 MiB photos;
+- 4 MiB and 6 MiB `.xlsx` uploads.
 
 ## Verification
