@@ -259,6 +259,11 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
     the result. It only writes rows: the images are already in S3.
 74. (2026-10-12) **A ready import can be discarded** before it expires (`POST …/discard`). It
     becomes `discarded`, and its staged images are deleted at once.
+75. (2026-10-12) **Repair round for the 008 review.** The reviewer flagged a possible deadlock
+    (Low): two confirms of different imports that lock the same perfumes in opposite order.
+    The user chose to fix it before `done`. Confirming applies the perfumes in `perfume_id`
+    order, so every confirm takes the row locks in the same order. Issues are still reported
+    in row order.
 
 ## Delivered
 

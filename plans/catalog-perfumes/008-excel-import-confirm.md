@@ -1,5 +1,5 @@
 ---
-status: verify
+status: implementing
 module: catalog
 min_implementer: high
 depends_on: ["007"]
@@ -378,6 +378,30 @@ passed, 4 skipped). On the test DB, `alembic -x test=true check` is clean, and a
 downgrade 0010 / upgrade head round trip works. `uv run just openapi` regenerated the schema.
 Against `uv run just api`, an anonymous `POST …/confirm` and `POST …/discard` both answered
 401, and the API was stopped afterwards.
+
+### Repair round 1 (2026-10-12, main session: verify → implementing)
+
+**Why.** The review left one advisory Low finding, now confirmed. `ConfirmCatalogImport`
+locks existing perfumes in file row order (`commands/catalog_imports.py:249`, `:346`). Two
+confirms of different imports that touch the same perfumes in opposite order can deadlock;
+PostgreSQL aborts one of them, and that caller gets a 500. The user chose to fix it before
+`done` (README decision 75). The verification of 2026-10-12 stays valid for everything else;
+only the confirm path is re-verified.
+
+**Repair spec.** Product code is `application/commands/catalog_imports.py` only.
+1. In `ConfirmCatalogImport`, iterate the planned perfumes sorted by `perfume_id`, ascending
+   UUID order. That covers new and existing perfumes alike, so every confirm takes row locks
+   and unique-index entries in one global order.
+2. Report the collected issues sorted by `(row, column or "")`, so the 409 body stays in file
+   order whatever the processing order.
+3. Add a one-line comment saying why the order matters.
+
+Then set the status to `testing`. The tester adds these tests:
+- unit: the processing order is ascending `perfume_id` even when the plan lists perfumes in
+  another order, and the issues come out in row order;
+- integration: two concurrent confirms of different ready imports that touch the same two
+  existing perfumes in opposite file order both finish without a deadlock. One applies; the
+  other applies or answers 409 `STALE`/`NOT_READY`, never a 500.
 
 ## Test coverage
 
