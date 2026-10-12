@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -158,6 +158,32 @@ Today nothing limits the size of a request body.
 - Step 5 tests are left to the tester phase.
 
 ## Test coverage
+
+All tests are in `apps/api/tests/unit/test_body_size_limit_http.py` (http layer, 28 test
+functions, 49 cases with parametrization). Domain, application and integration do not apply
+(plan table). No GAPs found.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| JSON, `+json`, form, multipart, text, no Content-Type use `max_body_bytes` | `middleware.py:26-33,57` | http | `test_text_like_media_types_get_the_body_limit` | CONFIRMED |
+| Other media types (`image/jpeg`, octet-stream, xlsx) use `max_upload_bytes` | `middleware.py:57` | http | `test_binary_media_types_get_the_larger_upload_limit`, `test_the_xlsx_media_type_is_binary` | CONFIRMED |
+| A body exactly at the limit passes (stream and declared) | `middleware.py:60,70` | http | `test_a_body_exactly_at_the_limit_passes`, `test_a_declared_length_at_the_limit_passes` | CONFIRMED |
+| Declared `Content-Length` over the limit: 413 without calling the app or reading the body | `middleware.py:60-62` | http | `test_a_declared_length_over_the_limit_is_refused_without_reading_the_body` | CONFIRMED |
+| Malformed `Content-Length` falls back to counting the stream | `middleware.py:60` | http | `test_a_malformed_content_length_falls_back_to_counting_the_stream` | CONFIRMED |
+| Chunked body cut off once past the limit; under the limit passes whole | `middleware.py:67-75` | http | `test_a_chunked_body_is_cut_off_once_it_passes_the_limit`, `test_a_chunked_body_under_the_limit_passes_in_full` | CONFIRMED |
+| 413 body is `REQUEST_TOO_LARGE` with `details.max_bytes` | `middleware.py:98-105` | http | `test_a_declared_length_over...`, `test_an_oversized_json_body_gets_413_with_the_error_shape` | CONFIRMED |
+| 413 carries `X-Request-ID` (echoed or generated) (deviation 1) | `middleware.py:100-104` | http | `test_the_refusal_carries_a_request_id...`, `test_the_refusal_generates_a_request_id...`, `test_the_413_echoes_the_request_id` | CONFIRMED |
+| App answer after the limit was passed is replaced by the 413, rest dropped (deviation 2) | `middleware.py:77-90` | http | `test_exceeding_the_limit_replaces_an_error_the_app_answers_itself`, `test_the_app_messages_after_the_replacement_are_dropped`, `test_a_chunked_json_body_gets_413_not_the_frameworks_400` | CONFIRMED |
+| Response already started when the limit is passed: re-raise | `middleware.py:91-95` | http | `test_a_response_already_started_when_the_limit_is_passed_reraises` | CONFIRMED |
+| App that never reads the body is not refused by the stream count | `middleware.py:67-75` | http | `test_an_app_that_never_reads_the_body_is_not_refused_by_the_stream_count` | CONFIRMED |
+| Non-http scopes pass through untouched | `middleware.py:50-52` | http | `test_non_http_scopes_pass_through_untouched` | CONFIRMED |
+| Oversized body to an anonymous admin route gets 413, not 401 (criterion 2) | `main/http.py:73-76` | http | `test_an_oversized_body_to_an_admin_route_without_a_session_is_413_not_401` | CONFIRMED |
+| Normal bodies behave as before (criterion 3) | `main/http.py` | http | `test_a_normal_body_behaves_as_before`, `test_get_requests_without_a_body_are_unaffected` | CONFIRMED |
+| Binary body between the two limits reaches the app; over the upload limit gets 413 | `middleware.py:57` | http | `test_a_binary_body_over_the_json_limit_but_under...`, `test_a_binary_body_over_the_upload_limit_gets_413` | CONFIRMED |
+| `build_app` defaults are 1 MiB / 10 MiB | `main/http.py:55-56` | http | `test_build_app_defaults_are_1_mib_and_10_mib` | CONFIRMED |
+| `create_app` wires `request_max_bytes` and `upload_max_bytes` from settings; 413 on the real `/auth/login` route | `main/http.py:46-47` | http | `test_create_app_wires_the_limits_from_settings` | CONFIRMED |
+| Settings defaults, `upload_max_bytes = max(photo, import)`, `ge=1` | `config.py:87,106-108` | http (settings) | `test_settings_defaults_and_derived_upload_limit`, `test_settings_reject_a_non_positive_request_limit` | CONFIRMED |
+| 2 MiB JSON to real login both ways; 12 MiB photo 413; 6 MiB photo and 4/6 MiB xlsx reach the real routes (criteria 1, 4, 5) | photo and import routers | e2e-ish | not unit-testable without real routes and multipart bodies at that size | NOT CONFIRMED here: left to the verify phase against the running app |
 
 ## Review findings
 
