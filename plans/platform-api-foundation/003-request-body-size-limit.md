@@ -1,5 +1,5 @@
 ---
-status: verify
+status: implementing
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -156,6 +156,36 @@ Today nothing limits the size of a request body.
   They come from earlier commits on this branch versus `main`, not from this plan's
   working-tree changes.
 - Step 5 tests are left to the tester phase.
+
+### Repair round 1 (2026-10-12, main session: verify → implementing)
+
+**Why.** The user asked for the open findings to be fixed ("fixeamos todo eso"). The review
+found one Low (L1) and one Nit (N1), and both are fixed here. I1 and I2 are by design
+(README decision 7).
+
+**Repair spec.**
+
+Product code: `shared/http/middleware.py` only. Docs: `docs/architecture.md`.
+
+1. **L1: one request id, and no error log for a cut-off body.**
+   - Rename `_BodyTooLarge` to a public `BodyTooLarge` (same module).
+   - In `RequestContextMiddleware.dispatch`, add `except BodyTooLarge: raise` before
+     `except Exception`, so the cut-off is not logged as `request.unhandled_error`. The
+     outer `BodySizeLimitMiddleware` turns it into the 413.
+   - In `BodySizeLimitMiddleware.__call__`, when the `http` scope has no `X-Request-ID` header,
+     generate one, append it to a copy of `scope["headers"]` and pass that scope to the inner
+     app. `_refuse` then reads the same id, so the 413 header matches the request id bound
+     to the logs.
+2. **N1: the wording in `docs/architecture.md`.**
+   - The middleware is outside `RequestContextMiddleware` and inside CORS. It is not the
+     outermost layer.
+   - The upload routes have limits *at or below* the binary limit.
+   - Mention the middleware in the end-to-end request flow (`:130-133`).
+
+Then set the status to `testing`. The tester adds three regressions:
+- a chunked oversized body to a raw route produces no `request.unhandled_error` log;
+- the 413's `X-Request-ID` equals the id the app saw when the client sent none;
+- a client-sent `X-Request-ID` is kept.
 
 ## Test coverage
 
