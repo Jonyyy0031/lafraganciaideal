@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: catalog
 min_implementer: high
 depends_on: ["007"]
@@ -454,5 +454,106 @@ Observations that are not gaps: each perfume reports at most its first issue (a 
 deviation), and a photo or publish issue carries the perfume's `first_row`, not the photo's.
 
 ## Review findings
+
+Reviewer run, 2026-10-12, on `feat/catalog-import-confirm` (`git diff main...HEAD`, clean
+worktree). The diff was read against the plan.
+
+**Checklist: 14/14 applicable items passed** (the PR body item does not apply yet).
+- [x] `uv run just plans-scope`: "Every change is inside the plan". `in_memory_perfumes.py` is
+  declared but unchanged, as Deviation 1 explains. No hot files were touched: `module.py` only
+  appends two `services.add`, and `container.py`, `docs/modules.json` and `.importlinter` are
+  untouched.
+- [x] `uv run just check` is green: 1824 unit passed, 3 skipped; 684 harness tests passed.
+  The committed OpenAPI drift test (`tests/unit/test_openapi.py`) is part of it.
+- [x] `uv run just test-integration` is green: 475 passed, 5 skipped.
+- [x] Business rules live in the domain: `replace_photo`, `apply`, `discard` and
+  `is_confirmable` are in the aggregates. The reference checks of decision 23 sit in the
+  application layer, exactly as in `CreatePerfume` and `UpdatePerfume`. The router and mappers
+  hold no rules.
+- [x] CQRS-lite: `ConfirmCatalogImport` and `DiscardCatalogImport` go through the aggregate and
+  repository inside one `transactions.run` and return a `Result`. The confirm route reads back
+  through `GetCatalogImport`. No repository gained a screen-specific method.
+- [x] Contracts: `CatalogImportResponse` in `contracts.py`. `openapi.json` was regenerated,
+  and the drift test passes.
+- [x] Errors: `ImportNotReady` is `CATALOG_IMPORT_NOT_READY` and `ImportStale` is
+  `CATALOG_IMPORT_STALE`, both `ConflictError`, and the issues go in `details`. Unexpected
+  `IntegrityError`s still raise (`_conflict`, `add`).
+- [x] Money: `Price.create(price_cents)` and `Sale.create(sale_price_cents, starts, ends,
+  regular=price)` take the planned integers and the tz-aware datetimes as they are. The plan
+  JSON round-trips them with `isoformat`/`fromisoformat`, so the offset is kept. There is no
+  float and no recomputation. `now` comes from `Clock`, and the planned ids are reused.
+- [x] Migration `0011`: it only adds three nullable columns on `catalog.imports`, and its
+  downgrade drops exactly those three. It has no cross-schema foreign key. The implementer ran
+  the round trip by hand (see Deviations), and it is not automated.
+- [x] Routes are on the existing `admin_imports` admin router, and the HTTP tests cover 401
+  and 403.
+- [x] Wiring: both commands are registered once, and `test_container` is green.
+- [x] No secrets or personal data: the fixtures use `img.test` URLs and synthetic names.
+- [x] Deviations are honest. Spot-checked: "one issue per perfume" matches `_create`/`_update`,
+  which return on the first `Err`. The issue row of a photo or publish problem is `first_row`.
+  `in_memory_perfumes.py` is indeed unchanged.
+- [x] Docs: `docs/architecture.md` describes the confirm step, and decisions 72 to 74 are in
+  the initiative README. `apps/api/README.md` holds no stale statement.
+- [ ] PR body: not applicable yet, since no PR exists for this branch. The main session must
+  write the six sections when it opens one.
+
+**Bug hunt.** These points were traced end to end and found correct:
+- **All or nothing.** Each `perfumes.add`/`save` runs in its own `begin_nested()` savepoint.
+  A unique violation rolls back only that savepoint and becomes an issue, and the loop goes
+  on. With any issue, `work` returns `Err`, and `SqlTransactionRunner.run` rolls back the
+  outer transaction. That undoes every earlier successful savepoint and leaves the import
+  `ready` with its plan. An exception rolls back too (`except BaseException`). The old keys
+  are returned only from the `Ok` branch, so a stale or raising confirm deletes no object.
+  The integration test proves this on PostgreSQL with a unique violation in the middle of the
+  loop, followed by a valid perfume.
+- **The deferred position constraint** (`uq_perfume_photos_position`, `INITIALLY DEFERRED`)
+  is checked at COMMIT, outside any savepoint. The confirm cannot violate it:
+  - `replace_photo` keeps the old position, and `save` deletes `removed_photo_ids` before the
+    upsert;
+  - `add_photo` appends at `len + 1` on a perfume locked `FOR UPDATE`.
+- **Concurrency with expiry.** The confirm locks the import `FOR UPDATE` and re-checks
+  `status == READY and now < expires_at`. The expiry job uses `SKIP LOCKED`, so it skips an
+  import a confirm holds, and a confirm that waits behind an expiry sees `expired` and
+  answers NOT_READY. Discard against confirm or expiry is serialized the same way, so staged
+  objects are deleted at most once and never after they went live.
+- **Concurrency with panel edits.** Panel photo and presentation commands take
+  `get_for_update` on the perfume, as the confirm does, so they serialize:
+  - a panel remove of a photo the import replaces → `PhotoNotFound` issue;
+  - a panel 3rd photo → `PhotoLimitReached` issue;
+  - a concurrent create of the same identity blocks on the unique index, then fails in the
+    savepoint and becomes an issue.
+- **Photo replace.** The new photo takes the old slot and position, and the old id is
+  recorded for deletion. The old keys (`perfumes/{perfume}/{old photo}-…`) never equal the
+  staged keys, because the photo ids differ. They are deleted quietly after the commit only.
+- **Panel photo behaviour is unchanged.**
+  - `Photo` and `add_photo` gained `source_url` as a trailing defaulted parameter.
+  - `_photo_row` writes NULL for panel photos.
+  - The `save` upsert still sets only `position` on conflict.
+  - `add` inserts photos only when the aggregate has some, and panel `CreatePerfume` never
+    does.
+
+Findings by severity:
+
+- **Blocker / High / Medium:** none.
+- **Low (advisory, no change required for this plan; uncertain how likely it is):**
+  `application/commands/catalog_imports.py:249` and `:346`. The confirm locks perfumes
+  (`get_for_update`) in file order, so two concurrent confirms of *different* ready imports
+  that update the same existing perfumes in opposite row order can deadlock.
+  - Failure scenario: admin 1 confirms import X (rows: P1, P2) while admin 2 confirms import
+    Y (rows: P2, P1). PostgreSQL aborts one transaction with a deadlock error. That error is
+    not an `IntegrityError`, so it raises, and the loser gets a 500 instead of a 409.
+  - Data stays consistent: the loser's transaction rolls back, its import stays `ready`, and
+    a retry succeeds.
+  - It needs two admins confirming overlapping files at the same moment. If it ever matters,
+    applying the planned perfumes in `perfume_id` order would remove it (a design choice for
+    the user, not a fix made here).
+- **Observations (by design, not findings):**
+  - A panel edit to fields, price or sale of a planned perfume between validating and
+    confirming is overwritten by the file. Decision 72 lists only refusals as stale.
+  - If the panel reorders photos meanwhile, the replacement takes the replaced photo's
+    *current* position, as step 1 specifies.
+  - `Perfume.create` uses `id or new_id()`. A `UUID` is always truthy, so this is correct.
+
+**Result: all checks passed; no finding needs a code change.** Status → `verify`.
 
 ## Verification
