@@ -352,6 +352,8 @@ async def test_a_pending_import_is_reported_with_empty_report_fields(rig: Rig) -
         "summary": None,
         "error_count": 0,
         "errors": [],
+        "applied_at": None,
+        "discarded_at": None,
     }
 
 
@@ -388,6 +390,8 @@ async def test_a_ready_import_shows_the_summary_and_no_file_or_plan(rig: Rig) ->
         "summary",
         "error_count",
         "errors",
+        "applied_at",
+        "discarded_at",
     }
 
 

@@ -193,6 +193,9 @@ def _to_row(catalog_import: CatalogImport) -> Json:
         "summary": summary_to_json(summary) if summary is not None else None,
         "errors": [issue_to_json(issue) for issue in catalog_import.errors],
         "plan": plan_to_json(plan) if plan is not None else None,
+        "applied_at": catalog_import.applied_at,
+        "applied_by": catalog_import.applied_by,
+        "discarded_at": catalog_import.discarded_at,
     }
 
 
@@ -211,6 +214,9 @@ def _to_import(row: Any) -> CatalogImport:
         error_count=row["error_count"],
         errors=tuple(issue_from_json(issue) for issue in row["errors"] or []),
         plan=plan_from_json(row["plan"]) if row["plan"] is not None else None,
+        applied_at=row["applied_at"],
+        applied_by=row["applied_by"],
+        discarded_at=row["discarded_at"],
     )
 
 

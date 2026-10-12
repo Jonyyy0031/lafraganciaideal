@@ -221,7 +221,7 @@ class PhotoNotFound(NotFoundError):
     message: str = "Photo not found"
 
 
-# Catalog import: the first three are HTTP-level; the rest only appear in an import report.
+# Catalog import: the first five are HTTP-level; the rest only appear in an import report.
 
 
 @dataclass(frozen=True)
@@ -240,6 +240,20 @@ class ImportTooLarge(InvalidValueError):
 class ImportNotFound(NotFoundError):
     code: str = "CATALOG_IMPORT_NOT_FOUND"
     message: str = "Import not found"
+
+
+@dataclass(frozen=True)
+class ImportNotReady(ConflictError):
+    code: str = "CATALOG_IMPORT_NOT_READY"
+    message: str = "Only a ready import that has not expired can be confirmed or discarded"
+
+
+@dataclass(frozen=True)
+class ImportStale(ConflictError):
+    """`details` is `{"issues": [{"row", "column", "code", "message"}, ...]}`."""
+
+    code: str = "CATALOG_IMPORT_STALE"
+    message: str = "The catalog changed since this import was validated; upload the file again"
 
 
 @dataclass(frozen=True)

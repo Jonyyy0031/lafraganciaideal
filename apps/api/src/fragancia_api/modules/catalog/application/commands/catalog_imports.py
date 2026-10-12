@@ -1,15 +1,21 @@
-"""Commands of the catalog import: upload, validate in the worker, and expire.
+"""Commands of the catalog import: upload, validate in the worker, expire, confirm and discard.
 
 The import row is its own job (a database-backed queue): the upload stores the file as a
 pending import, a worker cron claims the oldest pending one with `FOR UPDATE SKIP LOCKED`,
 validates it outside any transaction and writes the result back in one short transaction.
 Object storage is not transactional: staged objects of an invalid or failed validation are
-deleted at once, those of an expired import after the commit.
+deleted at once, those of an expired or discarded import after the commit, and so are the
+objects of photos a confirm replaced.
+
+Confirming applies the plan all or nothing in one transaction: every planned perfume goes
+through its aggregate, every refusal is collected as an issue, and with any issue the whole
+transaction rolls back and the confirm answers `ImportStale` with the issues.
 """
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import cast
 from uuid import UUID
 
 import structlog
@@ -24,11 +30,40 @@ from fragancia_api.modules.catalog.domain.catalog_import import (
     CatalogImport,
     ImportIssue,
     ImportStatus,
+    PlannedPerfume,
+    PlannedPresentation,
 )
 from fragancia_api.modules.catalog.domain.errors import (
     ImportFailed,
     ImportFormatInvalid,
     ImportInterrupted,
+    ImportNotFound,
+    ImportNotReady,
+    ImportPresentationArchived,
+    ImportStale,
+    PerfumeBrandUnavailable,
+    PerfumeConcentrationUnavailable,
+    PerfumeFamilyUnavailable,
+    PerfumeNotFound,
+    PresentationNotFound,
+)
+from fragancia_api.modules.catalog.domain.perfume import (
+    Availability,
+    AvailabilityKind,
+    Description,
+    Ml,
+    Notes,
+    Perfume,
+    PerfumeName,
+    Price,
+    Sale,
+    perfume_slug,
+)
+from fragancia_api.modules.catalog.domain.repositories import (
+    BrandRepository,
+    ConcentrationRepository,
+    OlfactoryFamilyRepository,
+    PerfumeRepository,
 )
 from fragancia_api.shared.application.clock import Clock
 from fragancia_api.shared.application.transactions import TransactionRunner
@@ -228,3 +263,368 @@ class ExpireCatalogImports:
             case Ok((changed, keys)):
                 await _delete_quietly(self._storage, keys)
                 return changed
+
+
+@dataclass(frozen=True, slots=True)
+class _PerfumeValues:
+    name: PerfumeName
+    description: Description
+    notes: Notes
+
+
+@dataclass(frozen=True, slots=True)
+class _PresentationValues:
+    ml: Ml
+    price: Price
+    sale: Sale | None
+    availability: Availability
+
+
+def _perfume_values(planned: PlannedPerfume) -> Result[_PerfumeValues, DomainError]:
+    """The value objects of a planned perfume (validated by the import already; an Err here
+    still becomes an issue rather than an exception)."""
+    match PerfumeName.create(planned.name):
+        case Err(invalid_name):
+            return Err(invalid_name)
+        case Ok(name):
+            pass
+    match Description.create(planned.description):
+        case Err(invalid_description):
+            return Err(invalid_description)
+        case Ok(description):
+            pass
+    match Notes.create(
+        list(planned.top_notes), list(planned.heart_notes), list(planned.base_notes)
+    ):
+        case Err(invalid_notes):
+            return Err(invalid_notes)
+        case Ok(notes):
+            pass
+    return Ok(_PerfumeValues(name, description, notes))
+
+
+def _presentation_values(
+    planned: PlannedPresentation,
+) -> Result[_PresentationValues, DomainError]:
+    match Ml.create(planned.ml):
+        case Err(invalid_ml):
+            return Err(invalid_ml)
+        case Ok(ml):
+            pass
+    match Price.create(planned.price_cents):
+        case Err(invalid_price):
+            return Err(invalid_price)
+        case Ok(price):
+            pass
+    match Sale.create(
+        planned.sale_price_cents, planned.sale_starts_at, planned.sale_ends_at, regular=price
+    ):
+        case Err(invalid_sale):
+            return Err(invalid_sale)
+        case Ok(sale):
+            pass
+    # The plan stores the kind the validation produced from an `Availability`.
+    kind = cast(AvailabilityKind, planned.availability)
+    match Availability.create(kind, planned.lead_time_min_days, planned.lead_time_max_days):
+        case Err(invalid_availability):
+            return Err(invalid_availability)
+        case Ok(availability):
+            pass
+    return Ok(_PresentationValues(ml, price, sale, availability))
+
+
+def _issue(error: DomainError, row: int) -> ImportIssue:
+    return ImportIssue.of(error, row=row, column=None)
+
+
+def _issues_details(issues: list[ImportIssue]) -> dict[str, object]:
+    return {
+        "issues": [
+            {"row": issue.row, "column": issue.column, "code": issue.code, "message": issue.message}
+            for issue in issues
+        ]
+    }
+
+
+class ConfirmCatalogImport:
+    """Command: apply a ready import, all or nothing, in one transaction.
+
+    The plan is a snapshot up to 60 minutes old, so each planned perfume is re-checked against
+    the live catalog through its aggregate, with the rules of the panel commands (decision 23
+    for the references, the slug recompute, the presentation and photo methods). Every
+    refusal is collected as an issue (one per perfume, at its row) and the loop goes on, so
+    the admin sees every stale row; with any issue the transaction rolls back and the result
+    is `ImportStale`. The objects of replaced photos are deleted after the commit.
+    """
+
+    def __init__(
+        self,
+        *,
+        imports: CatalogImportRepository,
+        perfumes: PerfumeRepository,
+        brands: BrandRepository,
+        families: OlfactoryFamilyRepository,
+        concentrations: ConcentrationRepository,
+        storage: MediaStorage,
+        transactions: TransactionRunner,
+        clock: Clock,
+    ) -> None:
+        self._imports = imports
+        self._perfumes = perfumes
+        self._brands = brands
+        self._families = families
+        self._concentrations = concentrations
+        self._storage = storage
+        self._transactions = transactions
+        self._clock = clock
+
+    async def execute(self, import_id: UUID, actor_id: str) -> Result[None, DomainError]:
+        async def work() -> Result[list[str], DomainError]:
+            now = self._clock.now()
+            catalog_import = await self._imports.get_for_update(import_id)
+            if catalog_import is None:
+                return Err(ImportNotFound())
+            plan = catalog_import.plan
+            if not catalog_import.is_confirmable(now) or plan is None:
+                return Err(ImportNotReady())
+            issues: list[ImportIssue] = []
+            old_keys: list[str] = []
+            for planned in plan.perfumes:
+                match await self._apply(planned, now):
+                    case Err(issue):
+                        issues.append(issue)
+                    case Ok(keys):
+                        old_keys.extend(keys)
+            if issues:  # the runner rolls back every write of the loop
+                return Err(ImportStale(details=_issues_details(issues)))
+            catalog_import.apply(now, actor_id)
+            await self._imports.save(catalog_import)
+            return Ok(old_keys)
+
+        match await self._transactions.run(work):
+            case Err(error):
+                return Err(error)
+            case Ok(keys):
+                await _delete_quietly(self._storage, keys)
+                return Ok(None)
+
+    async def _apply(
+        self, planned: PlannedPerfume, now: datetime
+    ) -> Result[list[str], ImportIssue]:
+        """Write one planned perfume; returns the object keys of the photos it replaced."""
+        match _perfume_values(planned):
+            case Err(invalid):
+                return Err(_issue(invalid, planned.first_row))
+            case Ok(values):
+                pass
+        if planned.is_new:
+            return await self._create(planned, values, now)
+        return await self._update(planned, values, now)
+
+    async def _create(
+        self, planned: PlannedPerfume, values: _PerfumeValues, now: datetime
+    ) -> Result[list[str], ImportIssue]:
+        row = planned.first_row
+        brand = await self._brands.get(planned.brand_id)
+        if brand is None or not brand.is_active:
+            return Err(_issue(PerfumeBrandUnavailable(), row))
+        family = await self._families.get(planned.family_id)
+        if family is None or not family.is_active:
+            return Err(_issue(PerfumeFamilyUnavailable(), row))
+        concentration = await self._concentrations.get(planned.concentration_id)
+        if concentration is None or not concentration.is_active:
+            return Err(_issue(PerfumeConcentrationUnavailable(), row))
+        perfume = Perfume.create(
+            id=planned.perfume_id,
+            brand_id=planned.brand_id,
+            concentration_id=planned.concentration_id,
+            family_id=planned.family_id,
+            name=values.name,
+            slug=perfume_slug(brand.name.value, values.name, concentration.abbreviation.value),
+            gender=planned.gender,
+            description=values.description,
+            notes=values.notes,
+            now=now,
+        )
+        for planned_presentation in planned.presentations:
+            match _presentation_values(planned_presentation):
+                case Err(invalid):
+                    return Err(_issue(invalid, planned_presentation.row))
+                case Ok(presentation):
+                    pass
+            match perfume.add_presentation(
+                presentation.ml,
+                presentation.price,
+                presentation.sale,
+                presentation.availability,
+                created_at=now,
+            ):
+                case Err(refused):
+                    return Err(_issue(refused, planned_presentation.row))
+        for photo in planned.photos:
+            match perfume.add_photo(
+                photo.photo_id,
+                photo.card_key,
+                photo.detail_key,
+                photo.width,
+                photo.height,
+                source_url=photo.source_url,
+                created_at=now,
+            ):
+                case Err(refused_photo):
+                    return Err(_issue(refused_photo, row))
+        if planned.publish is True:
+            match perfume.publish(now):
+                case Err(refused_publish):
+                    return Err(_issue(refused_publish, row))
+        match await self._perfumes.add(perfume):  # identity or slug taken meanwhile
+            case Err(conflict):
+                return Err(_issue(conflict, row))
+        return Ok([])
+
+    async def _update(
+        self, planned: PlannedPerfume, values: _PerfumeValues, now: datetime
+    ) -> Result[list[str], ImportIssue]:
+        row = planned.first_row
+        perfume = await self._perfumes.get_for_update(planned.perfume_id)
+        if perfume is None:
+            return Err(_issue(PerfumeNotFound(), row))
+        # Decision 23, as in UpdatePerfume: only a changed reference must be active; an
+        # unchanged one (part of the identity) is kept even when archived.
+        brand = await self._brands.get(planned.brand_id)
+        if brand is None or (not brand.is_active and planned.brand_id != perfume.brand_id):
+            return Err(_issue(PerfumeBrandUnavailable(), row))
+        if planned.family_id != perfume.family_id:
+            family = await self._families.get(planned.family_id)
+            if family is None or not family.is_active:
+                return Err(_issue(PerfumeFamilyUnavailable(), row))
+        concentration = await self._concentrations.get(planned.concentration_id)
+        if concentration is None or (
+            not concentration.is_active and planned.concentration_id != perfume.concentration_id
+        ):
+            return Err(_issue(PerfumeConcentrationUnavailable(), row))
+        match perfume.update(
+            brand_id=planned.brand_id,
+            concentration_id=planned.concentration_id,
+            family_id=planned.family_id,
+            name=values.name,
+            slug=perfume_slug(brand.name.value, values.name, concentration.abbreviation.value),
+            gender=planned.gender,
+            description=values.description,
+            notes=values.notes,
+            now=now,
+        ):
+            case Err(archived):
+                return Err(_issue(archived, row))
+        for planned_presentation in planned.presentations:
+            match await self._upsert_presentation(perfume, planned_presentation, now):
+                case Err(issue):
+                    return Err(issue)
+        old_keys: list[str] = []
+        for photo in planned.photos:
+            if photo.replaces_photo_id is not None:
+                match perfume.replace_photo(
+                    photo.replaces_photo_id,
+                    photo.photo_id,
+                    photo.card_key,
+                    photo.detail_key,
+                    photo.width,
+                    photo.height,
+                    source_url=photo.source_url,
+                    created_at=now,
+                ):
+                    case Err(refused_replace):
+                        return Err(_issue(refused_replace, row))
+                    case Ok(old):
+                        old_keys.extend((old.card_key, old.detail_key))
+            else:
+                match perfume.add_photo(
+                    photo.photo_id,
+                    photo.card_key,
+                    photo.detail_key,
+                    photo.width,
+                    photo.height,
+                    source_url=photo.source_url,
+                    created_at=now,
+                ):
+                    case Err(refused_photo):
+                        return Err(_issue(refused_photo, row))
+        if planned.publish is True:
+            match perfume.publish(now):
+                case Err(refused_publish):
+                    return Err(_issue(refused_publish, row))
+        elif planned.publish is False:
+            perfume.hide()
+        match await self._perfumes.save(perfume):  # identity, slug or ml taken meanwhile
+            case Err(conflict):
+                return Err(_issue(conflict, row))
+        return Ok(old_keys)
+
+    @staticmethod
+    async def _upsert_presentation(
+        perfume: Perfume, planned: PlannedPresentation, now: datetime
+    ) -> Result[None, ImportIssue]:
+        match _presentation_values(planned):
+            case Err(invalid):
+                return Err(_issue(invalid, planned.row))
+            case Ok(values):
+                pass
+        if planned.presentation_id is None:
+            match perfume.add_presentation(
+                values.ml, values.price, values.sale, values.availability, created_at=now
+            ):
+                case Err(refused):
+                    return Err(_issue(refused, planned.row))
+            return Ok(None)
+        stored = next((p for p in perfume.presentations if p.id == planned.presentation_id), None)
+        if stored is None:
+            return Err(_issue(PresentationNotFound(), planned.row))
+        if not stored.is_active:
+            return Err(_issue(ImportPresentationArchived(), planned.row))
+        match perfume.update_presentation(
+            planned.presentation_id,
+            values.ml,
+            values.price,
+            values.sale,
+            values.availability,
+            now=now,
+        ):
+            case Err(refused_update):
+                return Err(_issue(refused_update, planned.row))
+        return Ok(None)
+
+
+class DiscardCatalogImport:
+    """Command: drop a ready import before it expires (even one already past `expires_at`
+    that the cron has not expired yet), deleting its staged objects after the commit."""
+
+    def __init__(
+        self,
+        *,
+        imports: CatalogImportRepository,
+        storage: MediaStorage,
+        transactions: TransactionRunner,
+        clock: Clock,
+    ) -> None:
+        self._imports = imports
+        self._storage = storage
+        self._transactions = transactions
+        self._clock = clock
+
+    async def execute(self, import_id: UUID) -> Result[None, DomainError]:
+        async def work() -> Result[list[str], DomainError]:
+            catalog_import = await self._imports.get_for_update(import_id)
+            if catalog_import is None:
+                return Err(ImportNotFound())
+            if catalog_import.status != ImportStatus.READY:
+                return Err(ImportNotReady())
+            keys = catalog_import.discard(self._clock.now())
+            await self._imports.save(catalog_import)
+            return Ok(keys)
+
+        match await self._transactions.run(work):
+            case Err(error):
+                return Err(error)
+            case Ok(keys):
+                await _delete_quietly(self._storage, keys)
+                return Ok(None)

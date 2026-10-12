@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: catalog
 min_implementer: high
 depends_on: ["007"]
@@ -335,6 +335,49 @@ after the commit, like `ExpireCatalogImports` (`commands/catalog_imports.py:188-
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+Implementation finished 2026-10-12. Every step was applied as written. Four small, cosmetic
+deviations, each fixed forward:
+
+1. **`in_memory_perfumes.py` is unchanged.** Its `add` already stores a deep copy of the whole
+   aggregate, so the photos and their `source_url` are kept. `save` also stores the whole
+   aggregate, so it already supports `replace_photo`. Nothing needed changing. `plans-scope`
+   lists the file as declared but unchanged.
+2. **Three existing tests asserted the old contract and were updated** (step 7 paths):
+   - `tests/unit/catalog/test_catalog_import_domain.py`: the list of status wire values gains
+     `discarded`, and the test is renamed to `..._eight_statuses_...`.
+   - `tests/unit/catalog/test_catalog_import_http.py`: the two exact response shapes gain
+     `applied_at` and `discarded_at`.
+   - `tests/integration/catalog/test_sql_catalog_imports.py`: the reflected `catalog.imports`
+     columns gain the three new columns.
+
+   No new tests were written. The layered tests are the tester's job.
+3. **The comment in `errors.py`** above the import errors now says "the first five are
+   HTTP-level", because `ImportNotReady` and `ImportStale` sit next to `ImportNotFound`.
+   `CATALOG_IMPORT_PRESENTATION_ARCHIVED`, which was only a report code until now, can also
+   appear in the 409 `details.issues`.
+4. **Choices the plan left open:**
+   - **One issue per perfume.** Each perfume stops at its first issue, then the loop moves to
+     the next perfume.
+   - **Issue rows.** A photo or publish issue uses the perfume's `first_row`, because
+     `PlannedPhoto` carries no row.
+   - **No early identity check.** `ConfirmCatalogImport` does not call
+     `exists_with_identity` up front. A taken identity or slug surfaces through the `Err` of
+     `perfumes.add` / `perfumes.save`, as the plan states.
+   - **The availability kind.** The plan stores it as a `str`, and the command passes it to
+     `Availability.create` with `cast(AvailabilityKind, ...)`.
+
+**Not verified here (for the tester and verifier):**
+- No command was run end to end against PostgreSQL, so the rollback after a savepoint failure
+  in the middle of the loop is untested.
+- The unit fakes do not roll back: `InMemoryTransactionRunner` keeps the writes. Tests of
+  "nothing saved on stale" need a snapshot runner, like the existing `_CommitSnapshot`.
+
+Commands run: `uv run just check` green, and `uv run just test-integration` green (463
+passed, 4 skipped). On the test DB, `alembic -x test=true check` is clean, and a
+downgrade 0010 / upgrade head round trip works. `uv run just openapi` regenerated the schema.
+Against `uv run just api`, an anonymous `POST …/confirm` and `POST …/discard` both answered
+401, and the API was stopped afterwards.
 
 ## Test coverage
 

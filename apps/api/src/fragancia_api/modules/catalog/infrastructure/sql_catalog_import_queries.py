@@ -26,6 +26,8 @@ class SqlCatalogImportQueries:
             imports.c.summary,
             imports.c.error_count,
             imports.c.errors,
+            imports.c.applied_at,
+            imports.c.discarded_at,
         ).where(imports.c.id == import_id)
         async with self._database.reader() as session:
             row = (await session.execute(statement)).mappings().first()
@@ -42,4 +44,6 @@ class SqlCatalogImportQueries:
             summary=CatalogImportSummary.model_validate(summary) if summary is not None else None,
             error_count=row["error_count"] or 0,
             errors=[CatalogImportIssue.model_validate(issue) for issue in row["errors"] or []],
+            applied_at=row["applied_at"],
+            discarded_at=row["discarded_at"],
         )

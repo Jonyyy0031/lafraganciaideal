@@ -121,6 +121,7 @@ def _photo_row(perfume_id: UUID, photo: Photo) -> dict[str, Any]:
         "width": photo.width,
         "height": photo.height,
         "created_at": photo.created_at,
+        "source_url": photo.source_url,
     }
 
 
@@ -133,6 +134,7 @@ def _to_photo(row: Any) -> Photo:
         width=row["width"],
         height=row["height"],
         created_at=row["created_at"],
+        source_url=row["source_url"],
     )
 
 
@@ -197,6 +199,10 @@ class SqlPerfumeRepository:
                 for presentation in perfume.presentations:
                     await session.execute(
                         insert(presentations).values(_presentation_row(perfume.id, presentation))
+                    )
+                for photo in perfume.photos:  # an import creates perfumes with their photos
+                    await session.execute(
+                        insert(perfume_photos).values(_photo_row(perfume.id, photo))
                     )
         except IntegrityError as error:
             if _violates(error, PERFUME_IDENTITY_UNIQUE) or _violates(error, PERFUME_SLUG_UNIQUE):
@@ -264,6 +270,7 @@ class SqlPerfumeRepository:
                 for photo in perfume.photos:
                     photo_row = _photo_row(perfume.id, photo)
                     photo_statement = postgresql.insert(perfume_photos).values(photo_row)
+                    # Only the position of a stored photo changes; never its source URL.
                     await session.execute(
                         photo_statement.on_conflict_do_update(
                             index_elements=["id"], set_={"position": photo.position}

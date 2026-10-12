@@ -6,6 +6,8 @@ from uuid import UUID
 from fastapi import Depends, Request, Response
 
 from fragancia_api.modules.catalog.application.commands.catalog_imports import (
+    ConfirmCatalogImport,
+    DiscardCatalogImport,
     ImportUploadLimit,
     StartCatalogImport,
 )
@@ -105,6 +107,40 @@ async def get_catalog_import(
     of what confirming does, or `invalid` with one issue per problem (Excel row, header text,
     code). 404 `CATALOG_IMPORT_NOT_FOUND`."""
     return unwrap(await use_case.execute(import_id))
+
+
+@admin_imports.post(
+    "/{import_id}/confirm",
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+async def confirm_catalog_import(
+    import_id: UUID,
+    request: Request,
+    use_case: Annotated[ConfirmCatalogImport, Depends(provide(ConfirmCatalogImport))],
+    query: Annotated[GetCatalogImport, Depends(provide(GetCatalogImport))],
+) -> CatalogImportResponse:
+    """Apply a ready import, all or nothing, in one transaction; answers the import, now
+    `applied`. 404 `CATALOG_IMPORT_NOT_FOUND`; 409 `CATALOG_IMPORT_NOT_READY` (not ready, or
+    past `expires_at`) or `CATALOG_IMPORT_STALE` when the catalog changed since the validation:
+    nothing is written, the import stays `ready` and `details.issues` lists each affected row
+    (`row`, `column`, `code`, `message`); upload the file again."""
+    actor_id: str = request.state.actor.id
+    unwrap(await use_case.execute(import_id, actor_id))
+    return unwrap(await query.execute(import_id))
+
+
+@admin_imports.post(
+    "/{import_id}/discard",
+    status_code=204,
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+async def discard_catalog_import(
+    import_id: UUID,
+    use_case: Annotated[DiscardCatalogImport, Depends(provide(DiscardCatalogImport))],
+) -> None:
+    """Drop a ready import early: it becomes `discarded` and its staged images are deleted.
+    404 `CATALOG_IMPORT_NOT_FOUND`; 409 `CATALOG_IMPORT_NOT_READY`."""
+    unwrap(await use_case.execute(import_id))
 
 
 import_routers = (admin_imports,)

@@ -3911,6 +3911,177 @@
           }
         }
       }
+    },
+    "/api/v1/admin/catalog-imports/{import_id}/confirm": {
+      "post": {
+        "tags": [
+          "catalog · import"
+        ],
+        "summary": "Confirm Catalog Import",
+        "description": "Apply a ready import, all or nothing, in one transaction; answers the import, now\n`applied`. 404 `CATALOG_IMPORT_NOT_FOUND`; 409 `CATALOG_IMPORT_NOT_READY` (not ready, or\npast `expires_at`) or `CATALOG_IMPORT_STALE` when the catalog changed since the validation:\nnothing is written, the import stays `ready` and `details.issues` lists each affected row\n(`row`, `column`, `code`, `message`); upload the file again.",
+        "operationId": "confirm_catalog_import",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "import_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Import Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogImportResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/catalog-imports/{import_id}/discard": {
+      "post": {
+        "tags": [
+          "catalog · import"
+        ],
+        "summary": "Discard Catalog Import",
+        "description": "Drop a ready import early: it becomes `discarded` and its staged images are deleted.\n404 `CATALOG_IMPORT_NOT_FOUND`; 409 `CATALOG_IMPORT_NOT_READY`.",
+        "operationId": "discard_catalog_import",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "import_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Import Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4781,7 +4952,8 @@
               "invalid",
               "failed",
               "expired",
-              "applied"
+              "applied",
+              "discarded"
             ],
             "title": "Status"
           },
@@ -4845,6 +5017,30 @@
             },
             "type": "array",
             "title": "Errors"
+          },
+          "applied_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied At"
+          },
+          "discarded_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discarded At"
           }
         },
         "type": "object",
@@ -4857,10 +5053,12 @@
           "row_count",
           "summary",
           "error_count",
-          "errors"
+          "errors",
+          "applied_at",
+          "discarded_at"
         ],
         "title": "CatalogImportResponse",
-        "description": "An uploaded import and its validation report. `error_count` is 0 while there are no\nissues and can exceed `len(errors)` when the list is capped."
+        "description": "An uploaded import and its validation report. `error_count` is 0 while there are no\nissues and can exceed `len(errors)` when the list is capped. `applied_at` is set once a\nconfirm applied it, `discarded_at` once it was discarded."
       },
       "CatalogImportSummary": {
         "properties": {
