@@ -58,9 +58,12 @@ Photo fields and rules (a photo is a child entity; the file rules live in the im
   repository deletes the removed ids.
 - `card_key`, `detail_key`: object keys from `photo_keys`; `width` and `height` are those of the
   detail rendition.
+- `source_url`: the URL an import downloaded the photo from; None for panel uploads.
 - Reordering takes exactly the current set of photo ids (no missing, extra or duplicated one).
-- Adding, removing and reordering photos are refused on an archived perfume. Publishing does not
-  need a photo.
+- Replacing a photo (an import whose "Imagen N" URL changed) puts the new photo in the old one's
+  slot and position; the repository deletes the old id.
+- Adding, replacing, removing and reordering photos are refused on an archived perfume.
+  Publishing does not need a photo.
 """
 
 from dataclasses import dataclass
@@ -313,6 +316,7 @@ class Photo:
         width: int,
         height: int,
         created_at: datetime,
+        source_url: str | None = None,
     ) -> None:
         self.id = id
         self.position = position
@@ -321,6 +325,7 @@ class Photo:
         self.width = width
         self.height = height
         self.created_at = created_at
+        self.source_url = source_url
 
 
 class Perfume(AggregateRoot):
@@ -381,10 +386,12 @@ class Perfume(AggregateRoot):
         description: Description,
         notes: Notes,
         now: datetime,
+        id: UUID | None = None,
     ) -> Perfume:
-        """A new perfume: hidden, not archived, without presentations."""
+        """A new perfume: hidden, not archived, without presentations. `id` is given when it
+        was assigned in advance (an import plan)."""
         return cls(
-            id=new_id(),
+            id=id or new_id(),
             brand_id=brand_id,
             concentration_id=concentration_id,
             family_id=family_id,
@@ -540,6 +547,7 @@ class Perfume(AggregateRoot):
         height: int,
         *,
         created_at: datetime,
+        source_url: str | None = None,
     ) -> Result[None, PerfumeArchived | PhotoLimitReached]:
         if self.is_archived:
             return Err(PerfumeArchived())
@@ -554,9 +562,43 @@ class Perfume(AggregateRoot):
                 width=width,
                 height=height,
                 created_at=created_at,
+                source_url=source_url,
             )
         )
         return Ok(None)
+
+    def replace_photo(
+        self,
+        old_photo_id: UUID,
+        photo_id: UUID,
+        card_key: str,
+        detail_key: str,
+        width: int,
+        height: int,
+        *,
+        source_url: str | None,
+        created_at: datetime,
+    ) -> Result[Photo, PerfumeArchived | PhotoNotFound]:
+        """Put a new photo in the slot and position of another one. Returns the old photo, whose
+        objects the caller deletes after the commit."""
+        if self.is_archived:
+            return Err(PerfumeArchived())
+        index = next((i for i, photo in enumerate(self.photos) if photo.id == old_photo_id), None)
+        if index is None:
+            return Err(PhotoNotFound())
+        old = self.photos[index]
+        self.photos[index] = Photo(
+            id=photo_id,
+            position=old.position,
+            card_key=card_key,
+            detail_key=detail_key,
+            width=width,
+            height=height,
+            created_at=created_at,
+            source_url=source_url,
+        )
+        self.removed_photo_ids.append(old.id)
+        return Ok(old)
 
     def remove_photo(self, photo_id: UUID) -> Result[Photo, PerfumeArchived | PhotoNotFound]:
         if self.is_archived:

@@ -7,6 +7,8 @@ from fragancia_api.modules.catalog.application.commands.brand_status import (
     RestoreBrand,
 )
 from fragancia_api.modules.catalog.application.commands.catalog_imports import (
+    ConfirmCatalogImport,
+    DiscardCatalogImport,
     ExpireCatalogImports,
     ImportUploadLimit,
     StartCatalogImport,
@@ -288,6 +290,28 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
             transactions=platform.transactions,
             clock=platform.clock,
             stale_after=timedelta(minutes=30),
+        ),
+    )
+    services.add(
+        ConfirmCatalogImport,
+        ConfirmCatalogImport(
+            imports=imports,
+            perfumes=perfumes,
+            brands=brands,
+            families=families,
+            concentrations=concentrations,
+            storage=media,
+            transactions=platform.transactions,
+            clock=platform.clock,
+        ),
+    )
+    services.add(
+        DiscardCatalogImport,
+        DiscardCatalogImport(
+            imports=imports,
+            storage=media,
+            transactions=platform.transactions,
+            clock=platform.clock,
         ),
     )
     services.add(GetCatalogImport, GetCatalogImport(SqlCatalogImportQueries(platform.database)))

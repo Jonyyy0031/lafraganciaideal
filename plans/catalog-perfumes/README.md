@@ -24,7 +24,7 @@ and orders come in later initiatives.
 | 005  | Bound the page number of every list | 004 | Shared `MAX_PAGE` with `le=` on the five paginated list routes, so a huge `page` is a 422 instead of an OFFSET overflow (finding `catalog-unbounded-page-offset-overflow`) |
 | 006  | Perfume photos on S3 | 003 | Up to 3 photos per perfume in RustFS/S3: upload, order, remove; public URLs in the catalog responses |
 | 007  | Excel import: template and validation | 003, 006 | Downloadable `.xlsx` template; raw-body upload; the worker validates the whole file into a per-row report, downloads changed image URLs and stages their renditions; unconfirmed imports expire; Mailpit in the CI integration job |
-| 008  | Excel import: confirm | 007 | All-or-nothing confirm of a ready import: upserts perfumes and presentations, places the staged photos and records their source URLs |
+| 008  | Excel import: confirm and discard | 007 | All-or-nothing confirm of a ready import in the request (409 when the catalog changed meanwhile): upserts perfumes and presentations, places the staged photos with their source URLs; discard a ready import early |
 
 ## Dependency notes
 
@@ -250,8 +250,55 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
     rejects files whose empty rows only carry formatting (finding
     `catalog-import-formatted-blank-rows-too-many`). The user chose to fix it in 007 now: the
     scan limit goes up to Excel's maximum of 1,048,576 rows, and the ZIP limits bound the cost.
+72. (2026-10-12) **A stale confirm applies nothing.** Up to 60 minutes pass between
+    validating and confirming, and the catalog may change from the panel in the meantime. If
+    confirming finds something that no longer fits, nothing is written. Confirming answers 409
+    `CATALOG_IMPORT_STALE` and lists the affected rows; the admin uploads the file again.
+    Examples: a perfume archived or created meanwhile, a photo added, a presentation archived.
+73. (2026-10-12) **Confirming runs in the request**, in a single transaction, and answers with
+    the result. It only writes rows: the images are already in S3.
+74. (2026-10-12) **A ready import can be discarded** before it expires (`POST …/discard`). It
+    becomes `discarded`, and its staged images are deleted at once.
+75. (2026-10-12) **Repair round for the 008 review.** The reviewer flagged a possible deadlock
+    (Low): two confirms of different imports that lock the same perfumes in opposite order.
+    The user chose to fix it before `done`. Confirming applies the perfumes in `perfume_id`
+    order, so every confirm takes the row locks in the same order. Issues are still reported
+    in row order.
 
 ## Delivered
+
+The series closed on 2026-10-12, when all eight plans were `done`. What shipped is in the
+`catalog` module (`apps/api/src/fragancia_api/modules/catalog/`); the contract is in
+`apps/api/openapi.json`.
+
+- **Reference lists (001, 002):** olfactory families, concentrations and brands. Each can be
+  created, renamed, archived and restored; families and concentrations are seeded.
+- **Perfumes (003):** perfumes and their presentations in the back office, with price, an
+  optional sale with a date window, and availability (in stock, or made to order with a
+  delivery range). Perfumes can be published or hidden, and are archived rather than deleted.
+- **Public catalog (004, 005):**
+  - filters by brand, gender, family, accent-insensitive text and effective price;
+  - sorting, a "from" price, and pages bounded by `MAX_PAGE`;
+  - a detail page by slug that also finds old slugs.
+- **Photos (006):** up to 3 per perfume, stored in S3 as WebP renditions and served through
+  `MEDIA_PUBLIC_BASE_URL`.
+- **Excel import (007, 008):**
+  - a downloadable template;
+  - a raw-body upload, checked in the background by the worker, with a per-row report;
+  - SSRF-hardened image downloads;
+  - an all-or-nothing confirm that applies nothing and answers 409 when the catalog changed
+    in the meantime;
+  - a discard route, and expiry for imports nobody confirmed.
+- **Platform:**
+  - modules can declare scheduled jobs (`ScheduledJob`) that the worker runs;
+  - the CI integration job runs RustFS and Mailpit.
+
+Architecture notes are in `docs/architecture.md` ("Events, outbox and jobs").
+
+Open findings for this module:
+- `catalog-import-confirm-same-new-perfume-deadlock`
+- `platform-unbounded-request-body` (platform)
+- `platform-format-hook-fix-rewrites-code-mid-edit` (platform)
 
 ## Considered and discarded
 

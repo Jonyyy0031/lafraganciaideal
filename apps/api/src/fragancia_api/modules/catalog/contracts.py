@@ -356,10 +356,13 @@ class CatalogImportSummary(BaseModel):
 
 class CatalogImportResponse(BaseModel):
     """An uploaded import and its validation report. `error_count` is 0 while there are no
-    issues and can exceed `len(errors)` when the list is capped."""
+    issues and can exceed `len(errors)` when the list is capped. `applied_at` is set once a
+    confirm applied it, `discarded_at` once it was discarded."""
 
     id: UUID
-    status: Literal["pending", "validating", "ready", "invalid", "failed", "expired", "applied"]
+    status: Literal[
+        "pending", "validating", "ready", "invalid", "failed", "expired", "applied", "discarded"
+    ]
     created_at: datetime
     finished_at: datetime | None
     expires_at: datetime | None
@@ -367,3 +370,5 @@ class CatalogImportResponse(BaseModel):
     summary: CatalogImportSummary | None
     error_count: int
     errors: list[CatalogImportIssue]
+    applied_at: datetime | None
+    discarded_at: datetime | None

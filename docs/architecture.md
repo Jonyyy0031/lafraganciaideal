@@ -161,7 +161,12 @@ POST /api/v1/admin/brands
   become cell issues, so a slow file still gets a full report before the 30-minute job
   timeout. `catalog_expire_imports` (every minute) fails
   validations interrupted for 30 minutes and expires unconfirmed ready imports, deleting their
-  staged objects.
+  staged objects. Confirming a ready import runs in the request, in **one transaction, all or
+  nothing**: each planned perfume goes through its aggregate against the live catalog, and if
+  anything no longer fits (the catalog changed since the validation) the whole transaction
+  rolls back and the confirm answers 409 `CATALOG_IMPORT_STALE` with the affected rows. Only
+  rows are written (the photos are already staged at their final keys); objects of replaced
+  photos, and the staged objects of a discarded import, are deleted after the commit.
 
 ## Errors
 

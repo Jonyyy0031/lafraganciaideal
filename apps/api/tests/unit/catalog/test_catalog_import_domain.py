@@ -62,7 +62,7 @@ def test_each_import_gets_its_own_id() -> None:
     assert _pending().id != _pending().id
 
 
-def test_the_seven_statuses_have_their_wire_values() -> None:
+def test_the_eight_statuses_have_their_wire_values() -> None:
     assert [status.value for status in ImportStatus] == [
         "pending",
         "validating",
@@ -71,6 +71,7 @@ def test_the_seven_statuses_have_their_wire_values() -> None:
         "failed",
         "expired",
         "applied",
+        "discarded",
     ]
 
 

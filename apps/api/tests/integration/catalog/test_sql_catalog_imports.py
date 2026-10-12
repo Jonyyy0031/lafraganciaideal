@@ -231,6 +231,9 @@ async def test_the_migration_created_the_imports_table_index_and_source_url_colu
         "summary",
         "errors",
         "plan",
+        "applied_at",
+        "applied_by",
+        "discarded_at",
     }
     assert "ix_catalog_imports_status_created_at" in indexes
     assert "source_url" in photo_columns

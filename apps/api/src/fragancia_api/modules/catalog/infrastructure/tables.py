@@ -161,6 +161,9 @@ imports = Table(
     Column("summary", JSONB, nullable=True),
     Column("errors", JSONB, nullable=True),
     Column("plan", JSONB, nullable=True),
+    Column("applied_at", DateTime(timezone=True), nullable=True),
+    Column("applied_by", String(64), nullable=True),
+    Column("discarded_at", DateTime(timezone=True), nullable=True),
     Index("ix_catalog_imports_status_created_at", "status", "created_at"),
     schema=SCHEMA,
 )

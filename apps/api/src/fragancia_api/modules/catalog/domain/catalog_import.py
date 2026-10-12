@@ -5,13 +5,19 @@ Lifecycle (any other transition is a programming error and raises `ValueError`):
 - `create` → `pending` (the file is stored with the import, which is its own job).
 - `start` (pending) → `validating`.
 - `finish_ready` (validating) → `ready`, with a summary, the typed plan that confirming applies
-  (plan 008) and `expires_at = now + ttl`.
+  and `expires_at = now + ttl`.
 - `finish_invalid` (validating) → `invalid`, with the issues (at most 1,000 kept;
   `error_count` is the full count).
 - `fail` (pending or validating) → `failed`, with one file-level issue.
 - `expire` (ready) → `expired`; returns the staged object keys and drops the plan.
+- `apply` (ready) → `applied`, with `applied_at` and `applied_by`; drops the plan, whose staged
+  objects are now live photos.
+- `discard` (ready) → `discarded`, with `discarded_at`; returns the staged object keys and drops
+  the plan.
 
-Every `finish_*` and `fail` sets `finished_at` and drops the file. `applied` is set by plan 008.
+Every `finish_*` and `fail` sets `finished_at` and drops the file. An import can be confirmed
+(`is_confirmable`) only while it is ready and `now < expires_at`; a ready import past
+`expires_at` may still be discarded or expired.
 
 Validation stages the photos at their final keys, so the plan carries the final ids of new
 perfumes and photos, and `staged_keys` lists every object an unconfirmed import leaves behind.
@@ -37,6 +43,7 @@ class ImportStatus(StrEnum):
     FAILED = "failed"
     EXPIRED = "expired"
     APPLIED = "applied"
+    DISCARDED = "discarded"
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +153,9 @@ class CatalogImport(AggregateRoot):
         error_count: int | None = None,
         errors: tuple[ImportIssue, ...] = (),
         plan: ImportPlan | None = None,
+        applied_at: datetime | None = None,
+        applied_by: str | None = None,
+        discarded_at: datetime | None = None,
     ) -> None:
         super().__init__()
         self.id = id
@@ -161,6 +171,9 @@ class CatalogImport(AggregateRoot):
         self.error_count = error_count
         self.errors = errors
         self.plan = plan
+        self.applied_at = applied_at
+        self.applied_by = applied_by
+        self.discarded_at = discarded_at
 
     @classmethod
     def create(cls, file: bytes, created_by: str, now: datetime) -> CatalogImport:
@@ -218,6 +231,31 @@ class CatalogImport(AggregateRoot):
         self._require(ImportStatus.READY)
         keys = self.plan.staged_keys() if self.plan is not None else []
         self.status = ImportStatus.EXPIRED
+        self.plan = None
+        return keys
+
+    def is_confirmable(self, now: datetime) -> bool:
+        """Ready and not yet past `expires_at` (the expiry cron may not have run yet)."""
+        return (
+            self.status == ImportStatus.READY
+            and self.expires_at is not None
+            and now < self.expires_at
+        )
+
+    def apply(self, now: datetime, actor_id: str) -> None:
+        """Mark a ready import applied; its staged objects are now live photos."""
+        self._require(ImportStatus.READY)
+        self.status = ImportStatus.APPLIED
+        self.applied_at = now
+        self.applied_by = actor_id
+        self.plan = None
+
+    def discard(self, now: datetime) -> list[str]:
+        """Discard a ready import; returns the keys of its staged objects to delete."""
+        self._require(ImportStatus.READY)
+        keys = self.plan.staged_keys() if self.plan is not None else []
+        self.status = ImportStatus.DISCARDED
+        self.discarded_at = now
         self.plan = None
         return keys
 

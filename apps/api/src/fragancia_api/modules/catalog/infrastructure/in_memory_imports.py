@@ -161,4 +161,6 @@ class InMemoryCatalogImports:
                 )
                 for issue in item.errors
             ],
+            applied_at=item.applied_at,
+            discarded_at=item.discarded_at,
         )
