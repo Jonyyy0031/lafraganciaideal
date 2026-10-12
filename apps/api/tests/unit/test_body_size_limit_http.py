@@ -223,7 +223,7 @@ async def test_a_response_already_started_when_the_limit_is_passed_reraises() ->
 
     with pytest.raises(Exception, match=r"^$") as raised:
         await _run(_middleware(app), _scope(), [b"x" * 80, b"x" * 80])
-    assert type(raised.value).__name__ == "_BodyTooLarge"
+    assert type(raised.value).__name__ == "BodyTooLarge"
 
 
 async def test_an_app_that_never_reads_the_body_is_not_refused_by_the_stream_count() -> None:

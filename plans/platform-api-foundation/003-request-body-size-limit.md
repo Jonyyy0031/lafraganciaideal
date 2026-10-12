@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -186,6 +186,12 @@ Then set the status to `testing`. The tester adds three regressions:
 - a chunked oversized body to a raw route produces no `request.unhandled_error` log;
 - the 413's `X-Request-ID` equals the id the app saw when the client sent none;
 - a client-sent `X-Request-ID` is kept.
+
+**Done (implementer, 2026-10-12).**
+- L1: `_BodyTooLarge` renamed to `BodyTooLarge`; `RequestContextMiddleware.dispatch` re-raises it before `except Exception` (no `request.unhandled_error` log); `BodySizeLimitMiddleware.__call__` appends a generated `x-request-id` header to a copy of the scope when the client sent none, so the 413 header and the logged id match.
+- N1: `docs/architecture.md` now says the middleware is outside `RequestContextMiddleware` and inside CORS, upload limits are "at or below" the binary limit, and the middleware is in the end-to-end flow.
+- Existing test adapted: `test_a_response_already_started_when_the_limit_is_passed_reraises` asserted the exception name `"_BodyTooLarge"`; changed to `"BodyTooLarge"` (rename only). Header injection broke no test.
+- `uv run just check`: green. Status set to `testing`.
 
 ## Test coverage
 

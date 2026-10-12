@@ -14,7 +14,7 @@ log = structlog.get_logger(__name__)
 REQUEST_ID_HEADER = "X-Request-ID"
 
 
-class _BodyTooLarge(Exception):
+class BodyTooLarge(Exception):
     """Raised from the wrapped `receive` once a streamed body passes the limit."""
 
 
@@ -54,6 +54,16 @@ class BodySizeLimitMiddleware:
             self.max_body_bytes if _is_bounded_text(_media_type(scope)) else self.max_upload_bytes
         )
         headers = Headers(scope=scope)
+        if REQUEST_ID_HEADER.lower() not in headers:
+            # One id for the whole request: the inner RequestContextMiddleware reads it from
+            # the scope, so the 413 header matches the id bound to the logs.
+            scope = {
+                **scope,
+                "headers": [
+                    *scope["headers"],
+                    (REQUEST_ID_HEADER.lower().encode(), uuid.uuid4().hex.encode()),
+                ],
+            }
         declared = headers.get("content-length", "")
         if declared.isascii() and declared.isdigit() and int(declared) > limit:
             await self._refuse(scope, receive, send, limit)
@@ -71,7 +81,7 @@ class BodySizeLimitMiddleware:
                 received += len(message.get("body", b""))
                 if received > limit:
                     exceeded = True
-                    raise _BodyTooLarge
+                    raise BodyTooLarge
             return message
 
         async def tracking_send(message: Message) -> None:
@@ -90,13 +100,13 @@ class BodySizeLimitMiddleware:
 
         try:
             await self.app(scope, limited_receive, tracking_send)
-        except _BodyTooLarge:
+        except BodyTooLarge:
             if response_started:
                 raise
             await self._refuse(scope, receive, send, limit)
 
     async def _refuse(self, scope: Scope, receive: Receive, send: Send, limit: int) -> None:
-        # This middleware is the outer layer, so it adds the request id itself.
+        # The scope carries the request id (client-sent, or generated in `__call__`).
         request_id = Headers(scope=scope).get(REQUEST_ID_HEADER) or uuid.uuid4().hex
         response = error_response(
             413, "REQUEST_TOO_LARGE", "The request body is too large", {"max_bytes": limit}
@@ -115,6 +125,8 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         structlog.contextvars.bind_contextvars(request_id=request_id)
         try:
             response = await call_next(request)
+        except BodyTooLarge:
+            raise  # a cut-off body is not an error: BodySizeLimitMiddleware answers the 413
         except Exception:
             log.exception("request.unhandled_error", method=request.method, path=request.url.path)
             response = error_response(500, "INTERNAL_ERROR", "Unexpected error")
