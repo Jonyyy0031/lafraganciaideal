@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -360,5 +360,67 @@ phase still has to cover the acceptance criteria marked NOT CONFIRMED in "Test c
 - the real login, chunked and declared;
 - 12 MiB and 6 MiB photos;
 - 4 MiB and 6 MiB `.xlsx` uploads.
+
+### Re-review after repair round 1 (2026-10-12)
+
+Scope: `git diff b7c50fa..HEAD` only (ccfa7d2, a2c8ad7, b3ecf62, facf0c7, 1c2dc5f). The first
+review above stays as the historical record. Its L1 and N1 are fixed by this repair, and its
+`verify` result is superseded by this re-review.
+
+**Checklist: passed.**
+- The repair changes only the files in its spec: `shared/http/middleware.py`,
+  `docs/architecture.md`, the test file and this plan.
+- `uv run just check` is green (1868 unit tests, 685 harness tests, exit 0).
+- Contracts and `openapi.json` are untouched. No infrastructure changed, so `test-integration`
+  is not needed.
+- The repair entry under `## Deviations` matches the code, including the facf0c7 follow-up for
+  the exception group.
+
+**Bug hunt.**
+
+- **Other errors are still logged and answered with a 500.**
+  - `_only_body_too_large` (`middleware.py:118-125`) returns true in two cases only: a plain
+    `BodyTooLarge`, or a group whose `split(BodyTooLarge)` leaves no remainder. Any other
+    exception, or a mixed group, falls through to `log.exception` and the 500. `split` and
+    `subgroup` recurse, so nested groups are classified correctly.
+  - Scratch probe through `build_app` (CORS on), with routes that raise:
+
+    | Route raises | Result |
+    | --- | --- |
+    | `RuntimeError` | 500 `INTERNAL_ERROR`, logged once |
+    | `ExceptionGroup([BodyTooLarge, RuntimeError])` | 500, logged once |
+    | a nested mixed group `[[BodyTooLarge], ValueError]` | 500, logged once |
+    | a `RuntimeError` after reading the body in full | 500, logged once |
+    | `ExceptionGroup([BodyTooLarge])` | 413, not logged |
+
+    Every response carries `X-Request-ID`.
+- **The cut-off path.** A chunked body over the limit on a raw-stream route now gets 413 with
+  no `request.unhandled_error` log, and the 413's id equals the one the route saw. The new
+  regression tests cover both the generated and the client-sent id. The probe also showed that
+  the CORS headers are present on the 413.
+- **Header injection.**
+  - The middleware passes a shallow scope copy, with the extra header, to the inner app only.
+    The outer layers (CORS, `ServerErrorMiddleware`) read no scope keys that the inner app sets.
+    `scope["state"]` is still the same dict object.
+  - A normal request echoes the same id that the route saw (probe: true).
+- **Re-raise when the response already started.** Unchanged. `RequestContextMiddleware` raises a
+  plain `BodyTooLarge` only when it has sent nothing, so the outer `except BodyTooLarge` path
+  answers the 413.
+
+**Findings: 0 high, 0 medium, 0 low.**
+
+- **Info R1.** A route that raises `BodyTooLarge` itself, without the limit being passed, gets
+  413 rather than 500 (probe: `only_group` → 413). Only the middleware's `receive` raises it
+  today, and the class lives in `shared/http`, so routes have no reason to raise it. Not a
+  defect.
+- **Nit R2 (uncertain value).** A client that sends an empty `X-Request-ID:` header skips the
+  injection (`middleware.py:57` checks presence, not value). `RequestContextMiddleware` and
+  `_refuse` then each generate their own id, so the mismatch fixed by L1 remains for this
+  degenerate header only. Probe: 413 with a generated id. Harmless.
+- **Nit R3.** Two prose lines in `docs/architecture.md` (106 and 109) are now 128 and 110
+  characters long, while the paragraph around them wraps at about 100. Cosmetic.
+
+**Result:** no finding requires a code change, so the status is set to `verify`. The verify
+items listed above still apply.
 
 ## Verification
