@@ -5,7 +5,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated, Any
 
 import pytest
-from fastapi import APIRouter, Depends, FastAPI
+import structlog.testing
+from fastapi import APIRouter, Depends, FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
 from starlette.types import Message, Receive, Scope, Send
@@ -259,6 +260,9 @@ async def test_non_http_scopes_pass_through_untouched(scope_type: str) -> None:
 # --- through build_app ---------------------------------------------------------------------
 
 
+SEEN_REQUEST_IDS: list[str] = []
+
+
 class Payload(BaseModel):
     name: str
 
@@ -269,6 +273,14 @@ def _routers() -> list[APIRouter]:
     @public.post("/echo")
     async def echo(body: Payload) -> Payload:
         return body
+
+    @public.post("/stream")
+    async def stream(request: Request) -> dict[str, int]:
+        SEEN_REQUEST_IDS.append(request.headers.get("x-request-id", ""))
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+        return {"size": total}
 
     @public.post("/upload")
     async def upload(raw: bytes) -> dict[str, int]:  # pragma: no cover - never reached
@@ -445,3 +457,55 @@ def test_settings_defaults_and_derived_upload_limit() -> None:
 def test_settings_reject_a_non_positive_request_limit() -> None:
     with pytest.raises(ValueError, match="request_max_bytes"):
         make_settings(request_max_bytes=0)
+
+
+# --- repair round 1: raw-body routes and the request id --------------------------------------
+
+
+async def _chunked_oversized(client: AsyncClient, headers: dict[str, str]) -> Any:
+    async def chunks() -> AsyncIterator[bytes]:
+        for _ in range(UPLOAD_LIMIT // 50 + 2):
+            yield b"x" * 50
+
+    SEEN_REQUEST_IDS.clear()
+    return await client.post(
+        "/api/v1/probe/stream",
+        content=chunks(),
+        headers={"Content-Type": "image/jpeg", **headers},
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "GAP: RequestContextMiddleware.dispatch re-raises BodyTooLarge, but Starlette's "
+        "BaseHTTPMiddleware delivers it wrapped in an ExceptionGroup (raised inside "
+        "receive_or_disconnect's task group), so `except BodyTooLarge` never matches and "
+        "request.unhandled_error is still logged (finding L1 not fixed for raw routes)"
+    ),
+)
+async def test_a_chunked_oversized_body_to_a_raw_route_logs_no_unhandled_error(
+    client: AsyncClient,
+) -> None:
+    with structlog.testing.capture_logs() as logs:
+        response = await _chunked_oversized(client, {})
+    assert response.status_code == 413
+    assert response.json()["code"] == "REQUEST_TOO_LARGE"
+    assert [entry for entry in logs if entry["event"] == "request.unhandled_error"] == []
+
+
+async def test_the_413_request_id_is_the_one_the_app_saw_when_the_client_sent_none(
+    client: AsyncClient,
+) -> None:
+    response = await _chunked_oversized(client, {})
+    assert response.status_code == 413
+    assert len(SEEN_REQUEST_IDS) == 1
+    assert response.headers["X-Request-ID"] == SEEN_REQUEST_IDS[0]
+    assert len(SEEN_REQUEST_IDS[0]) == 32
+
+
+async def test_a_client_sent_request_id_is_kept_through_the_cut_off(client: AsyncClient) -> None:
+    response = await _chunked_oversized(client, {"X-Request-ID": "client-id-9"})
+    assert response.status_code == 413
+    assert SEEN_REQUEST_IDS == ["client-id-9"]
+    assert response.headers["X-Request-ID"] == "client-id-9"

@@ -1,5 +1,5 @@
 ---
-status: testing
+status: implementing
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -195,9 +195,9 @@ Then set the status to `testing`. The tester adds three regressions:
 
 ## Test coverage
 
-All tests are in `apps/api/tests/unit/test_body_size_limit_http.py` (http layer, 28 test
-functions, 49 cases with parametrization). Domain, application and integration do not apply
-(plan table). No GAPs found.
+All tests are in `apps/api/tests/unit/test_body_size_limit_http.py` (http layer, 31 test
+functions, 52 cases with parametrization; one is an xfail). Domain, application and integration
+do not apply (plan table). One GAP (repair round 1, L1, raw-stream routes), see the matrix.
 
 | Behavior | Source | Layer | Test | State |
 | -------- | ------ | ----- | ---- | ----- |
@@ -219,6 +219,9 @@ functions, 49 cases with parametrization). Domain, application and integration d
 | `build_app` defaults are 1 MiB / 10 MiB | `main/http.py:55-56` | http | `test_build_app_defaults_are_1_mib_and_10_mib` | CONFIRMED |
 | `create_app` wires `request_max_bytes` and `upload_max_bytes` from settings; 413 on the real `/auth/login` route | `main/http.py:46-47` | http | `test_create_app_wires_the_limits_from_settings` | CONFIRMED |
 | Settings defaults, `upload_max_bytes = max(photo, import)`, `ge=1` | `config.py:87,106-108` | http (settings) | `test_settings_defaults_and_derived_upload_limit`, `test_settings_reject_a_non_positive_request_limit` | CONFIRMED |
+| Repair round 1, L1: chunked oversized body to a raw-stream route logs no `request.unhandled_error` | `middleware.py:112-119` | http | `test_a_chunked_oversized_body_to_a_raw_route_logs_no_unhandled_error` | **GAP** (xfail strict): `BaseHTTPMiddleware` delivers `BodyTooLarge` wrapped in an `ExceptionGroup`, so `except BodyTooLarge` in `RequestContextMiddleware.dispatch` never matches and the error is still logged (client still gets 413). Probe confirmed. Needs a product fix (e.g. `except* BodyTooLarge` or unwrap the group) |
+| Repair round 1: the 413's `X-Request-ID` equals the id the app saw when the client sent none | `middleware.py:60-69,97-99` | http | `test_the_413_request_id_is_the_one_the_app_saw_when_the_client_sent_none` | CONFIRMED |
+| Repair round 1: a client-sent `X-Request-ID` is kept (app sees it, 413 echoes it) | `middleware.py:60-69` | http | `test_a_client_sent_request_id_is_kept_through_the_cut_off` | CONFIRMED |
 | 2 MiB JSON to real login both ways; 12 MiB photo 413; 6 MiB photo and 4/6 MiB xlsx reach the real routes (criteria 1, 4, 5) | photo and import routers | e2e-ish | not unit-testable without real routes and multipart bodies at that size | NOT CONFIRMED here: left to the verify phase against the running app |
 
 ## Review findings
