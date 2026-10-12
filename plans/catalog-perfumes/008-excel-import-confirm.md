@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: catalog
 min_implementer: high
 depends_on: ["007"]
@@ -395,6 +395,13 @@ only the confirm path is re-verified.
 2. Report the collected issues sorted by `(row, column or "")`, so the 409 body stays in file
    order whatever the processing order.
 3. Add a one-line comment saying why the order matters.
+
+**Done (implementer, 2026-10-12).** In `ConfirmCatalogImport.execute`
+(`application/commands/catalog_imports.py`): the loop now iterates `sorted(plan.perfumes,
+key=lambda p: p.perfume_id)` with a comment on why; before returning `ImportStale` the issues
+are sorted by `(row or 0, column or "")`. No existing test pinned the old order, so none was
+changed. `uv run just check` green (1824 unit passed, 3 skipped; 684 harness) and
+`uv run just test-integration` green (475 passed, 5 skipped). No deviations from the spec.
 
 Then set the status to `testing`. The tester adds these tests:
 - unit: the processing order is ascending `perfume_id` even when the plan lists perfumes in

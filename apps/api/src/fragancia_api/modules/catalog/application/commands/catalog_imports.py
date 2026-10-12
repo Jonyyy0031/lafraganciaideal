@@ -389,13 +389,15 @@ class ConfirmCatalogImport:
                 return Err(ImportNotReady())
             issues: list[ImportIssue] = []
             old_keys: list[str] = []
-            for planned in plan.perfumes:
+            # Ascending perfume_id: one global lock order, so two confirms cannot deadlock.
+            for planned in sorted(plan.perfumes, key=lambda p: p.perfume_id):
                 match await self._apply(planned, now):
                     case Err(issue):
                         issues.append(issue)
                     case Ok(keys):
                         old_keys.extend(keys)
             if issues:  # the runner rolls back every write of the loop
+                issues.sort(key=lambda i: (i.row if i.row is not None else 0, i.column or ""))
                 return Err(ImportStale(details=_issues_details(issues)))
             catalog_import.apply(now, actor_id)
             await self._imports.save(catalog_import)
