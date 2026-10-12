@@ -839,6 +839,83 @@ async def test_confirms_touching_the_same_perfumes_in_opposite_order_do_not_dead
     assert ImportStatus.APPLIED in statuses
 
 
+async def test_confirms_creating_the_same_new_perfume_with_different_ids_do_not_deadlock(
+    container: Container,
+    world: World,  # noqa: F811
+) -> None:
+    """Regression (finding catalog-import-confirm-same-new-perfume-deadlock): two imports
+    create the same new perfume, each with its own pre-assigned id (one below and one above
+    the existing perfume's id), and both update the same existing perfume. Ordered by id, one
+    would insert the new perfume and then lock the existing one, while the other locks the
+    existing one and then waits on the unique identity index. The gate makes that cycle
+    deterministic; ordered by identity both take the same first step and simply queue."""
+    existing = await seed_perfume(container, world, "Zz Imp Same Old", presentation_ml=(100,))
+    presentation_id = await _presentation_id(container, existing, 100)
+
+    def plan(new_perfume_id: UUID, price: int) -> tuple[PlannedPerfume, PlannedPerfume]:
+        new = _planned(
+            world,
+            new_perfume_id,
+            "Zz Imp Same New",
+            is_new=True,
+            first_row=2,
+            presentations_=(_presentation(100, price, row=2),),
+        )
+        update = _planned(
+            world,
+            existing,
+            "Zz Imp Same Old",
+            is_new=False,
+            first_row=3,
+            presentations_=(_presentation(100, price, presentation_id=presentation_id, row=3),),
+        )
+        return new, update
+
+    low_new = await _store_ready(container, *plan(UUID(int=1), 111_100))
+    high_new = await _store_ready(container, *plan(UUID(int=2**128 - 1), 222_200))
+    arrived = 0
+    both_started = asyncio.Event()
+
+    class Gated(SqlPerfumeRepository):
+        def __init__(self, database: Database) -> None:
+            super().__init__(database)
+            self._first = True
+
+        async def _after_first_step(self) -> None:
+            nonlocal arrived
+            if self._first:
+                self._first = False
+                arrived += 1
+                if arrived == 2:
+                    both_started.set()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(both_started.wait(), timeout=0.5)
+
+        async def add(self, perfume: Perfume) -> Any:
+            result = await super().add(perfume)
+            await self._after_first_step()
+            return result
+
+        async def get_for_update(self, perfume_id: UUID) -> Perfume | None:
+            found = await super().get_for_update(perfume_id)
+            await self._after_first_step()
+            return found
+
+    def gated_confirm() -> ConfirmCatalogImport:
+        return _confirm_with(
+            container, SqlTransactionRunner(container.database), Gated(container.database)
+        )
+
+    results = await asyncio.gather(
+        gated_confirm().execute(low_new, "admin-1"),
+        gated_confirm().execute(high_new, "admin-2"),
+    )  # a deadlock would raise out of the gather
+
+    assert sum(isinstance(r, Ok) for r in results) == 1, results
+    loser = next(r for r in results if not isinstance(r, Ok))
+    assert _code(loser) == "CATALOG_IMPORT_STALE"
+
+
 async def test_a_confirm_waits_for_the_expiry_that_holds_the_import_and_is_then_refused(
     container: Container,
     world: World,  # noqa: F811

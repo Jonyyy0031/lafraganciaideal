@@ -737,20 +737,22 @@ async def test_every_stale_row_is_reported_together_in_plan_order_one_issue_per_
     assert taken.id in rig.world.perfumes.by_id
 
 
-async def test_perfumes_are_processed_in_ascending_perfume_id_whatever_the_plan_order() -> None:
-    """Repair round 1: one global lock order, so two confirms cannot deadlock."""
+async def test_perfumes_are_processed_in_identity_order_whatever_the_plan_or_id_order() -> None:
+    """One global lock order, so two confirms cannot deadlock: by identity (brand, name slug,
+    concentration), not by the pre-assigned id, which differs between two imports that create
+    the same perfume (finding catalog-import-confirm-same-new-perfume-deadlock)."""
     rig = _rig()
     import_id = await _store(
         rig,
-        _new(rig, 9, "Nueve", first_row=2),
-        _new(rig, 3, "Tres", first_row=3),
-        _new(rig, 5, "Cinco", first_row=4),
+        _new(rig, 3, "Charlie", first_row=2),
+        _new(rig, 9, "Alfa", first_row=3),
+        _new(rig, 5, "Bravo", first_row=4),
     )
 
     unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
 
-    # The in-memory repository inserts in call order.
-    assert list(rig.world.perfumes.by_id) == [UUID(int=3), UUID(int=5), UUID(int=9)]
+    # The in-memory repository inserts in call order: Alfa, Bravo, Charlie.
+    assert list(rig.world.perfumes.by_id) == [UUID(int=9), UUID(int=5), UUID(int=3)]
 
 
 async def test_issues_come_out_sorted_by_row_even_when_processing_order_differs() -> None:

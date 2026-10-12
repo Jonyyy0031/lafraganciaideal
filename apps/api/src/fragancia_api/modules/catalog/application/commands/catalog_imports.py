@@ -47,6 +47,7 @@ from fragancia_api.modules.catalog.domain.errors import (
     PerfumeNotFound,
     PresentationNotFound,
 )
+from fragancia_api.modules.catalog.domain.naming import slugify
 from fragancia_api.modules.catalog.domain.perfume import (
     Availability,
     AvailabilityKind,
@@ -337,6 +338,11 @@ def _issue(error: DomainError, row: int) -> ImportIssue:
     return ImportIssue.of(error, row=row, column=None)
 
 
+def _identity_order(planned: PlannedPerfume) -> tuple[str, str, str]:
+    """The perfume's identity as a sort key; the same perfume has it in every import."""
+    return (str(planned.brand_id), slugify(planned.name), str(planned.concentration_id))
+
+
 def _issues_details(issues: list[ImportIssue]) -> dict[str, object]:
     return {
         "issues": [
@@ -389,8 +395,10 @@ class ConfirmCatalogImport:
                 return Err(ImportNotReady())
             issues: list[ImportIssue] = []
             old_keys: list[str] = []
-            # Ascending perfume_id: one global lock order, so two confirms cannot deadlock.
-            for planned in sorted(plan.perfumes, key=lambda p: p.perfume_id):
+            # One global lock order, so two confirms cannot deadlock: by identity (brand, name
+            # slug, concentration), which two imports share even for a perfume both create
+            # (each pre-assigns it a different id).
+            for planned in sorted(plan.perfumes, key=_identity_order):
                 match await self._apply(planned, now):
                     case Err(issue):
                         issues.append(issue)
