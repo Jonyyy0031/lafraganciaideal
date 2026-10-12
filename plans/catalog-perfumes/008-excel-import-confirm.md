@@ -749,3 +749,26 @@ reproduced live. It is left to the user to decide.
   so their staged objects are gone.
 - The API, worker and image server are stopped, and ports 8100 and 8765 are free.
 - The QA perfumes stay in the dev DB, since the catalog never deletes.
+
+**2026-10-12, re-verification after repair round 1 (main session, inline).**
+
+Branch at `37ef82e`. The reviewer reports `uv run just check` (1826 passed, 3 skipped; 684
+harness) and `uv run just test-integration` (476 passed, 5 skipped). The reviewer also showed
+that the new concurrency test deadlocks with the old file order (`DeadlockDetected`) and passes
+on HEAD. The API and worker ran with private hosts allowed.
+- Confirming the same URLs (`c_same`): 200 `applied`, and the photo ids are unchanged.
+- Stale confirm (`c_stale`, "QA Existente" archived after validation): 409
+  `CATALOG_IMPORT_STALE` with `row 3 | CATALOG_PERFUME_ARCHIVED`. "QA Stale Nuevo" has 0
+  rows, the existing price is still 210000, and the import is still `ready`. The perfume was
+  restored afterwards (204). The leftover ready import was discarded (204).
+- Every earlier criterion stays valid. The API, worker and image server are stopped, and ports
+  8100 and 8765 are free.
+
+**New advisory Low from the re-review** (not reproduced): two imports that both create the
+*same* new perfume, and both update the same existing perfume, can still deadlock. The new
+perfume gets a different pre-assigned id in each import. The loser gets a 500 instead of the
+409 it would get anyway, and the data stays consistent. Recorded as finding
+`catalog-import-confirm-same-new-perfume-deadlock` for the user to triage.
+
+**Result:** every acceptance criterion that can be exercised locally passes. Ready for the
+user to mark `done`.
