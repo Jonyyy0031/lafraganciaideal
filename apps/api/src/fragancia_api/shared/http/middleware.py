@@ -115,6 +115,16 @@ class BodySizeLimitMiddleware:
         await response(scope, receive, send)
 
 
+def _only_body_too_large(error: BaseException) -> bool:
+    if isinstance(error, BodyTooLarge):
+        return True
+    return (
+        isinstance(error, BaseExceptionGroup)
+        and error.subgroup(BodyTooLarge) is not None
+        and error.split(BodyTooLarge)[1] is None
+    )
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """Gives every request an id (taken from `X-Request-ID` or generated), binds it to the
     logs, echoes it in the response, and turns unexpected exceptions into a 500 without
@@ -125,9 +135,12 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         structlog.contextvars.bind_contextvars(request_id=request_id)
         try:
             response = await call_next(request)
-        except BodyTooLarge:
-            raise  # a cut-off body is not an error: BodySizeLimitMiddleware answers the 413
-        except Exception:
+        except Exception as error:
+            if _only_body_too_large(error):
+                # A cut-off body is not an error: BodySizeLimitMiddleware answers the 413.
+                # `BaseHTTPMiddleware` may wrap it in an exception group; unwrap it so the
+                # outer middleware sees a plain `BodyTooLarge`.
+                raise BodyTooLarge from error
             log.exception("request.unhandled_error", method=request.method, path=request.url.path)
             response = error_response(500, "INTERNAL_ERROR", "Unexpected error")
         finally:

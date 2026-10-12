@@ -475,15 +475,6 @@ async def _chunked_oversized(client: AsyncClient, headers: dict[str, str]) -> An
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "GAP: RequestContextMiddleware.dispatch re-raises BodyTooLarge, but Starlette's "
-        "BaseHTTPMiddleware delivers it wrapped in an ExceptionGroup (raised inside "
-        "receive_or_disconnect's task group), so `except BodyTooLarge` never matches and "
-        "request.unhandled_error is still logged (finding L1 not fixed for raw routes)"
-    ),
-)
 async def test_a_chunked_oversized_body_to_a_raw_route_logs_no_unhandled_error(
     client: AsyncClient,
 ) -> None:

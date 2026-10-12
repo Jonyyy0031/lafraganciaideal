@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -192,6 +192,7 @@ Then set the status to `testing`. The tester adds three regressions:
 - N1: `docs/architecture.md` now says the middleware is outside `RequestContextMiddleware` and inside CORS, upload limits are "at or below" the binary limit, and the middleware is in the end-to-end flow.
 - Existing test adapted: `test_a_response_already_started_when_the_limit_is_passed_reraises` asserted the exception name `"_BodyTooLarge"`; changed to `"BodyTooLarge"` (rename only). Header injection broke no test.
 - `uv run just check`: green. Status set to `testing`.
+- Follow-up (tester GAP): `BaseHTTPMiddleware` delivers `BodyTooLarge` wrapped in an exception group, so the plain `except BodyTooLarge` never matched. `dispatch` now uses `except Exception as error` plus `_only_body_too_large(error)` (plain, or a group made only of `BodyTooLarge`) and re-raises a plain `BodyTooLarge`, so the outer middleware still answers 413; any other error is still logged and gets a 500. The strict xfail was removed from `test_a_chunked_oversized_body_to_a_raw_route_logs_no_unhandled_error`; it passes. `just check` green (685 passed).
 
 ## Test coverage
 
