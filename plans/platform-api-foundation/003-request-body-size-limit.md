@@ -424,3 +424,36 @@ review above stays as the historical record. Its L1 and N1 are fixed by this rep
 items listed above still apply.
 
 ## Verification
+
+**2026-10-12, verifier (main session, inline).**
+
+**Setup.** Branch `fix/open-findings` at `588fbb0`. `uv run just api` ran with default
+settings. The owner was `verifier007@example.test`, and the QA perfume "QA Confirma" from
+the catalog plans was reused. The reviewer reports `uv run just check` green (1868 unit, 685
+harness). Persistence did not change.
+
+**Acceptance criteria** (scratchpad `qa3.py`, real requests to port 8100):
+- [x] **Login, oversized.** A 2 MiB JSON body to `POST /api/v1/auth/login` got 413
+  `REQUEST_TOO_LARGE` `{'max_bytes': 1048576}`, both declared and chunked.
+- [x] **Admin route, no session.** A 2 MiB JSON body to `POST /api/v1/admin/brands` got 413.
+  A small body without a session still gets 401 `AUTHENTICATION_REQUIRED`.
+- [x] **Normal calls.** A normal login returns 200, and the normal admin list returns 200.
+- [x] **Photos.**
+  - A 12 MiB `image/jpeg` body to the photo route got 413 `{'max_bytes': 10485760}`, both
+    declared and chunked.
+  - A 6 MiB body reached the route, which answered its own 422
+    `CATALOG_PHOTO_FORMAT_INVALID`.
+  - A valid photo got 201, and deleting it got 204.
+- [x] **Imports.** A 4 MiB `.xlsx` body got 202. A 6 MiB one got the route's 422
+  `CATALOG_IMPORT_TOO_LARGE` `{'max_bytes': 5242880}`.
+- [x] **Request id.** Every 413 carried `X-Request-ID`. The API log has 0
+  `request.unhandled_error` lines after the chunked cut-offs, which confirms L1 is fixed live.
+
+**Notes.**
+- The 4 MiB import is a synthetic body that is not a real workbook. It stays `pending` until a
+  worker runs, which will mark it `invalid`.
+- Not fixed: the reviewer's nits R2 (an empty `X-Request-ID` header skips the id injection)
+  and R3 (two doc lines over the usual wrap width).
+- The API is stopped and port 8100 is free.
+
+**Result:** every acceptance criterion passes. Ready for the user to mark `done`.
