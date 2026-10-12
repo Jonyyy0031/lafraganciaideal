@@ -557,3 +557,84 @@ Findings by severity:
 **Result: all checks passed; no finding needs a code change.** Status → `verify`.
 
 ## Verification
+
+**2026-10-12, verifier (main session, inline).**
+
+**Setup.** Branch `feat/catalog-import-confirm` at `f1eaed8`. The API and worker ran through
+the scratchpad launcher with `CATALOG_IMPORT_IMAGE_ALLOW_PRIVATE_HOSTS=true` and the default
+60-minute TTL. Images were served by `python -m http.server 8765`. The owner was
+`verifier007@example.test`, and the plan 007 QA data was reused ("QA Versace", "QA
+Existente").
+
+**A leftover from implementation.** A `uvicorn --reload` API started at 11:31 by the
+implementer subagent still held port 8100, although its report said it was stopped. The
+first QA upload went through it; that upload was then rejected for a mistake in the QA file
+(see A below). I stopped it (`kill 1135317`) and restarted the API with known settings.
+
+**Suites.**
+- `uv run just check`: "All checks passed!", "no issues found in 252 source files", "1824
+  passed, 3 skipped", "684 passed", "plans OK", "24 adapters up to date".
+- `uv run just test-integration`: "475 passed, 5 skipped".
+- The dev DB is at `0011`.
+- On the test DB, `alembic -x test=true downgrade -1` gives "Running downgrade 0011 -> 0010",
+  `upgrade head` gives "Running upgrade 0010 -> 0011", and `check` gives "No new upgrade
+  operations detected."
+
+**Acceptance criteria.**
+- [x] **Confirm a valid import.** `c_valid` (a new "QA Confirma" EDP with 50 and 100 ml and
+  images a/b, plus "QA Existente" 100 ml at $2,100 with images a and c) went `ready`, then
+  `POST …/confirm` returned 200 `applied` with `applied_at` set.
+  - The new perfume id equals the plan's `perfume_id`, and the perfume is published.
+  - 50 ml: `price=189950`, `sale=150000`, `2026-11-01T05:00:00Z -> 2026-12-01T05:00:00Z`, which
+    is 00:00 Cancún to the end of 30/11. 100 ml: `249900`, no sale.
+  - Photos 1 and 2 have `src` a.jpg and b.png, and their cards return 200.
+  - The existing 100 ml is `price=210000`, with the same id as planned.
+  - The existing perfume gained photo 2 (`src` c.jpg, card 200); photo 1 is kept.
+  - `GET /api/v1/perfumes?q=QA Confirma` lists it.
+  - Note: my first QA file left the images off the 100 ml row. Validation correctly answered
+    `PERFUME_MISMATCH` on Imagen 1 and 2 (decision 61); the file was fixed and re-run.
+- [x] **Replace a photo.** `c_replace` with Imagen 1 = c.jpg planned `pos=1 replaces=<old
+  id>`. The confirm returned 200. After it, the old photo 1 card returns 404, the new photo 1
+  (`src` c.jpg) returns 200, and photo 2 keeps its id ("photo 2 untouched: True").
+- [x] **Same URL.** `c_same` with the same URLs has `photos_new=0`. The confirm returned 200
+  and the photo ids are unchanged.
+- [x] **Stale confirm.** `c_stale` held "QA Stale Nuevo" (new) and "QA Existente" at $77.77.
+  "QA Existente" was archived after validation.
+  - The confirm returned 409 `CATALOG_IMPORT_STALE` with the issue `row 3 |
+    CATALOG_PERFUME_ARCHIVED`.
+  - "QA Stale Nuevo" has 0 rows, the existing 100 ml price is still 210000, and the import is
+    still `ready`.
+  - The perfume was restored afterwards (204).
+- [x] **Stale photo limit.** "QA Existente" had 2 photos, and `c_limit` appended Imagen 3.
+  After validation, a panel upload added a 3rd photo (201). The confirm returned 409 `STALE`
+  with the issue `row 2 | CATALOG_PHOTO_LIMIT_REACHED`.
+- [x] **Twice or not ready.**
+  - Confirming `c_valid` again gives 409 `CATALOG_IMPORT_NOT_READY`.
+  - Confirming the invalid import from plan 007's QA gives 409 `NOT_READY`, and so does
+    confirming the expired one.
+  - The case of a ready import past `expires_at` before the cron runs was not driven live. It
+    is covered by the unit and integration tests in the matrix.
+- [x] **Discard.** `c_discard` staged objects returned [200, 200]. `POST …/discard` gave
+  204, then `status=discarded` with `discarded_at` set, and the objects return [404, 404].
+  Discarding again gives 409 `NOT_READY`, and confirming the discarded import gives 409
+  `NOT_READY`.
+- [x] **Errors.** An unknown id gives 404 `CATALOG_IMPORT_NOT_FOUND` on both routes, and an
+  anonymous call gives 401 on both.
+- [x] **Panel unchanged.** The panel upload in the photo-limit check returned 201 and stored
+  `source_url` NULL, next to the imported photos' URLs.
+
+**Reviewer Low: deadlock between two confirms.** Two confirms of *different* imports that
+lock the same perfumes in opposite order could deadlock, and the loser would get a 500. Not
+reproduced live. It is left to the user to decide.
+
+**NOT VERIFIED:**
+- 403 for an admin without `catalog:manage` (no such role exists yet; covered by the HTTP
+  tests);
+- the deadlock above;
+- the expiry-boundary case live.
+
+**Cleanup.**
+- The two imports still ready from the stale checks were discarded through the API (204, 204),
+  so their staged objects are gone.
+- The API, worker and image server are stopped, and ports 8100 and 8765 are free.
+- The QA perfumes stay in the dev DB, since the catalog never deletes.
