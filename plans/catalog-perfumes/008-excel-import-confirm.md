@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: catalog
 min_implementer: high
 depends_on: ["007"]
@@ -606,6 +606,66 @@ Findings by severity:
   - `Perfume.create` uses `id or new_id()`. A `UUID` is always truthy, so this is correct.
 
 **Result: all checks passed; no finding needs a code change.** Status → `verify`.
+*(Superseded for the confirm path by the re-review below.)*
+
+### Re-review after repair round 1
+
+Reviewer run, 2026-10-12, scope `git diff b860461..HEAD` (commits 99065d3 and 2e97a6f). The
+worktree was clean.
+
+**Checklist: all applicable items passed.**
+- `plans-scope` is clean.
+- `uv run just check` is green: 1826 unit passed, 3 skipped; 684 harness tests passed.
+- `uv run just test-integration` is green: 476 passed, 5 skipped.
+- The product change matches the repair spec:
+  - it touches only `application/commands/catalog_imports.py`;
+  - it iterates `sorted(plan.perfumes, key=perfume_id)`, with a one-line comment;
+  - it sorts the issues by `(row or 0, column or "")` before `ImportStale`.
+- Contracts, migrations and wiring are unchanged. The implementer's "Done" note matches the
+  code.
+- The PR body is still not applicable, because no PR exists yet.
+
+**Does the new integration test fail against the pre-repair order? Yes, demonstrated.**
+- **Method.** A pytest plugin in the session scratchpad (`oldorder_plugin.py`, loaded with
+  `-o pythonpath=<scratchpad> -p oldorder_plugin`) shadows `sorted` in the `catalog_imports`
+  module only. For a list of `PlannedPerfume` it returns the file order unchanged, and every
+  other call goes to the builtin. The worktree was not edited.
+- **Result.** The plugin was applied (it logged both confirms).
+  `test_confirms_touching_the_same_perfumes_in_opposite_order_do_not_deadlock` **failed in
+  1.45 s** with `psycopg.errors.DeadlockDetected` on `SELECT … FROM catalog.perfumes … FOR
+  UPDATE`: each process waited for the other's transaction. Without the plugin, the same test
+  **passes** in 0.69 s.
+- **Conclusion.** The gate forces the interleaving deterministically, and the test is a real
+  regression test for this repair. The tester's "NOT CONFIRMED" for this point is now
+  confirmed by the reviewer.
+
+**Bug hunt on the repair.**
+- **Issue order.** It is still one issue per perfume, and `first_row`s are distinct, so the
+  sort gives file order. `row or 0` is only a guard, since every confirm issue carries a row.
+  The 409 body is unchanged except for its order, which is now always file order.
+- **All or nothing is untouched.** The loop body, the savepoints, the rollback and the
+  old-key handling are unchanged.
+- **Lock ordering for existing perfumes** is now global, which removes the reported deadlock.
+
+**Findings.**
+- **Blocker / High / Medium:** none.
+- **Low (advisory, uncertain how likely; not demonstrated):**
+  `application/commands/catalog_imports.py:393`. The repair spec says the order also covers
+  "unique-index entries". It does not fully, because two imports that create the *same* new
+  identity give it different pre-assigned `perfume_id`s, so their inserts sort differently.
+  - Failure scenario: import X creates new perfume N_x (id `a`) with identity I and updates
+    existing P (id `b`, `a < b`). Import Y creates N_y (id `c`, `c > b`) with the same
+    identity I and updates P.
+    - X inserts N_x, then waits for P's lock.
+    - Y holds P, then its insert of N_y waits on X's uncommitted index entry.
+    - PostgreSQL detects a deadlock, and the loser gets a 500 instead of a 409 `STALE`.
+  - Impact: the loser would have been stale anyway, the data stays consistent through the
+    rollback, and a retry answers 409. It needs two concurrent confirms that create the same
+    new perfume *and* share an existing one.
+  - No change is required for this plan. Either record it or accept it.
+
+**Result: the repair is correct and its tests are real; no finding needs a code change.**
+Status → `verify`, so the verifier re-checks the confirm path.
 
 ## Verification
 
