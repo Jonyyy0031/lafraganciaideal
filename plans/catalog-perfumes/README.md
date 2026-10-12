@@ -24,7 +24,7 @@ and orders come in later initiatives.
 | 005  | Bound the page number of every list | 004 | Shared `MAX_PAGE` with `le=` on the five paginated list routes, so a huge `page` is a 422 instead of an OFFSET overflow (finding `catalog-unbounded-page-offset-overflow`) |
 | 006  | Perfume photos on S3 | 003 | Up to 3 photos per perfume in RustFS/S3: upload, order, remove; public URLs in the catalog responses |
 | 007  | Excel import: template and validation | 003, 006 | Downloadable `.xlsx` template; raw-body upload; the worker validates the whole file into a per-row report, downloads changed image URLs and stages their renditions; unconfirmed imports expire; Mailpit in the CI integration job |
-| 008  | Excel import: confirm | 007 | All-or-nothing confirm of a ready import: upserts perfumes and presentations, places the staged photos and records their source URLs |
+| 008  | Excel import: confirm and discard | 007 | All-or-nothing confirm of a ready import in the request (409 when the catalog changed meanwhile): upserts perfumes and presentations, places the staged photos with their source URLs; discard a ready import early |
 
 ## Dependency notes
 
@@ -250,6 +250,15 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
     rejects files whose empty rows only carry formatting (finding
     `catalog-import-formatted-blank-rows-too-many`). The user chose to fix it in 007 now: the
     scan limit goes up to Excel's maximum of 1,048,576 rows, and the ZIP limits bound the cost.
+72. (2026-10-12) **A stale confirm applies nothing.** Up to 60 minutes pass between
+    validating and confirming, and the catalog may change from the panel in the meantime. If
+    confirming finds something that no longer fits, nothing is written. Confirming answers 409
+    `CATALOG_IMPORT_STALE` and lists the affected rows; the admin uploads the file again.
+    Examples: a perfume archived or created meanwhile, a photo added, a presentation archived.
+73. (2026-10-12) **Confirming runs in the request**, in a single transaction, and answers with
+    the result. It only writes rows: the images are already in S3.
+74. (2026-10-12) **A ready import can be discarded** before it expires (`POST …/discard`). It
+    becomes `discarded`, and its staged images are deleted at once.
 
 ## Delivered
 
