@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: catalog
 min_implementer: high
 depends_on: ["007"]
@@ -380,6 +380,78 @@ Against `uv run just api`, an anonymous `POST …/confirm` and `POST …/discard
 401, and the API was stopped afterwards.
 
 ## Test coverage
+
+Tester run, 2026-10-12. Baseline (before any test): `uv run just check` green (1709 unit
+passed, 3 skipped; 684 harness) and `uv run just test-integration` green (463 passed, 4
+skipped). No product code was touched.
+
+**New files** (all under `apps/api/tests/`):
+
+| Layer | File | Tests |
+| --- | --- | --- |
+| domain | `unit/catalog/test_catalog_import_confirm_domain.py` | 37 |
+| application | `unit/catalog/test_confirm_catalog_import.py` | 58 |
+| http | `unit/catalog/test_catalog_import_confirm_http.py` | 20 |
+| integration | `integration/catalog/test_sql_catalog_import_confirm.py` | 12 pass + 1 skip |
+
+**The two flagged gaps, closed.**
+1. **Real rollback against PostgreSQL.**
+   `test_a_stale_confirm_leaves_every_catalog_table_and_the_import_unchanged` runs a five-perfume
+   plan on `fragancia_test`: a valid new perfume, a valid update, an archived perfume in the
+   middle, a new perfume whose identity someone else holds (a unique violation inside the
+   repository savepoint) and a valid new perfume last. A probing runner reads the same session
+   right after the work and proves the valid rows (2 perfumes, 2 photos, the new price) really
+   were written inside the transaction. Afterwards a full `SELECT *` dump of `perfumes`,
+   `presentations`, `perfume_photos`, `perfume_slug_history` and `imports` is identical to the
+   one taken before, and the import is still `ready` with its plan. A second test confirms the
+   same import after the catalog is fixed, and a third proves an exception mid-loop rolls back
+   too.
+2. **Rollback-aware unit runner.** `_RollbackRunner` in `test_confirm_catalog_import.py`
+   snapshots the perfume store, the slug history and the import store, restores them on `Err`
+   or exception, and records the state it found right before undoing it (so the "nothing saved"
+   assertions are proven non-vacuous: the valid perfumes were written first) and what storage
+   had deleted when the transaction ended.
+
+| Behavior (from plan / code) | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| `Perfume.create` keeps a given id, else generates one | `perfume.py:377-404` | domain | `test_catalog_import_confirm_domain.py::test_create_keeps_the_id_it_is_given`, `::test_create_without_an_id_generates_a_distinct_one` | CONFIRMED |
+| `add_photo` stores `source_url` (None for panel callers) | `perfume.py:541-568` | domain | `::test_add_photo_stores_the_source_url`, `::test_add_photo_without_a_source_url_leaves_it_none_as_the_panel_does` | CONFIRMED |
+| `replace_photo`: slot and positions 1..3 kept, old photo returned, only the old id recorded as removed, works on a full perfume | `perfume.py:570-601` | domain | `::test_replace_photo_2_of_3_keeps_positions_1_to_3_without_gaps_and_the_slot`, `::test_replace_photo_stores_the_new_photo_data_and_returns_the_old_photo`, `::test_replace_photo_records_only_the_old_id_as_removed`, `::test_replace_photo_works_on_a_full_perfume_without_hitting_the_limit` | CONFIRMED |
+| `replace_photo` refuses an unknown old photo and an archived perfume, changing nothing | `perfume.py:584-588` | domain | `::test_replace_photo_refuses_an_unknown_old_photo_and_changes_nothing`, `::test_replace_photo_refuses_an_archived_perfume_and_changes_nothing` | CONFIRMED |
+| `apply`: ready to applied, sets `applied_at`/`applied_by`, drops the plan; `ValueError` from the 7 other statuses | `catalog_import.py:245-251` | domain | `::test_apply_marks_a_ready_import_applied_with_who_and_when_and_drops_the_plan`, `::test_apply_raises_from_any_status_but_ready` | CONFIRMED |
+| `discard`: ready to discarded, returns the 6 staged keys, drops the plan; `ValueError` from the 7 other statuses; allowed past `expires_at` | `catalog_import.py:253-260` | domain | `::test_discard_marks_a_ready_import_discarded_returns_the_staged_keys_and_drops_the_plan`, `::test_discard_raises_from_any_status_but_ready`, `::test_a_ready_import_past_its_expiry_can_still_be_discarded` | CONFIRMED |
+| `is_confirmable`: true until the instant before `expires_at`, false at `expires_at` exactly and after, false for any other status | `catalog_import.py:237-243` | domain | `::test_a_ready_import_is_confirmable_until_the_instant_before_expires_at`, `::test_a_ready_import_is_not_confirmable_at_expires_at_exactly_nor_after`, `::test_an_import_that_is_not_ready_is_never_confirmable` | CONFIRMED |
+| `ImportNotReady` / `ImportStale`: conflicts with their codes, stale carries details | `errors.py:246-256` | domain | `::test_not_ready_and_stale_are_conflicts_with_their_codes` | CONFIRMED |
+| Confirm of a valid plan creates new perfumes with the planned ids, slug, presentations and photos (staged keys, `source_url`, order) | `catalog_imports.py:424-483` | application | `test_confirm_catalog_import.py::test_confirming_a_valid_plan_creates_new_perfumes_with_the_planned_ids_and_photos` | CONFIRMED |
+| Import applied with actor and clock, plan dropped, transaction committed | `catalog_imports.py:400-402` | application | `::test_confirming_marks_the_import_applied_with_the_actor_and_the_clock` | CONFIRMED |
+| Existing perfume updated, presentation keeps its id; a new presentation is added | `catalog_imports.py:485-594` | application | `::test_confirming_updates_an_existing_perfume_and_keeps_its_presentation_id`, `::test_confirming_adds_a_new_presentation_to_an_existing_perfume` | CONFIRMED |
+| `publish` True publishes (sets `first_published_at`), False hides, None leaves the flag, for new and existing | `catalog_imports.py:476-479`, `552-557` | application | `::test_the_publish_column_publishes_hides_or_leaves_the_flag` | CONFIRMED |
+| Replaced photo keeps its position; its objects are deleted after the commit, never the staged ones; no replacement deletes nothing | `catalog_imports.py:524-539`, `404-409` | application | `::test_a_replaced_photo_keeps_its_position_and_its_objects_go_after_the_commit`, `::test_a_confirm_without_replaced_photos_deletes_no_objects` | CONFIRMED |
+| A failure deleting old objects is logged and does not undo the confirm | `catalog_imports.py:86-93` | application | `::test_a_failure_deleting_replaced_objects_does_not_undo_the_confirm` | CONFIRMED |
+| Decision 23: an unchanged archived brand, family or concentration does not block an update | `catalog_imports.py:494-505` | application | `::test_an_unchanged_archived_family_brand_and_concentration_do_not_block_an_update` | CONFIRMED |
+| Confirming twice: second is NOT_READY and changes nothing | `catalog_imports.py:388-389` | application | `::test_confirming_twice_applies_once_and_the_second_is_not_ready` | CONFIRMED |
+| Not found; NOT_READY for the 7 other statuses; ready past or at `expires_at` is NOT_READY; one second before is confirmed; nothing written | `catalog_imports.py:385-389` | application | `::test_confirming_an_unknown_import_is_not_found`, `::test_confirming_an_import_that_is_not_ready_is_refused_and_writes_nothing` (7), `::test_a_ready_import_past_expires_at_is_not_ready_even_if_the_cron_did_not_run`, `::test_a_ready_import_at_expires_at_exactly_is_not_ready`, `::test_a_ready_import_one_second_before_expires_at_is_confirmed` | CONFIRMED |
+| Every stale cause is an issue at the right row: archived perfume, perfume gone, identity taken, rename collision, presentation gone, presentation archived, ml taken, 4th photo, replaced photo gone, reference archived or missing (new), changed family/brand/concentration archived (existing), publish refused, invalid planned value, invalid presentation at its own row | `catalog_imports.py:415-594` | application | the 16 `test_stale_*` tests in `test_confirm_catalog_import.py` (3 parametrized) | CONFIRMED |
+| All issues collected together in plan order, one per perfume; an issue carries row, column, code, message | `catalog_imports.py:390-399`, `336-346` | application | `::test_every_stale_row_is_reported_together_in_plan_order_one_issue_per_perfume`, `::test_an_issue_carries_row_column_code_and_message` | CONFIRMED |
+| Nothing saved on stale (rollback-aware runner), import stays ready with its plan, no objects deleted; an exception rolls back too | `catalog_imports.py:398-399` | application | `::test_a_stale_confirm_saves_nothing_even_though_valid_perfumes_were_written_first`, `::test_a_stale_confirm_leaves_the_import_ready_with_its_plan_and_deletes_no_objects`, `::test_an_unexpected_exception_rolls_back_too_and_deletes_no_objects` | CONFIRMED |
+| Discard: deletes staged keys after the commit, marks discarded, never touches the catalog; not found; not ready for 7 statuses; ready past `expires_at` still discardable; twice; delete failure ignored; applied cannot be discarded | `catalog_imports.py:597-630` | application | the 8 discard tests in `test_confirm_catalog_import.py` | CONFIRMED |
+| Both routes: 401 without a session, 403 without `catalog:manage`, malformed id 422 | `import_router.py:116`, `137` | http | `test_catalog_import_confirm_http.py::test_confirm_and_discard_return_401_without_a_session`, `::..._403_...`, `::test_a_malformed_import_id_is_422_validation_error` | CONFIRMED |
+| Confirm 200 with the full response (`applied`, `applied_at`, `discarded_at` null), actor from the session; 404; twice 200 then 409 NOT_READY; other statuses and past-expiry 409 | `import_router.py:116-134` | http | `::test_confirm_answers_200_with_the_applied_import_and_applies_the_plan`, `::test_confirm_of_an_unknown_import_is_404`, `::test_confirming_twice_is_200_then_409_not_ready`, `::test_confirming_an_import_that_is_not_ready_is_409_not_ready` (4), `::test_confirming_a_ready_import_past_expires_at_is_409_not_ready` | CONFIRMED |
+| Stale confirm is 409 `CATALOG_IMPORT_STALE` with `details.issues` (row, column, code, message); import stays ready | `import_router.py:116-134`, `errors.py:252` | http | `::test_a_stale_confirm_is_409_with_the_issues_of_each_affected_row` | CONFIRMED |
+| Discard 204 with no body, reads back as discarded with `discarded_at`; 404; twice 204 then 409; applied 409 | `import_router.py:137-147` | http | `::test_discard_answers_204_with_no_body_and_the_import_becomes_discarded`, `::test_the_discarded_import_reads_back_as_discarded_with_its_timestamp`, `::test_discard_of_an_unknown_import_is_404`, `::test_discarding_twice_is_204_then_409_not_ready`, `::test_discarding_an_applied_import_is_409_not_ready` | CONFIRMED |
+| **Stale plan leaves every catalog table and the import unchanged (PostgreSQL)** incl. a savepoint failure mid-loop | `catalog_imports.py:381-409`, `sql_perfume_repository.py:193-216` | integration | `test_sql_catalog_import_confirm.py::test_a_stale_confirm_leaves_every_catalog_table_and_the_import_unchanged` | CONFIRMED |
+| Same import confirms once the catalog is fixed; an exception mid-loop rolls back | same | integration | `::test_after_a_stale_confirm_the_same_import_confirms_once_the_catalog_is_fixed`, `::test_an_exception_in_the_middle_of_the_confirm_rolls_everything_back_too` | CONFIRMED |
+| Full confirm writes new and existing perfumes, photos with `source_url`, keeps the presentation id, applies the import (`applied_by`, `applied_at`, plan NULL) | `catalog_imports.py:381-409` | integration | `::test_a_valid_confirm_writes_new_and_existing_perfumes_and_applies_the_import` | CONFIRMED |
+| `add` inserts photos with `source_url` (panel photo stays NULL); `replace_photo` saved in the same position, old row gone | `sql_perfume_repository.py:193-216`, `243-300` | integration | `::test_add_stores_the_photos_with_their_source_url_and_a_panel_photo_stays_null`, `::test_replace_photo_is_saved_in_the_same_position_and_the_old_row_is_gone` | CONFIRMED |
+| Replace with real objects in RustFS: old keys 404, staged keys 200; stale confirm deletes no object; discard deletes the staged objects | `catalog_imports.py:404-409` | integration | `::test_replacing_a_photo_deletes_the_old_objects_and_keeps_the_staged_ones_live`, `::test_a_stale_confirm_deletes_no_object_neither_old_nor_staged`, `::test_discard_deletes_the_staged_objects_and_marks_the_import_discarded` | CONFIRMED |
+| Concurrent confirms: one winner, the rest NOT_READY (never STALE); confirm waits for an expiry holding the row, then is refused; the expiry job skips an import a confirm holds (SKIP LOCKED) | `sql_catalog_import_repository.py:225-235`, `255-262` | integration | `::test_concurrent_confirms_of_the_same_import_have_exactly_one_winner`, `::test_a_confirm_waits_for_the_expiry_that_holds_the_import_and_is_then_refused`, `::test_the_expiry_job_skips_an_import_a_confirm_is_holding` | CONFIRMED |
+| Migration 0011: upgraded columns exist | `0011_catalog_import_applied.py` | integration | `test_sql_catalog_imports.py::test_the_migration_created_the_imports_table_index_and_source_url_column` (updated by the implementer) | CONFIRMED |
+| Migration 0011 downgrade then upgrade round trip | `0011_catalog_import_applied.py` | integration | `test_sql_catalog_import_confirm.py::test_the_0011_migration_downgrades_and_upgrades_cleanly` (skipped) | NOT CONFIRMED (not automated: it would rewrite the shared test schema mid-suite; the implementer ran it by hand) |
+| Acceptance criteria that need the running API with a real Excel file and image downloads end to end (replace via re-import, same URL plans no photo) | `import_validation.py` | e2e | none | NOT CONFIRMED here (verifier: phase 5). The same-URL rule belongs to the 007 validator; this plan's confirm only applies the plan it is given |
+
+No GAP found: nothing the plan promises is missing in the code, and no assertion was weakened.
+Observations that are not gaps: each perfume reports at most its first issue (a recorded
+deviation), and a photo or publish issue carries the perfume's `first_row`, not the photo's.
 
 ## Review findings
 
