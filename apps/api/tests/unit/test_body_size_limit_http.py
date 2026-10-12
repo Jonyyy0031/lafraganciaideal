@@ -495,6 +495,18 @@ async def test_the_413_request_id_is_the_one_the_app_saw_when_the_client_sent_no
     assert len(SEEN_REQUEST_IDS[0]) == 32
 
 
+async def test_an_empty_request_id_header_is_replaced_by_one_shared_id(
+    client: AsyncClient,
+) -> None:
+    # Review nit R2: an empty header used to skip the injection, so the app and the 413 got
+    # different generated ids.
+    response = await _chunked_oversized(client, {"X-Request-ID": ""})
+    assert response.status_code == 413
+    assert len(SEEN_REQUEST_IDS) == 1
+    assert len(SEEN_REQUEST_IDS[0]) == 32
+    assert response.headers["X-Request-ID"] == SEEN_REQUEST_IDS[0]
+
+
 async def test_a_client_sent_request_id_is_kept_through_the_cut_off(client: AsyncClient) -> None:
     response = await _chunked_oversized(client, {"X-Request-ID": "client-id-9"})
     assert response.status_code == 413

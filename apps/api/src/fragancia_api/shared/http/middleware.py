@@ -54,14 +54,16 @@ class BodySizeLimitMiddleware:
             self.max_body_bytes if _is_bounded_text(_media_type(scope)) else self.max_upload_bytes
         )
         headers = Headers(scope=scope)
-        if REQUEST_ID_HEADER.lower() not in headers:
+        if not headers.get(REQUEST_ID_HEADER):
             # One id for the whole request: the inner RequestContextMiddleware reads it from
-            # the scope, so the 413 header matches the id bound to the logs.
+            # the scope, so the 413 header matches the id bound to the logs. An empty header
+            # counts as missing and is replaced.
+            name = REQUEST_ID_HEADER.lower().encode()
             scope = {
                 **scope,
                 "headers": [
-                    *scope["headers"],
-                    (REQUEST_ID_HEADER.lower().encode(), uuid.uuid4().hex.encode()),
+                    *(item for item in scope["headers"] if item[0].lower() != name),
+                    (name, uuid.uuid4().hex.encode()),
                 ],
             }
         declared = headers.get("content-length", "")

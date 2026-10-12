@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -457,3 +457,14 @@ harness). Persistence did not change.
 - The API is stopped and port 8100 is free.
 
 **Result:** every acceptance criterion passes. Ready for the user to mark `done`.
+
+**2026-10-12: nits R2 and R3 fixed in the same PR** (the user asked for it; main session).
+- **R2.** An empty `X-Request-ID` now counts as missing. `BodySizeLimitMiddleware` replaces
+  it with one generated id that the app and the 413 share.
+  - Regression test:
+    `test_body_size_limit_http.py::test_an_empty_request_id_header_is_replaced_by_one_shared_id`.
+  - Live: a chunked 2 MiB login with `X-Request-ID: ""` got 413 with a generated 32-hex id,
+    and `/health/live` with an empty header got 200 with a generated id.
+- **R3.** The `docs/architecture.md` bullet is rewrapped to the usual width.
+- `uv run just check` is green (1869 passed, 685 harness). The API is stopped and port 8100 is
+  free.

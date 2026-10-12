@@ -1,5 +1,5 @@
 ---
-status: planned
+status: resolved
 plan: platform-api-foundation/003
 module: platform
 found: 2026-10-11
