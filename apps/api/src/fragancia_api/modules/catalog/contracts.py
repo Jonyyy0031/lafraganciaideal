@@ -331,3 +331,39 @@ class PublicPerfume(BaseModel):
     base_notes: list[str]
     presentations: list[PublicPresentation]
     photos: list[PublicPhoto]
+
+
+class CatalogImportIssue(BaseModel):
+    """One problem of an import file: `row` is the Excel row number (the header is row 1) and
+    `column` the header text; both are null for a file-level issue. The panel translates
+    `code`; `message` is an English fallback."""
+
+    row: int | None
+    column: str | None
+    code: str
+    message: str
+
+
+class CatalogImportSummary(BaseModel):
+    """What confirming a ready import would do."""
+
+    perfumes_new: int
+    perfumes_updated: int
+    presentations_new: int
+    presentations_updated: int
+    photos_new: int
+
+
+class CatalogImportResponse(BaseModel):
+    """An uploaded import and its validation report. `error_count` is 0 while there are no
+    issues and can exceed `len(errors)` when the list is capped."""
+
+    id: UUID
+    status: Literal["pending", "validating", "ready", "invalid", "failed", "expired", "applied"]
+    created_at: datetime
+    finished_at: datetime | None
+    expires_at: datetime | None
+    row_count: int | None
+    summary: CatalogImportSummary | None
+    error_count: int
+    errors: list[CatalogImportIssue]

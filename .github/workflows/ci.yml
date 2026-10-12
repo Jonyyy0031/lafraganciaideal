@@ -105,6 +105,17 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
+      mailpit:
+        # Same image as infra/docker/compose.yaml (Mailpit); the identity email tests read it.
+        image: axllent/mailpit@sha256:ed9b00c609e77e99c79b93f1178255ebc271868920f2c69a8d166bd5634ed10d
+        ports:
+          - 1026:1025
+          - 8026:8025
+        options: >-
+          --health-cmd "/mailpit readyz"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql+psycopg://ci:ci-ephemeral@localhost:5432/fragancia_test
       DATABASE_URL_TEST: postgresql+psycopg://ci:ci-ephemeral@localhost:5432/fragancia_test
@@ -114,6 +125,8 @@ jobs:
       S3_SECRET_KEY: ci-ephemeral
       S3_BUCKET: fragancia-media
       MEDIA_PUBLIC_BASE_URL: http://127.0.0.1:9100/fragancia-media
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: "1026"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

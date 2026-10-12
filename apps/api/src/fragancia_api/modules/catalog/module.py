@@ -1,8 +1,16 @@
 """Wiring of the catalog module for the composition root."""
 
+from datetime import timedelta
+
 from fragancia_api.modules.catalog.application.commands.brand_status import (
     ArchiveBrand,
     RestoreBrand,
+)
+from fragancia_api.modules.catalog.application.commands.catalog_imports import (
+    ExpireCatalogImports,
+    ImportUploadLimit,
+    StartCatalogImport,
+    ValidateNextCatalogImport,
 )
 from fragancia_api.modules.catalog.application.commands.concentration_status import (
     ArchiveConcentration,
@@ -46,6 +54,11 @@ from fragancia_api.modules.catalog.application.commands.rename_olfactory_family 
 from fragancia_api.modules.catalog.application.commands.update_concentration import (
     UpdateConcentration,
 )
+from fragancia_api.modules.catalog.application.import_validation import ImportValidator
+from fragancia_api.modules.catalog.application.queries.catalog_imports import (
+    DownloadCatalogTemplate,
+    GetCatalogImport,
+)
 from fragancia_api.modules.catalog.application.queries.list_brands import (
     ListAdminBrands,
     ListPublicBrands,
@@ -64,19 +77,32 @@ from fragancia_api.modules.catalog.application.queries.perfumes import (
     ListAdminPerfumes,
     ListPublicPerfumes,
 )
+from fragancia_api.modules.catalog.http.import_router import import_routers
 from fragancia_api.modules.catalog.http.perfume_router import perfume_routers
 from fragancia_api.modules.catalog.http.router import routers
+from fragancia_api.modules.catalog.infrastructure.http_image_downloader import (
+    HttpImageDownloader,
+)
 from fragancia_api.modules.catalog.infrastructure.pillow_image_processor import (
     PillowImageProcessor,
 )
 from fragancia_api.modules.catalog.infrastructure.s3_media_storage import S3MediaStorage
 from fragancia_api.modules.catalog.infrastructure.sql_brand_queries import SqlBrandQueries
 from fragancia_api.modules.catalog.infrastructure.sql_brand_repository import SqlBrandRepository
+from fragancia_api.modules.catalog.infrastructure.sql_catalog_import_queries import (
+    SqlCatalogImportQueries,
+)
+from fragancia_api.modules.catalog.infrastructure.sql_catalog_import_repository import (
+    SqlCatalogImportRepository,
+)
 from fragancia_api.modules.catalog.infrastructure.sql_concentration_queries import (
     SqlConcentrationQueries,
 )
 from fragancia_api.modules.catalog.infrastructure.sql_concentration_repository import (
     SqlConcentrationRepository,
+)
+from fragancia_api.modules.catalog.infrastructure.sql_import_references import (
+    SqlImportReferences,
 )
 from fragancia_api.modules.catalog.infrastructure.sql_olfactory_family_queries import (
     SqlOlfactoryFamilyQueries,
@@ -88,8 +114,12 @@ from fragancia_api.modules.catalog.infrastructure.sql_perfume_queries import Sql
 from fragancia_api.modules.catalog.infrastructure.sql_perfume_repository import (
     SqlPerfumeRepository,
 )
+from fragancia_api.modules.catalog.infrastructure.xlsx_sheets import (
+    OpenpyxlSheetReader,
+    OpenpyxlTemplateWriter,
+)
 from fragancia_api.shared.http.services import ServiceRegistry
-from fragancia_api.shared.module import AppModule, Platform
+from fragancia_api.shared.module import AppModule, Platform, ScheduledJob
 
 
 def register(platform: Platform, services: ServiceRegistry) -> None:
@@ -218,5 +248,71 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     services.add(ListPublicPerfumes, ListPublicPerfumes(perfume_queries, platform.clock))
     services.add(GetPublicPerfume, GetPublicPerfume(perfume_queries, platform.clock))
 
+    settings = platform.settings
+    imports = SqlCatalogImportRepository(platform.database)
+    validator = ImportValidator(
+        references=SqlImportReferences(platform.database),
+        downloader=HttpImageDownloader(
+            max_bytes=settings.photo_max_bytes,
+            allow_private_hosts=settings.catalog_import_image_allow_private_hosts,
+        ),
+        images=images,
+        storage=media,
+        image_budget=timedelta(minutes=20),  # below the 1800 s timeout of the validation job
+    )
+    services.add(
+        StartCatalogImport,
+        StartCatalogImport(
+            imports=imports, transactions=platform.transactions, clock=platform.clock
+        ),
+    )
+    services.add(ImportUploadLimit, ImportUploadLimit(max_bytes=settings.catalog_import_max_bytes))
+    services.add(
+        ValidateNextCatalogImport,
+        ValidateNextCatalogImport(
+            imports=imports,
+            reader=OpenpyxlSheetReader(),
+            validator=validator,
+            storage=media,
+            transactions=platform.transactions,
+            clock=platform.clock,
+            max_rows=settings.catalog_import_max_rows,
+            ttl=timedelta(minutes=settings.catalog_import_ttl_minutes),
+        ),
+    )
+    services.add(
+        ExpireCatalogImports,
+        ExpireCatalogImports(
+            imports=imports,
+            storage=media,
+            transactions=platform.transactions,
+            clock=platform.clock,
+            stale_after=timedelta(minutes=30),
+        ),
+    )
+    services.add(GetCatalogImport, GetCatalogImport(SqlCatalogImportQueries(platform.database)))
+    services.add(
+        DownloadCatalogTemplate,
+        DownloadCatalogTemplate(family_queries, concentration_queries, OpenpyxlTemplateWriter()),
+    )
 
-module = AppModule(name="catalog", register=register, routers=(*routers, *perfume_routers))
+
+module = AppModule(
+    name="catalog",
+    register=register,
+    routers=(*routers, *perfume_routers, *import_routers),
+    jobs=(
+        ScheduledJob(
+            "catalog_validate_imports",
+            lambda s: s.get(ValidateNextCatalogImport).run_once(),
+            5,
+            1800,
+        ),
+        ScheduledJob(
+            "catalog_expire_imports",
+            lambda s: s.get(ExpireCatalogImports).run_once(),
+            60,
+            120,
+        ),
+    ),
+)

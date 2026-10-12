@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from fragancia_api.shared.kernel import (
     BusinessRuleViolationError,
     ConflictError,
+    DomainError,
     InvalidValueError,
     NotFoundError,
 )
@@ -218,3 +219,156 @@ class PhotoLimitReached(ConflictError):
 class PhotoNotFound(NotFoundError):
     code: str = "CATALOG_PHOTO_NOT_FOUND"
     message: str = "Photo not found"
+
+
+# Catalog import: the first three are HTTP-level; the rest only appear in an import report.
+
+
+@dataclass(frozen=True)
+class ImportFormatInvalid(InvalidValueError):
+    code: str = "CATALOG_IMPORT_FORMAT_INVALID"
+    message: str = "The import must be an .xlsx file"
+
+
+@dataclass(frozen=True)
+class ImportTooLarge(InvalidValueError):
+    code: str = "CATALOG_IMPORT_TOO_LARGE"
+    message: str = "The import file is too large"
+
+
+@dataclass(frozen=True)
+class ImportNotFound(NotFoundError):
+    code: str = "CATALOG_IMPORT_NOT_FOUND"
+    message: str = "Import not found"
+
+
+@dataclass(frozen=True)
+class ImportFileUnreadable(InvalidValueError):
+    code: str = "CATALOG_IMPORT_FILE_UNREADABLE"
+    message: str = "The file could not be read as an .xlsx workbook"
+
+
+@dataclass(frozen=True)
+class ImportHeaderMissing(InvalidValueError):
+    code: str = "CATALOG_IMPORT_HEADER_MISSING"
+    message: str = "Required columns are missing from the header row"
+
+
+@dataclass(frozen=True)
+class ImportHeaderDuplicated(InvalidValueError):
+    code: str = "CATALOG_IMPORT_HEADER_DUPLICATED"
+    message: str = "Columns appear more than once in the header row"
+
+
+@dataclass(frozen=True)
+class ImportEmpty(InvalidValueError):
+    code: str = "CATALOG_IMPORT_EMPTY"
+    message: str = "The file has no data rows"
+
+
+@dataclass(frozen=True)
+class ImportTooManyRows(InvalidValueError):
+    code: str = "CATALOG_IMPORT_TOO_MANY_ROWS"
+    message: str = "The file has too many data rows"
+
+
+@dataclass(frozen=True)
+class ImportRequired(InvalidValueError):
+    code: str = "CATALOG_IMPORT_REQUIRED"
+    message: str = "This cell is required"
+
+
+@dataclass(frozen=True)
+class ImportValueInvalid(InvalidValueError):
+    code: str = "CATALOG_IMPORT_VALUE_INVALID"
+    message: str = "The value of this cell is not valid"
+
+
+@dataclass(frozen=True)
+class ImportBrandUnknown(InvalidValueError):
+    code: str = "CATALOG_IMPORT_BRAND_UNKNOWN"
+    message: str = "No brand has this name"
+
+
+@dataclass(frozen=True)
+class ImportFamilyUnknown(InvalidValueError):
+    code: str = "CATALOG_IMPORT_FAMILY_UNKNOWN"
+    message: str = "No olfactory family has this name"
+
+
+@dataclass(frozen=True)
+class ImportConcentrationUnknown(InvalidValueError):
+    code: str = "CATALOG_IMPORT_CONCENTRATION_UNKNOWN"
+    message: str = "No concentration has this name or abbreviation"
+
+
+@dataclass(frozen=True)
+class ImportPerfumeMismatch(InvalidValueError):
+    code: str = "CATALOG_IMPORT_PERFUME_MISMATCH"
+    message: str = "Rows of the same perfume must carry the same perfume data"
+
+
+@dataclass(frozen=True)
+class ImportImageUrlInvalid(InvalidValueError):
+    code: str = "CATALOG_IMPORT_IMAGE_URL_INVALID"
+    message: str = "An image URL must start with http:// or https://"
+
+
+@dataclass(frozen=True)
+class ImportImageHostBlocked(InvalidValueError):
+    code: str = "CATALOG_IMPORT_IMAGE_HOST_BLOCKED"
+    message: str = "The image URL points to a private or reserved address"
+
+
+@dataclass(frozen=True)
+class ImportBrandArchived(ConflictError):
+    code: str = "CATALOG_IMPORT_BRAND_ARCHIVED"
+    message: str = "The brand is archived"
+
+
+@dataclass(frozen=True)
+class ImportFamilyArchived(ConflictError):
+    code: str = "CATALOG_IMPORT_FAMILY_ARCHIVED"
+    message: str = "The olfactory family is archived"
+
+
+@dataclass(frozen=True)
+class ImportConcentrationArchived(ConflictError):
+    code: str = "CATALOG_IMPORT_CONCENTRATION_ARCHIVED"
+    message: str = "The concentration is archived"
+
+
+@dataclass(frozen=True)
+class ImportPerfumeArchived(ConflictError):
+    code: str = "CATALOG_IMPORT_PERFUME_ARCHIVED"
+    message: str = "The perfume is archived; restore it from the panel first"
+
+
+@dataclass(frozen=True)
+class ImportPresentationArchived(ConflictError):
+    code: str = "CATALOG_IMPORT_PRESENTATION_ARCHIVED"
+    message: str = "The presentation is archived; restore it from the panel first"
+
+
+@dataclass(frozen=True)
+class ImportDuplicateRow(ConflictError):
+    code: str = "CATALOG_IMPORT_DUPLICATE_ROW"
+    message: str = "Another row already has this perfume and ml"
+
+
+@dataclass(frozen=True)
+class ImportImageUnreachable(DomainError):
+    code: str = "CATALOG_IMPORT_IMAGE_UNREACHABLE"
+    message: str = "The image could not be downloaded"
+
+
+@dataclass(frozen=True)
+class ImportInterrupted(DomainError):
+    code: str = "CATALOG_IMPORT_INTERRUPTED"
+    message: str = "The validation was interrupted; upload the file again"
+
+
+@dataclass(frozen=True)
+class ImportFailed(DomainError):
+    code: str = "CATALOG_IMPORT_FAILED"
+    message: str = "The validation failed unexpectedly; upload the file again"

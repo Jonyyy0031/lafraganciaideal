@@ -23,7 +23,8 @@ and orders come in later initiatives.
 | 004  | The public catalog | 003 | Storefront list with filters (brand, gender, family, text, effective price range), sorting, "from" price, and detail by slug |
 | 005  | Bound the page number of every list | 004 | Shared `MAX_PAGE` with `le=` on the five paginated list routes, so a huge `page` is a 422 instead of an OFFSET overflow (finding `catalog-unbounded-page-offset-overflow`) |
 | 006  | Perfume photos on S3 | 003 | Up to 3 photos per perfume in RustFS/S3: upload, order, remove; public URLs in the catalog responses |
-| 007  | Excel import | 003, 006 | Downloadable `.xlsx` template; validate the whole file into a per-row report; all-or-nothing confirm that upserts perfumes and presentations and downloads image URLs to S3 |
+| 007  | Excel import: template and validation | 003, 006 | Downloadable `.xlsx` template; raw-body upload; the worker validates the whole file into a per-row report, downloads changed image URLs and stages their renditions; unconfirmed imports expire; Mailpit in the CI integration job |
+| 008  | Excel import: confirm | 007 | All-or-nothing confirm of a ready import: upserts perfumes and presentations, places the staged photos and records their source URLs |
 
 ## Dependency notes
 
@@ -198,6 +199,57 @@ same day (decision 35). Photos and the import moved once more, to 006 and 007, o
     - **`python-multipart` is removed**, because no route uses it any more.
     - **A client disconnect during a photo upload stays visible in the log** (review N1), by
       the user's choice. It is not silenced.
+57. (2026-10-11) **Plan 007 adds Mailpit to the CI integration job.** Without it the four
+    identity email-flow tests skip in CI (325 passed, 6 skipped against 2 locally). It goes
+    the same way RustFS went in for 006: a service container plus its env vars. The
+    user asked for it to ride along with the next plan.
+58. (2026-10-11) **Re-importing photos.** Column "Imagen N" is about photo position N.
+    - **Same URL:** if it is the URL that photo was last imported from, nothing is downloaded.
+    - **Different URL:** the photo at that position is replaced.
+    - **Empty cell:** the photo is left alone.
+    - **How:** the import stores the source URL of each photo it creates.
+59. (2026-10-11) **Confirming uses a validation token.** Validation stores the result and
+    returns an import id, and confirming takes that id.
+    - The file is never uploaded twice.
+    - What gets applied is exactly what was validated.
+    - A ready import expires 60 minutes after its validation ends.
+60. (2026-10-11) **Images are downloaded and checked during validation.** A broken URL or a
+    bad image shows up in the per-row report before the admin confirms.
+61. (2026-10-11) **Rows of one perfume must agree.** Rows with the same brand, name and
+    concentration must carry the same perfume data. A row that differs from the first one is a
+    row error.
+62. (2026-10-11) **The file never archives anything.** An existing presentation that is not
+    in the file stays as it is. A partial file, such as one brand's prices, is safe.
+63. (2026-10-11) **Validation runs in the worker.** Uploading returns an id at once, and the
+    panel polls the import until its report is ready.
+64. (2026-10-11) **File limits:** at most 2,000 data rows and 5 MB.
+65. (2026-10-11) **The concentration cell** takes the name or the abbreviation ("Eau de
+    Parfum" or "EDP"), ignoring case and accents. The template offers a dropdown with the
+    names.
+66. (2026-10-11) **Sale dates are whole days in Cancún time** (`America/Cancun`). A sale
+    starts at 00:00 of "Oferta desde" and ends when the "Oferta hasta" day ends, so that day
+    still has the sale. Cells hold dates only, no times.
+67. (2026-10-11) **Prices are pesos with at most two decimals**, VAT included: `1899` or
+    `1899.50`. More decimals, a negative number or text that is not a number is a row error.
+68. (2026-10-11) **Archived items are a row error.** A row that targets an archived perfume,
+    or an archived presentation of an existing perfume, is an error. It is restored from the
+    panel; the import never brings it back by surprise.
+69. (2026-10-11) **The import is split in two plans:**
+    - **007:** Mailpit in CI, the template, the upload, the background validation with its
+      report, and the expiry of unconfirmed imports.
+    - **008:** confirming, which applies the import all or nothing.
+70. (2026-10-11) **Repair round for the 007 review.** The user chose to fix M1, M2 and every
+    Low finding (L3–L6) in plan 007 now, rather than filing findings:
+    - M1: a malformed image URL must never fail the whole import.
+    - M2: limit how far an `.xlsx` may expand when it is unzipped.
+    - L3: validation jobs must not starve the outbox relay.
+    - L4: give image work an overall time budget.
+    - L5: block the remaining IPv6 ranges.
+    - L6: refuse compressed image responses.
+71. (2026-10-11) **Second repair round for plan 007.** The blank-row scan limit from repair M2
+    rejects files whose empty rows only carry formatting (finding
+    `catalog-import-formatted-blank-rows-too-many`). The user chose to fix it in 007 now: the
+    scan limit goes up to Excel's maximum of 1,048,576 rows, and the ZIP limits bound the cost.
 
 ## Delivered
 

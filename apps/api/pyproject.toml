@@ -10,12 +10,15 @@ dependencies = [
     "arq>=0.28.0",
     "boto3>=1.43.107",
     "fastapi>=0.142.2",
+    "httpx>=0.28.1",
+    "openpyxl>=3.1.5",
     "pillow>=12.3.0",
     "psycopg[binary]>=3.3.6",
     "pydantic-settings>=2.15.0",
     "scalar-fastapi>=1.9.1",
     "sqlalchemy[asyncio]>=2.1.2",
     "structlog>=26.1.0",
+    "tzdata>=2026.4",
     "uvicorn[standard]>=0.54.0",
 ]
 
