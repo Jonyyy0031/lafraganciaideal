@@ -563,3 +563,52 @@ line and the `MODULES` ordering that any facade crossing needs.
 Result: no blocking findings → `status: verify`.
 
 ## Verification
+
+**2026-10-13, verifier (main session, inline).**
+
+**Setup.** Branch `feat/inventory-stock` at `dff0610`. The dev DB was migrated to `0012`
+(`uv run just db-migrate`). `uv run just api` ran with default settings, as the owner
+`verifier007@example.test`, against the QA perfumes left by the catalog plans. The reviewer
+reports `uv run just check` green (2002 unit, 685 harness) and `test-integration` at 507
+passed, 5 skipped.
+
+**Acceptance criteria** (scratchpad `qa_inv/qa_inv.py`, real requests to port 8100):
+- [x] **Permissions.** `GET /api/v1/admin/auth/me` for the owner lists `['catalog:manage',
+  'inventory:manage', 'users:manage']`. Staff was not driven live; the identity tests pin it.
+- [x] **First movement.** "QA Confirma" 50 ml had no stock row (0). A restock of 10 gave 201
+  `on_hand: 10`.
+- [x] **Each kind.**
+  - A loss of 3 gave 7, a return of 1 gave 8, and an adjustment of −2 gave 6.
+  - A count of 20 gave 20, stored with `delta 14` and `on_hand_after 20`.
+  - A loss of 50 gave 409 `INVENTORY_STOCK_INSUFFICIENT`. The row stayed at 20 with 5
+    movements.
+- [x] **Refused movements.**
+  - A made-to-order presentation (created for QA: 200 ml, 7–10 days) gave 422
+    `INVENTORY_PRESENTATION_NOT_STOCKED`.
+  - An unknown id gave 404 `INVENTORY_PRESENTATION_NOT_FOUND`.
+  - A restock of 0 gave 422 `INVENTORY_QUANTITY_INVALID`, and a blank reason gave 422
+    `INVENTORY_REASON_INVALID`.
+- [x] **Stock detail.** The label is "QA Versace QA Confirma EDP 50 ml", with `on_hand 20`,
+  `effective_threshold 3` and `is_low false`. The movements page has `total 5`, newest first
+  (count, adjustment, return), each with its reason and the actor id.
+- [x] **Thresholds.**
+  - An override of 25 gave 204, effective 25 and `is_low true`. `null` gave 204 and back to 3,
+    `is_low false`.
+  - Setting the global value to 5 gave 204, and the settings read `{'low_stock_threshold': 5}`.
+    It was restored to 3 (204).
+- [x] **Stock list.**
+  - `low=true` gives `total 2`: "QA Confirma EDP 100 ml" and "QA Existente EDT 100 ml", both
+    never counted, `on_hand 0`.
+  - The full list has 3 lines. It holds neither the made-to-order presentation nor the
+    archived perfume's.
+- [x] **Concurrency.** Two concurrent first restocks of 5 on "QA Confirma" 100 ml, which had no
+  row before, both gave 201 and ended at `on_hand 10` with 2 movements.
+- [x] **Access.** All 7 routes return 401 without a session. The 403 case (an admin without
+  `inventory:manage`) is **NOT VERIFIED** live, because both roles have the permission. It is
+  covered by `tests/unit/inventory/test_stock_http.py`.
+
+**Leftover QA data (dev DB):** stock rows for "QA Confirma" 50 ml (20) and 100 ml (10), and a
+made-to-order 200 ml presentation `01a13650-dc1a-72ad-a151-09990a99d962` on "QA Confirma".
+Nothing is deleted in the catalog. The API is stopped and port 8100 is free.
+
+**Result:** every acceptance criterion that can be exercised locally passes.
