@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
@@ -403,5 +403,163 @@ and no product code touched. Test admin for the http layer: a dedicated
 | Routes against the real database through the real container and session | `main/`, `container.py` | integration | none: real sessions need an identity login flow; unit http + SQL layers cover the halves, `tests/unit/test_container.py` covers wiring | NOT CONFIRMED (verify phase) |
 
 ## Review findings
+
+Reviewed 2026-10-13 against `main...HEAD` (head `d606249`, clean worktree).
+
+**Checklist: 14/15 passed, 1 N/A, 0 failed.**
+
+- [x] `plans-scope`: the only out-of-scope files are the six identity test files named in
+  Deviation 1. Each diff only changes expected permission values (plus the
+  `INVENTORY_MANAGE` import in `test_user_domain.py`), so it is forced and honest.
+  `tests/support.py` is declared but unchanged (Deviation 8). The hot files are append-only:
+  `.importlinter` adds one container line and the two planned `ignore_imports` lines;
+  `container.py` adds one import and appends `inventory` to `MODULES`; `modules.json` flips
+  only `inventory.status`.
+- [x] `uv run just check`: green (2002 unit, 3 skipped; 685 tooling; import-linter 7 kept,
+  with "2 ignored imports" on the independence contract).
+- [x] `uv run just test-integration`: green (507 passed, 5 skipped).
+- [x] Business rules are in `domain/stock.py` (kinds, ranges, never negative, reason,
+  threshold). Exception: the query layer recomputes the low rule (L1), but it is not in a
+  router, mapper or query adapter.
+- [x] CQRS-lite: `RecordMovement`, `SetThreshold` and `UpdateInventorySettings` run
+  aggregate → repository inside `TransactionRunner.run` and return `Result`. Queries go
+  through `StockQueries` (reader sessions) and return contracts. Repositories have no
+  screen-specific methods.
+- [x] Contracts: all come from `inventory/contracts.py`, and `Page` is shared.
+  `python -m fragancia_api.main.openapi --check` reports the committed file is up to date.
+- [x] Errors: `Err(DomainError)` with `INVENTORY_*` codes, and the router uses `unwrap`.
+  Catalog lookups refuse before the transaction.
+- [x] Time, money and ids: no money is involved. Ids come from `new_id()`. The aggregate's
+  datetimes come from `Clock`, except for one adapter placeholder (L2).
+- [x] Migration `0012` is new. It runs `CREATE SCHEMA inventory`, seeds the settings row
+  (1, 3), has no foreign keys and no drops in upgrade, and its downgrade drops in reverse
+  order. Its check constraint `ck_stock_items_on_hand_not_negative` matches `tables.py`
+  (`on_hand_not_negative` plus the naming convention, Deviation 7). The round trip rests on
+  the implementer's manual run; `alembic check` is clean.
+- [x] Routes: all seven are on `admin_router(prefix="/inventory", dependencies=[require_permission("inventory:manage")])`.
+  `admin_router` puts `require_admin` first, so a request with no session gets 401 before the
+  permission check. `assert_admin_routes_are_protected` is in `test_stock_http.py`.
+- [x] Wiring: `inventory` is registered once, after `catalog`, and `module.py` fetches
+  `PresentationDirectory` from the registry. Adapters are created only in `module.py`.
+  `test_container.py` is green.
+- [x] No secrets or real personal data in the code, tests or plan.
+- [x] `## Deviations` is honest. I spot-checked 2 (`record_movement`), 3
+  (`low_stock_threshold` on `StockQueries`), 5 (`get_for_update` inserts, then locks) and 7
+  (the constraint name).
+- [x] Docs: `docs/architecture.md` lists inventory as built and describes the facade
+  crossing; `docs/modules.json` is updated. `docs/recipes/new-module.md` §5 was already
+  incomplete before this plan. It is outside this plan's file list, so I filed it as a finding
+  (see below).
+- [ ] N/A: no PR exists yet. The main session must write the six-section body when it opens one.
+
+**The areas I was asked to focus on:**
+
+- **Module boundaries.** Clean. Inventory reaches the catalog only through
+  `fragancia_api.modules.catalog` (`__init__` exports `PresentationDirectory` and
+  `PresentationRef`), from exactly the two allowed modules
+  (`infrastructure/catalog_presentations.py` and `module.py`). It never reads `catalog.*`
+  tables, and `stock_items.presentation_id` has no foreign key. The anti-corruption layer
+  translates `PresentationRef` into `StockedPresentation` and builds the label in inventory's
+  terms.
+- **Stock arithmetic and never-negative.** Correct. The deltas are:
+
+  | Kind | Delta |
+  | --- | --- |
+  | restock, return | +q |
+  | loss | −q |
+  | adjustment | q (signed, ≠ 0) |
+  | count | q − on_hand (q ≥ 0) |
+
+  The quantity is validated before the delta is computed. `on_hand_after < 0` →
+  `StockInsufficient` without touching any state. The check constraint backs this up in the
+  DB, and three integration tests cover it (raw insert, raw update, repository save).
+  `SqlTransactionRunner` rolls back on `Err`, so a refused first movement leaves no
+  placeholder row behind, as "nothing changes" requires.
+- **Locking.** Correct under the default READ COMMITTED isolation:
+  1. A concurrent `INSERT … ON CONFLICT DO NOTHING` on the same primary key waits for the
+     first transaction's uncommitted insert, then does nothing.
+  2. The following `SELECT … FOR UPDATE` takes a new snapshot, sees the committed row, and
+     queues on its lock.
+
+  Each transaction locks only one row, so there is no deadlock path. The integration tests
+  force the lock overlap and also race the real use case; concurrent losses cannot go below 0.
+- **Stock list.**
+  1. The catalog's ordered list is joined with `on_hand_by_id` in a single `IN` query.
+  2. Never-counted presentations default to `(0, None)`.
+  3. The threshold is the override or else the global value, and the `low` filter is applied
+     before slicing, so `total` counts the filtered lines.
+  4. The page and size are bounded by `MAX_PAGE` and `MAX_PAGE_SIZE` at the router, and a page
+     past the end returns an empty page.
+- **Permission wiring.** `inventory:manage` is in both roles. Permissions are derived from the
+  role on every request (`User.permissions`, used by `resolve_session_actor`), so existing
+  sessions pick it up without logging in again. The router keeps its own string constant, as
+  catalog does.
+
+**The tester's question (an inactive brand in `list_in_stock`): conforms to the plan.** The
+plan defines `list_in_stock` three times, always with the same two filters and none on the
+brand:
+
+- Context, "The stock list": "every active in-stock presentation of a non-archived perfume".
+- Step 2: the same wording.
+- Acceptance: "excludes made-to-order presentations and archived perfumes".
+
+The brand's status appears only in `is_sellable`, and the code does exactly that
+(`catalog/infrastructure/sql_presentation_directory.py:66-70`). This is also sensible for a
+ledger: the bottles exist whatever the brand's storefront status. If the user wants such
+presentations hidden, that is a plan change, not a defect.
+
+**Findings by severity:**
+
+- **Blocking (critical, high, medium): none.**
+- **Low, advisory (does not block):**
+  - **L1: the low rule is duplicated outside the domain.**
+    - Where: `inventory/application/queries/stock.py:32,41` and `:80,88`.
+    - What fails: `GetStock` and `ListStock` recompute the override-or-global threshold and
+      `on_hand <= threshold` inline. They do not use `StockItem.effective_threshold` and
+      `is_low` (`domain/stock.py:174-179`).
+    - Failure scenario: decision 9 makes this one threshold drive the list, the email (004) and
+      "¡Últimas piezas!" (002). If one copy changes (for example, to `<` or to a threshold of
+      0 meaning "never low"), the panel and the alert or storefront disagree.
+    - Suggestion: put a pure domain function behind both copies, before 002 or 004 adds a third.
+  - **L2: the placeholder row takes its timestamp from the database, not from `Clock`.**
+    - Where: `inventory/infrastructure/sql_stock_repository.py:40`.
+    - What fails: the lock placeholder sets `updated_at=func.now()`. In `SetThreshold`, the
+      aggregate is rebuilt from that row (`:55`), and `set_threshold` does not touch
+      `updated_at`. So a presentation whose first write is a threshold is persisted with the
+      DB's time. On the fake path, `SetThreshold` instead uses `self._clock.now()`
+      (`commands/stock.py:117`), so the two paths diverge.
+    - Failure scenario: none visible today, since the value is UTC-correct and nothing reads
+      it. It breaks the "datetimes via `Clock`" convention, and it would surface under a
+      frozen-clock test that asserts `updated_at`.
+  - **L3: a time-of-check gap between the catalog check and the lock (uncertain whether it
+    matters).**
+    - Where: `inventory/application/commands/stock.py:63,110`.
+    - What fails: `_require_stocked` runs before the transaction opens, so a presentation
+      switched to made-to-order in between still gets its movement or threshold. There is no
+      cross-module transaction, so this is inherent to the design. It only surfaces if an
+      admin changes the availability and records stock at the same moment. Accept it.
+- **Informational:**
+  - **The router tag differs from the plan.** The plan says `tags=["inventory"]`; the code
+    uses `"inventory · admin"` (`http/router.py:41`), which follows catalog's convention.
+    Cosmetic and undeclared.
+  - **Inconsistent handling of made-to-order presentations.** `ListMovements` answers 200
+    with an empty page for them, while `GetStock` answers 422 (Deviation 4). Harmless.
+  - **A redundant index.** `stock_movements` has both `ix_stock_movements_presentation_id`
+    (`tables.py:25`, `index=True`) and the composite index that starts with the same column.
+    The plan asked for both; the single-column one is redundant.
+  - **Unused fields.** `StockedPresentation.is_sellable` is not used yet, and
+    `RecordMovement._settings` is never used (Deviation 6). Both are dead until 002 or 004
+    needs them.
+
+**Out of scope:** `plans/findings/platform-recipe-facade-wiring-ignore-missing.md`. The
+new-module recipe §5 lists only the adapter's `ignore_imports` line. It omits the `module.py`
+line and the `MODULES` ordering that any facade crossing needs.
+
+**Not verified by this review:**
+
+- I did not repeat the migration round trip (it would downgrade the shared test schema).
+- I did not exercise the routes against the running app; that is the verify phase.
+
+Result: no blocking findings → `status: verify`.
 
 ## Verification
