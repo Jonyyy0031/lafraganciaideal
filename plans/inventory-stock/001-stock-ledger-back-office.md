@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
@@ -367,6 +367,40 @@ downgrade/upgrade round trip worked. Not exercised yet: the SQL repository, quer
 `SqlPresentationDirectory` and the routes against a running database (the tester's layers).
 
 ## Test coverage
+
+Baseline (before tests): `just check` green (1869 unit, 685 tooling), `just test-integration`
+477 passed, 5 skipped. Closing: `just check` green (2002 unit, 685 tooling), `just
+test-integration` 507 passed, 5 skipped. Added 133 unit and 30 integration tests; no GAP found
+and no product code touched. Test admin for the http layer: a dedicated
+`InventoryActorResolver` in the http test (`inventory-manager` holds `inventory:manage`; the shared
+`ADMIN_HEADERS` actor holds only `catalog:manage`, so it doubles as the 403 case);
+`tests/support.py` unchanged.
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| Every kind applies its delta (restock, return, loss, adjustment +/-, count) | `domain/stock.py` `record_movement` | domain | `unit/inventory/test_stock_domain.py::test_each_kind_changes_on_hand_as_the_ledger_table_says` | CONFIRMED |
+| Quantity ranges, 0 and `QUANTITY_MAX` boundaries, count of 0, result below 0 refused | `domain/stock.py` `_quantity_valid` | domain | `test_stock_domain.py` (quantity range, boundaries, below-zero tests) | CONFIRMED |
+| `Reason` 1-200 trimmed/collapsed; `Threshold` 0-1000; `effective_threshold` / `is_low` at equality | `domain/stock.py` | domain | `test_stock_domain.py` (reason, threshold, is_low tests) | CONFIRMED |
+| `RecordMovement`: unknown, not stocked, first movement creates item, invalid reason/quantity, insufficient leaves nothing | `commands/stock.py` | application | `unit/inventory/test_stock_commands.py` | CONFIRMED |
+| `SetThreshold` (creates item at 0, null clears, range, unknown/not stocked); `UpdateInventorySettings` | `commands/stock.py` | application | `test_stock_commands.py` | CONFIRMED |
+| `GetStock`, `ListMovements`, `ListStock` (join, never-counted at 0, low filter, override, pagination after filter, catalog order), `GetInventorySettings` | `queries/stock.py` | application | `unit/inventory/test_stock_queries.py` | CONFIRMED |
+| Facade `PresentationDirectory` over the in-memory queries (find, order, filters) | `catalog/.../presentation_directory.py`, `in_memory_perfumes.py` | application | `unit/catalog/test_presentation_directory.py` | CONFIRMED |
+| Anti-corruption adapter: label, `stocked`, omit unknown | `infrastructure/catalog_presentations.py` | application | `unit/inventory/test_catalog_presentations.py` | CONFIRMED |
+| All 7 routes: 401 without session, 403 without `inventory:manage`, shapes, 201/204, 404/409/422 codes, page bounds, malformed bodies | `http/router.py` | http | `unit/inventory/test_stock_http.py` (+ `assert_admin_routes_are_protected`) | CONFIRMED |
+| `GET /presentations/{id}` on made-to-order answers 422 (Deviation 4) | `queries/stock.py` `GetStock` | http | `test_stock_http.py::test_get_stock_errors` | CONFIRMED |
+| Two concurrent first movements end at `on_hand` 10 with two movements | `sql_stock_repository.py` `get_for_update` | integration | `integration/inventory/test_sql_stock.py::test_two_concurrent_first_movements_serialize_on_the_row_lock` (forced lock overlap) and `::test_two_concurrent_restocks_through_the_use_case_end_at_ten` (real container + catalog) | CONFIRMED |
+| Concurrent losses cannot go below 0 | same | integration | `::test_concurrent_losses_cannot_drive_the_stock_below_zero` | CONFIRMED |
+| Repository: lazy create, field round trip, rollback leaves nothing | `sql_stock_repository.py` | integration | `test_sql_stock.py` (first lock, second load, every field, failed transaction) | CONFIRMED |
+| Check constraint `ck_stock_items_on_hand_not_negative` (insert, update, via repository) | `tables.py`, migration 0012 | integration | `test_sql_stock.py::test_the_database_refuses_a_negative_on_hand` and 2 more | CONFIRMED |
+| `SqlStockQueries`: movements newest first, ties by id desc, pagination, per-presentation, `get`, `on_hand_by_id` | `sql_stock_queries.py` | integration | `test_sql_stock.py` (movements and get tests) | CONFIRMED |
+| Settings: seed row (1, 3), upsert, use case persists | `sql_settings_repository.py` | integration | `test_sql_stock.py` (settings tests) | CONFIRMED |
+| Stock list / override / made-to-order over the real catalog and database | `queries/stock.py` + `SqlPresentationDirectory` | integration | `test_sql_stock.py::test_the_stock_list_joins_...` and 2 more | CONFIRMED |
+| `SqlPresentationDirectory`: `find` (unknown omitted, made to order, `is_sellable` false for inactive presentation / archived perfume / inactive brand) | `sql_presentation_directory.py` | integration | `integration/catalog/test_sql_presentation_directory.py` | CONFIRMED |
+| `list_in_stock`: only active in-stock of non-archived perfumes; ordered brand, perfume, ml ignoring case | same | integration | same file | CONFIRMED |
+| `list_in_stock` includes presentations of an inactive brand, flagged `is_sellable=false` (the code filters only active + in-stock + non-archived, matching the docstring; the user's brief listed "inactive brand" as a filter) | same | integration | `::test_list_in_stock_includes_presentations_of_an_inactive_brand_flagged_unsellable` | CONFIRMED (as implemented; confirm intent in review) |
+| Identity: `/auth/me` and role permission lists include `inventory:manage` | `identity/domain/user.py` | integration | updated by the implementer in `integration/identity/test_sql_identity.py` (not rewritten here) | CONFIRMED |
+| Migration downgrade/upgrade round trip | `migrations/versions/0012_inventory_stock.py` | integration | none: a repeatable test would downgrade the shared test schema; only the implementer's manual run (Deviations) backs it | NOT CONFIRMED by a test |
+| Routes against the real database through the real container and session | `main/`, `container.py` | integration | none: real sessions need an identity login flow; unit http + SQL layers cover the halves, `tests/unit/test_container.py` covers wiring | NOT CONFIRMED (verify phase) |
 
 ## Review findings
 
