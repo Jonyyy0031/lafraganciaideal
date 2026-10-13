@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
@@ -545,6 +545,17 @@ green, `just test-integration` 519 passed, 5 skipped (+12 integration, +12 unit)
 
 The wait is asserted with a 0.7 s timeout (the task must still be pending), so it depends on
 the lock, not on timing for the later outcome.
+
+### Repair round 2
+
+Tests only; no product code touched. Closing: `just check` and `just test-integration` green
+(counts in the chat report).
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| L4: with a clock that advances per call, the movement `created_at` and the item `updated_at` are the read taken after `get_for_update`; the first read only feeds the lock placeholder; a second movement does the same | `commands/stock.py` `RecordMovement` | application | `unit/inventory/test_repair_round_2.py::test_the_movement_time_is_read_after_the_stock_lock`, `::test_a_second_movement_on_an_existing_item_also_uses_the_post_lock_time` | CONFIRMED |
+| L4: `SetThreshold` `updated_at` (first threshold creates the item) is the post-lock read | `commands/stock.py` `SetThreshold` | application | `::test_the_threshold_updated_at_is_read_after_the_stock_lock` | CONFIRMED |
+| L4 on PostgreSQL: movement B reads the clock first but locks second (a gate holds it just before `get_for_update`); ordered by `created_at`, `on_hand_after` follows the application order (7 then 12) | same + `sql_stock_repository.py` | integration | `integration/inventory/test_sql_repair_round_2.py::test_ledger_order_by_created_at_follows_the_order_movements_were_applied` | CONFIRMED (by reasoning, it fails on the pre-repair code: B would get the earlier timestamp and sort first) |
 
 ## Review findings
 
