@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
@@ -484,6 +484,12 @@ Then set the status to `testing`. The tester adds two regressions:
   after the lock;
 - an integration test with two concurrent movements, where `on_hand_after`, ordered by
   `created_at`, is monotonic with the application order.
+
+**Implemented (2026-10-13).** Only `application/commands/stock.py`. In `RecordMovement` and
+`SetThreshold`, the first clock read feeds the placeholder of `get_for_update`; a second read
+after it returns (lock held) feeds `StockItem.empty`, `record_movement` and `updated_at`, with a
+comment saying so. No test needed adapting. `uv run just check` and `uv run just
+test-integration` run after the change (results below).
 
 ## Test coverage
 

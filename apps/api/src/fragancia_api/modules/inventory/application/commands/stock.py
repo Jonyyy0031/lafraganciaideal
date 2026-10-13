@@ -66,8 +66,9 @@ class RecordMovement:
             refusal = await _require_stocked(self._catalog, presentation_id)
             if refusal is not None:
                 return Err(refusal)
+            item = await self._stock.get_for_update(presentation_id, now=self._clock.now())
+            # Taken under the stock lock, so ledger order matches the order movements applied.
             now = self._clock.now()
-            item = await self._stock.get_for_update(presentation_id, now=now)
             if item is None:
                 item = StockItem.empty(presentation_id, now)
             kind = MovementKind(request.kind)
@@ -113,8 +114,9 @@ class SetThreshold:
             refusal = await _require_stocked(self._catalog, presentation_id)
             if refusal is not None:
                 return Err(refusal)
+            item = await self._stock.get_for_update(presentation_id, now=self._clock.now())
+            # Taken under the stock lock, so updated_at follows the order changes applied.
             now = self._clock.now()
-            item = await self._stock.get_for_update(presentation_id, now=now)
             if item is None:
                 item = StockItem.empty(presentation_id, now)
             item.set_threshold(override)
