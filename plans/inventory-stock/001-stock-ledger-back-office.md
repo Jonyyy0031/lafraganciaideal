@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
@@ -673,6 +673,124 @@ line and the `MODULES` ordering that any facade crossing needs.
 - I did not exercise the routes against the running app; that is the verify phase.
 
 Result: no blocking findings → `status: verify`.
+
+### Re-review after repair round 1
+
+Reviewed 2026-10-13 against `git diff cff1c72..HEAD` (head `be01339`: `7248d24` fix and
+`be01339` regressions; clean worktree). The review above stays as the record of round 0.
+Where it conflicts with this section, this section wins: L1, L2 and L3 above are superseded
+by the repair.
+
+**Checklist (the items the repair touches): all pass.**
+
+- [x] `plans-scope`: the only new out-of-scope file is `docs/recipes/new-module.md`. The
+  repair spec names it as a recorded deviation, and README decision 12 authorizes it. The
+  finding file is updated as the spec asks (`resolved`, `plan: inventory-stock/001`). The hot
+  files are unchanged by the repair.
+- [x] `uv run just check`: green (2014 unit, 3 skipped; 685 tooling; import-linter 7 kept,
+  0 broken). The `ignore_imports` set is unchanged, because the new facade method goes
+  through the same two allowed imports.
+- [x] `uv run just test-integration`: green (519 passed, 5 skipped).
+- [x] `openapi --check`: up to date (no contract changed).
+- [x] Business rules: the low-stock rule now lives only in `domain/stock.py`. The pure
+  functions `effective_threshold` and `is_low` are used by both `StockItem` and the queries
+  (`queries/stock.py`). L1 is resolved.
+- [x] Clock: the placeholder row takes `now` from the command's `Clock`
+  (`sql_stock_repository.py`, `updated_at=now`), and the `func` import is gone. L2 is resolved.
+- [x] CQRS-lite and errors: the catalog check now runs inside `transactions.run(...)`, so a
+  refusal (`NOT_FOUND`, `NOT_STOCKED`) is an `Err` that rolls the transaction back.
+  Validating the reason and the threshold stays outside the transaction, which is cheap and
+  takes no lock.
+
+**L3: lock order and the `FOR SHARE` lookup.**
+
+- **It joins the active transaction.** `SqlPresentationDirectory.find_for_update`
+  (`catalog/infrastructure/sql_presentation_directory.py:65-73`) runs on
+  `Database.session`, which returns the context-bound unit-of-work session and raises
+  `RuntimeError` outside one (`shared/infrastructure/database.py:25-34`). It is called only
+  from `_require_stocked`, which now runs inside `work()` in both commands
+  (`inventory/application/commands/stock.py`, `RecordMovement` and `SetThreshold`). So the
+  share lock lives exactly as long as the inventory transaction. The integration test
+  `test_find_for_update_raises_outside_a_transaction` pins the "raises" half.
+- **The lock covers only the presentation row.** It is `FOR SHARE OF presentations`. The
+  joined perfume, brand and concentration rows are read through MVCC and not locked, so a
+  catalog transaction holding `perfumes … FOR UPDATE` does not block the lookup.
+- **No deadlock path with the catalog commands.**
+  - **The catalog's lock order.** `SqlPerfumeRepository` locks the perfume row
+    (`get_for_update`, `sql_perfume_repository.py:213-215`), then `save` updates the perfume
+    and upserts each presentation (`:243-264`, row locks on `catalog.presentations`). New
+    presentation rows also take `FOR KEY SHARE` on their own perfume through the foreign key.
+    The catalog never touches `inventory.*`.
+  - **Inventory's lock order.** An inventory transaction takes, in order:
+    1. `FOR SHARE` on one presentation;
+    2. the `stock_items` placeholder insert and `FOR UPDATE` on the same presentation id.
+  - **Why no cycle can form.** The only resource both sides contend for is the presentation
+    row.
+    - The catalog waits on inventory only after inventory already holds that row.
+    - After that, inventory asks only for `stock_items` locks, which no catalog transaction
+      ever holds.
+    - Before it takes that row, inventory holds nothing.
+
+    So an inventory → catalog → inventory wait cycle cannot form.
+  - **Inventory against inventory.** Every path uses the same order (presentation, then
+    stock item). Share locks are compatible with each other, and `FOR SHARE` requests that
+    queue behind a waiting catalog writer hold no stock lock yet. So that interleaving
+    cannot cycle either.
+- **Correctness after the wait.** Under READ COMMITTED, PostgreSQL re-reads the locked
+  presentation row after the blocker commits. The command therefore sees a committed switch
+  to made-to-order (`NOT_STOCKED`, nothing written) or a deleted row (`None` →
+  `NOT_FOUND`). The joined, unlocked columns may come from the statement's snapshot. That
+  does not matter, because `stocked` depends only on the presentation's `availability`.
+  L3 is resolved for movements and thresholds.
+
+**The lock regression would fail without the lock: confirmed.** I ran a mutant from the
+scratchpad without editing the worktree:
+
+- **The mutant.** A pytest plugin passed to `pytest.main(plugins=[...])` replaced
+  `SqlPresentationDirectory.find_for_update` with the same query on the same session, minus
+  `with_for_update`.
+- **The result.** `test_sql_repair_round_1.py` failed 3 of 12:
+  - both parameters of `test_a_command_waits_for_a_catalog_transaction_and_sees_the_switch_to_made_to_order`
+    failed at line 191 ("the command should wait on the row lock");
+  - `test_a_command_proceeds_once_the_catalog_transaction_ends_unchanged` failed at line 228.
+- **The control.** The same runner without the plugin passed 12 of 12.
+
+The 0.7 s "still pending" assertion depends on the lock alone. Without the lock the command
+finishes well inside the window.
+
+**Findings after the repair:**
+
+- **Blocking (critical, high, medium): none.**
+- **Low, advisory (missed in round 0, not introduced by the repair):**
+  - **L4: a movement's `created_at` is read before the stock-row lock wait.**
+    - Where: `inventory/application/commands/stock.py:69-74`. `now` is taken, then
+      `get_for_update` may wait on another movement's lock, and the movement is stamped with
+      the earlier `now`.
+    - What fails: two concurrent movements, A taking `now = t1` and B taking `now = t2 > t1`.
+      If B wins the lock, B is applied first (`on_hand_after` 5) but carries the later time,
+      and A is applied second (`on_hand_after` 10) with the earlier time.
+    - Failure scenario: the ledger, listed newest first by `created_at`
+      (`sql_stock_queries.py`), shows 5 above 10, so its running `on_hand_after` column reads
+      out of sequence. The final `on_hand` is still correct. It needs genuinely concurrent
+      writes on one presentation, so it is rare in a back office.
+    - Why the tests miss it: `test_two_concurrent_restocks_through_the_use_case_end_at_ten`
+      checks `sorted(on_hand_after)` only.
+    - Suggestion: stamp the movement with a clock reading taken after `get_for_update`
+      returns. The placeholder can keep the earlier one.
+- **Informational:**
+  - The facade method is named `find_for_update`, but it takes a share lock (`FOR SHARE`).
+    The docstrings say "share lock", so the name is only slightly misleading.
+  - The docstring of `catalog/__init__.py` ("Public API") does not mention the locking
+    lookup. It still lists the facade type correctly.
+  - The informational notes from round 0 (the router tag, made-to-order movements, the
+    redundant index, the unused fields) are unchanged.
+
+**Not verified:** I did not exercise the repaired commands in the running app. The existing
+`## Verification` below predates `7248d24`, so it does not cover the repaired code and must be
+repeated for it.
+
+Result: no blocking findings → `status: verify`. L4 is advisory; the user decides whether to
+fix it before `done` or file it.
 
 ## Verification
 
