@@ -1,5 +1,5 @@
 ---
-status: verify
+status: implementing
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
@@ -458,6 +458,32 @@ Then set the status to `testing`. The tester adds these regressions:
   list, as the spec itself says.
 - **Commands:** `uv run just check` green (2002 unit, 685 tooling); `uv run just
   test-integration` 507 passed, 5 skipped. The API was not started.
+
+### Repair round 2 (2026-10-13, main session: verify → implementing)
+
+**Why.** The re-review found L4. A movement's timestamp is read *before* the command waits on
+the stock-row lock (`application/commands/stock.py:69-74`). Two concurrent movements can
+therefore be recorded with timestamps out of lock order, and the ledger (newest first) shows
+`on_hand_after` out of sequence. The user's standing choice in this plan is to fix every
+review Low (README decision 12), so it is fixed here. Only the movement path is re-verified.
+
+**Repair spec.** Product code is `application/commands/stock.py` only.
+1. **Movements.** In `RecordMovement`, keep `now` for the placeholder that `get_for_update`
+   may insert. After `get_for_update` returns, which means the lock is held, read
+   `self._clock.now()` again. Use that second value for `StockItem.empty` and
+   `record_movement`.
+2. **Thresholds.** Do the same in `SetThreshold` for `updated_at`.
+3. **Comment.** Add one line explaining that the timestamp is taken under the lock, so the
+   ledger order matches the order in which movements were applied.
+
+The informational notes stay as they are: the facade name `find_for_update` and the catalog
+`__init__` docstring.
+
+Then set the status to `testing`. The tester adds two regressions:
+- a unit test with a clock that advances on each call, showing that the movement time is read
+  after the lock;
+- an integration test with two concurrent movements, where `on_hand_after`, ordered by
+  `created_at`, is monotonic with the application order.
 
 ## Test coverage
 
