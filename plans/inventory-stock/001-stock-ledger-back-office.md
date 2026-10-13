@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
@@ -494,6 +494,25 @@ and no product code touched. Test admin for the http layer: a dedicated
 | Identity: `/auth/me` and role permission lists include `inventory:manage` | `identity/domain/user.py` | integration | updated by the implementer in `integration/identity/test_sql_identity.py` (not rewritten here) | CONFIRMED |
 | Migration downgrade/upgrade round trip | `migrations/versions/0012_inventory_stock.py` | integration | none: a repeatable test would downgrade the shared test schema; only the implementer's manual run (Deviations) backs it | NOT CONFIRMED by a test |
 | Routes against the real database through the real container and session | `main/`, `container.py` | integration | none: real sessions need an identity login flow; unit http + SQL layers cover the halves, `tests/unit/test_container.py` covers wiring | NOT CONFIRMED (verify phase) |
+
+### Repair round 1
+
+Tests only; no product code touched. Baseline for this round (commit 7248d24, implementer
+numbers): `just check` 2002 unit, `just test-integration` 507 passed. Closing: `just check`
+green, `just test-integration` 519 passed, 5 skipped (+12 integration, +12 unit).
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| L1: `GetStock`, `ListStock` and `StockItem` agree on `is_low` at equality, with and without an override; the pure `is_low` / `effective_threshold` | `domain/stock.py`, `queries/stock.py` | application | `unit/inventory/test_repair_round_1.py::test_queries_and_domain_agree_on_is_low` (8 cases), `::test_the_pure_rule_functions` | CONFIRMED |
+| L1 over SQL: the same agreement through the real container's queries | same | integration | `integration/inventory/test_sql_repair_round_1.py::test_sql_backed_queries_flag_low_at_equality_like_the_domain` | CONFIRMED |
+| L2: both commands pass the injected clock to `get_for_update(now=)` | `commands/stock.py` | application | `test_repair_round_1.py::test_commands_pass_the_injected_clock_to_the_stock_lock` | CONFIRMED |
+| L2: the placeholder row's `updated_at` equals the given `now` in PostgreSQL; first movement and first threshold keep the fixed clock | `sql_stock_repository.py` | integration | `test_sql_repair_round_1.py::test_the_placeholder_row_is_stamped_with_the_given_clock`, `::test_a_first_movement_and_a_first_threshold_keep_the_injected_clock` | CONFIRMED |
+| L3: the locked catalog lookup runs inside the transaction (and `describe` is no longer used) | `commands/stock.py` | application | `test_repair_round_1.py::test_the_catalog_lookup_is_locked_and_inside_the_transaction` (record, threshold) | CONFIRMED |
+| L3: `find_for_update` raises outside a transaction, reads and returns None for unknown inside one | `sql_presentation_directory.py` | integration | `test_sql_repair_round_1.py::test_find_for_update_raises_outside_a_transaction`, `::test_find_for_update_inside_a_transaction_reads_the_presentation` | CONFIRMED |
+| L3: a movement / threshold waits while another transaction holds the presentation `FOR UPDATE`; after it commits a switch to made_to_order the command answers `INVENTORY_PRESENTATION_NOT_STOCKED` and writes nothing; after a rollback it proceeds | same + `catalog_presentations.py` | integration | `::test_a_command_waits_for_a_catalog_transaction_and_sees_the_switch_to_made_to_order` (movement, threshold), `::test_a_command_proceeds_once_the_catalog_transaction_ends_unchanged` | CONFIRMED |
+
+The wait is asserted with a 0.7 s timeout (the task must still be pending), so it depends on
+the lock, not on timing for the later outcome.
 
 ## Review findings
 
