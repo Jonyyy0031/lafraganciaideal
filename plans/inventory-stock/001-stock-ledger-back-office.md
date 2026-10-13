@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
@@ -834,6 +834,55 @@ repeated for it.
 
 Result: no blocking findings → `status: verify`. L4 is advisory; the user decides whether to
 fix it before `done` or file it.
+
+### Re-review after repair round 2
+
+Reviewed 2026-10-13 against `git diff 65bcc63..HEAD` (`f5622f2` fix, `c504abc`
+regressions; clean worktree). This round superseded L4 above.
+
+**L4 is resolved.**
+
+- **The fix.** In `inventory/application/commands/stock.py`, `RecordMovement` and
+  `SetThreshold` now read the clock twice. The first read only stamps the `get_for_update`
+  placeholder. The second read happens after the lock is held, and it feeds
+  `StockItem.empty`, `record_movement` (`created_at`) and `updated_at`.
+- **Why it works.** For one presentation, writers serialize on the stock row, so their
+  `created_at` order now follows the order in which they were applied (as long as the
+  system clock does not go backwards).
+- **Scope.** Nothing else changed: lock order, the transaction boundary and the
+  catalog `FOR SHARE` lookup are as reviewed in round 1. In `SetThreshold`, the post-lock
+  read is unused on the SQL path, which always returns a row. That is harmless.
+
+**The new tests fail on the pre-repair code: confirmed.** I ran a mutant from the scratchpad
+without editing the worktree:
+
+- **The mutant.** I extracted `65bcc63:.../commands/stock.py` with `git show` into the
+  scratchpad. A pytest plugin, passed to `pytest.main(plugins=[...])`, put that file's
+  `RecordMovement.execute` and `SetThreshold.execute` onto the live classes.
+- **The result.** All 4 new tests failed:
+  - the integration test
+    `test_ledger_order_by_created_at_follows_the_order_movements_were_applied` got
+    `[("first-to-read", 12), ("second-to-read", 7)]`;
+  - the 3 unit tests in `test_repair_round_2.py` got the placeholder's timestamp instead of
+    the read taken after the lock.
+- **The control.** The same runner without the plugin passed 4 of 4.
+
+This replaces the tester's "by reasoning" note in the round 2 coverage table with an
+observed failure.
+
+**Gates on `c504abc`:**
+
+- `uv run just check`: green (2017 unit, 685 tooling; import-linter 7 kept).
+- `uv run just test-integration`: 520 passed, 5 skipped.
+- `plans-scope`: the out-of-scope set is the same as in round 1. It is all accounted for
+  (Deviation 1 and the recipe, per decision 12).
+
+**Findings:** none new. The informational notes from rounds 0 and 1 are unchanged.
+
+**Not verified:** I did not run the repaired commands in the running app. The verify phase
+must cover `7248d24` and `f5622f2`.
+
+Result: no blocking findings → `status: verify`.
 
 ## Verification
 
