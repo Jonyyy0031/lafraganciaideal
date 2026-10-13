@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
