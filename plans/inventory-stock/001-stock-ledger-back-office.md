@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
@@ -431,6 +431,33 @@ Then set the status to `testing`. The tester adds these regressions:
 - the placeholder `updated_at` comes from the clock;
 - the facade lookup is made inside the transaction, and an integration test shows a movement
   waiting on a catalog transaction that holds the presentation row.
+
+**Implemented (2026-10-13).**
+
+- **L1.** `domain/stock.py` has pure `effective_threshold(override, global_threshold)` and
+  `is_low(on_hand, override, global_threshold)`; `StockItem` delegates to them.
+  `queries/stock.py` calls them in `GetStock` and `ListStock`. `GetStock` passes the global
+  threshold to `is_low`, not the already-resolved one, so the rule is applied once.
+- **L2.** `get_for_update(presentation_id, *, now)` in the port, the SQL adapter (placeholder
+  `updated_at=now`; the now-unused `func` import dropped) and the in-memory fake. Both commands
+  pass `self._clock.now()`.
+- **L3.** `PresentationDirectory.find_for_update` (facade, `PresentationDirectoryQueries` port,
+  `SqlPresentationDirectory`, `InMemoryPerfumes`). The SQL form is `SELECT ... FOR SHARE OF
+  presentations` through `Database.session`, so it joins the active transaction and raises
+  outside one. Inventory's `PresentationCatalog.describe_for_update` is implemented in
+  `catalog_presentations.py` and the in-memory catalog. `RecordMovement` and `SetThreshold` now
+  do the lookup inside `transactions.run(...)`, before locking the stock row. Input validation
+  stays outside the transaction.
+- **Recipe.** `docs/recipes/new-module.md` §5 lists both `ignore_imports` lines and the
+  `MODULES` ordering rule. The finding `platform-recipe-facade-wiring-ignore-missing` is
+  `resolved` (`plan: inventory-stock/001`) with a Resolution section.
+- **Existing tests adapted** (signature only): `tests/integration/inventory/test_sql_stock.py`
+  nine `repo.get_for_update(...)` calls now pass `now=NOW` (lines 83, 105, 112, 132, 175, 196,
+  275, 396, 400). No assertion changed.
+- **Deviation:** `docs/recipes/new-module.md` and the finding file are outside the Steps' file
+  list, as the spec itself says.
+- **Commands:** `uv run just check` green (2002 unit, 685 tooling); `uv run just
+  test-integration` 507 passed, 5 skipped. The API was not started.
 
 ## Test coverage
 

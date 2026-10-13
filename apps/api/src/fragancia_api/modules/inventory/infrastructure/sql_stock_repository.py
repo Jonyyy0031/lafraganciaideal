@@ -1,7 +1,8 @@
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import insert, select
 from sqlalchemy.dialects import postgresql
 
 from fragancia_api.modules.inventory.domain.stock import Movement, StockItem, Threshold
@@ -27,7 +28,7 @@ class SqlStockRepository:
     def __init__(self, database: Database) -> None:
         self._database = database
 
-    async def get_for_update(self, presentation_id: UUID) -> StockItem | None:
+    async def get_for_update(self, presentation_id: UUID, *, now: datetime) -> StockItem | None:
         session = self._database.session
         # An empty item first, so two first movements on one presentation queue on its row lock
         # instead of both reading "nothing" and overwriting each other.
@@ -37,7 +38,7 @@ class SqlStockRepository:
                 presentation_id=presentation_id,
                 on_hand=0,
                 threshold_override=None,
-                updated_at=func.now(),
+                updated_at=now,
             )
             .on_conflict_do_nothing(index_elements=[stock_items.c.presentation_id])
         )

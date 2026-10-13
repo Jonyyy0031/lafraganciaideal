@@ -26,5 +26,9 @@ class CatalogPresentations:
         found = await self._directory.find(ids)
         return {presentation_id: _stocked(ref) for presentation_id, ref in found.items()}
 
+    async def describe_for_update(self, presentation_id: UUID) -> StockedPresentation | None:
+        ref = await self._directory.find_for_update(presentation_id)
+        return _stocked(ref) if ref is not None else None
+
     async def in_stock(self) -> list[StockedPresentation]:
         return [_stocked(ref) for ref in await self._directory.list_in_stock()]

@@ -37,6 +37,11 @@ class PresentationDirectory:
         """The known presentations by id; unknown ids are absent."""
         return await self._queries.find(ids)
 
+    async def find_for_update(self, presentation_id: UUID) -> PresentationRef | None:
+        """One presentation, read with a share lock held until the caller's transaction ends,
+        so a concurrent catalog change to it waits. Must run inside a transaction."""
+        return await self._queries.find_for_update(presentation_id)
+
     async def list_in_stock(self) -> list[PresentationRef]:
         """Every active in-stock presentation of a non-archived perfume, ordered by brand
         name, perfume name and ml."""

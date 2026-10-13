@@ -1,5 +1,6 @@
 ---
-status: open # open → deferred | planned | resolved | discarded (the user decides)
+status: resolved
+plan: inventory-stock/001
 module: platform
 found: 2026-10-13
 ---
@@ -31,3 +32,9 @@ ignore line is allowed, or registers in the wrong order and fails at startup.
 
 A fast-lane docs fix to `docs/recipes/new-module.md` §5: list both `ignore_imports` lines and the
 `MODULES` ordering requirement, mirroring `docs/architecture.md:50-54`.
+
+## Resolution (2026-10-13, repair round 1 of inventory-stock/001)
+
+`docs/recipes/new-module.md` §5 now lists both `ignore_imports` lines (the adapter and the
+consumer's `module.py`) and the rule that the providing module comes before the consumer in
+`MODULES`, mirroring `docs/architecture.md:50-54`.

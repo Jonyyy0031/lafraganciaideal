@@ -12,6 +12,7 @@ from fragancia_api.modules.inventory.domain.errors import (
     PresentationNotFound,
     PresentationNotStocked,
 )
+from fragancia_api.modules.inventory.domain.stock import effective_threshold, is_low
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 
 
@@ -29,7 +30,8 @@ class GetStock:
         if not found.stocked:
             return Err(PresentationNotStocked())
         on_hand, override = await self._queries.get(presentation_id) or (0, None)
-        threshold = override if override is not None else await self._queries.low_stock_threshold()
+        global_threshold = await self._queries.low_stock_threshold()
+        threshold = effective_threshold(override, global_threshold)
         return Ok(
             StockResponse(
                 presentation_id=presentation_id,
@@ -38,7 +40,7 @@ class GetStock:
                 on_hand=on_hand,
                 threshold_override=override,
                 effective_threshold=threshold,
-                is_low=on_hand <= threshold,
+                is_low=is_low(on_hand, override, global_threshold),
             )
         )
 
@@ -77,7 +79,7 @@ class ListStock:
         lines: list[StockLine] = []
         for presentation in presentations:
             on_hand, override = counted.get(presentation.presentation_id, (0, None))
-            threshold = override if override is not None else global_threshold
+            threshold = effective_threshold(override, global_threshold)
             lines.append(
                 StockLine(
                     presentation_id=presentation.presentation_id,
@@ -85,7 +87,7 @@ class ListStock:
                     label=presentation.label,
                     on_hand=on_hand,
                     effective_threshold=threshold,
-                    is_low=on_hand <= threshold,
+                    is_low=is_low(on_hand, override, global_threshold),
                 )
             )
         if low:

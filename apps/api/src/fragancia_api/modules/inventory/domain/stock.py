@@ -108,6 +108,16 @@ def _quantity_valid(kind: MovementKind, quantity: int) -> bool:
             return 0 <= quantity <= QUANTITY_MAX
 
 
+def effective_threshold(override: int | None, global_threshold: int) -> int:
+    """The threshold that applies: the presentation's own override, else the global one."""
+    return override if override is not None else global_threshold
+
+
+def is_low(on_hand: int, override: int | None, global_threshold: int) -> bool:
+    """The one low-stock rule: `on_hand <= effective threshold` (equality is low)."""
+    return on_hand <= effective_threshold(override, global_threshold)
+
+
 class StockItem(AggregateRoot):
     def __init__(
         self,
@@ -173,7 +183,12 @@ class StockItem(AggregateRoot):
 
     def effective_threshold(self, global_threshold: Threshold) -> int:
         override = self.threshold_override
-        return (override if override is not None else global_threshold).value
+        return effective_threshold(
+            override.value if override is not None else None, global_threshold.value
+        )
 
     def is_low(self, global_threshold: Threshold) -> bool:
-        return self.on_hand <= self.effective_threshold(global_threshold)
+        override = self.threshold_override
+        return is_low(
+            self.on_hand, override.value if override is not None else None, global_threshold.value
+        )

@@ -24,6 +24,11 @@ class PresentationCatalog(Protocol):
         """The known presentations by id; unknown ids are absent."""
         ...
 
+    async def describe_for_update(self, presentation_id: UUID) -> StockedPresentation | None:
+        """One presentation under a share lock held until the active transaction ends (so a
+        concurrent catalog change waits); None when unknown. Run it inside a transaction."""
+        ...
+
     async def in_stock(self) -> list[StockedPresentation]:
         """Every active in-stock presentation of a non-archived perfume, in display order."""
         ...

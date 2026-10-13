@@ -119,6 +119,11 @@ class PresentationDirectoryQueries(Protocol):
         """The known presentations by id; unknown ids are absent."""
         ...
 
+    async def find_for_update(self, presentation_id: UUID) -> PresentationRef | None:
+        """One presentation under a share lock held until the active transaction ends; None
+        when unknown. Joins the caller's transaction and raises outside one."""
+        ...
+
     async def list_in_stock(self) -> list[PresentationRef]:
         """Every active in-stock presentation of a non-archived perfume, ordered by brand
         name, perfume name (both case-insensitive) and ml."""

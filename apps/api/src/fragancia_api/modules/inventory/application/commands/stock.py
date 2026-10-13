@@ -25,7 +25,7 @@ from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 async def _require_stocked(
     catalog: PresentationCatalog, presentation_id: UUID
 ) -> PresentationNotFound | PresentationNotStocked | None:
-    found = (await catalog.describe([presentation_id])).get(presentation_id)
+    found = await catalog.describe_for_update(presentation_id)
     if found is None:
         return PresentationNotFound()
     if not found.stocked:
@@ -60,13 +60,14 @@ class RecordMovement:
                 return Err(invalid)
             case Ok(reason):
                 pass
-        refusal = await _require_stocked(self._catalog, presentation_id)
-        if refusal is not None:
-            return Err(refusal)
 
         async def work() -> Result[MovementCreated, DomainError]:
+            # Lock order: the catalog presentation (share), then the stock item.
+            refusal = await _require_stocked(self._catalog, presentation_id)
+            if refusal is not None:
+                return Err(refusal)
             now = self._clock.now()
-            item = await self._stock.get_for_update(presentation_id)
+            item = await self._stock.get_for_update(presentation_id, now=now)
             if item is None:
                 item = StockItem.empty(presentation_id, now)
             kind = MovementKind(request.kind)
@@ -107,14 +108,15 @@ class SetThreshold:
                     return Err(invalid)
                 case Ok(valid):
                     override = valid
-        refusal = await _require_stocked(self._catalog, presentation_id)
-        if refusal is not None:
-            return Err(refusal)
 
         async def work() -> Result[None, DomainError]:
-            item = await self._stock.get_for_update(presentation_id)
+            refusal = await _require_stocked(self._catalog, presentation_id)
+            if refusal is not None:
+                return Err(refusal)
+            now = self._clock.now()
+            item = await self._stock.get_for_update(presentation_id, now=now)
             if item is None:
-                item = StockItem.empty(presentation_id, self._clock.now())
+                item = StockItem.empty(presentation_id, now)
             item.set_threshold(override)
             await self._stock.save(item)
             return Ok(None)

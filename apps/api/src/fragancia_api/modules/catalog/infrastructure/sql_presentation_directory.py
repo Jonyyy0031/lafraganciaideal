@@ -62,6 +62,16 @@ class SqlPresentationDirectory:
             rows = (await session.execute(statement)).mappings().all()
         return {ref.presentation_id: ref for ref in map(_ref, rows)}
 
+    async def find_for_update(self, presentation_id: UUID) -> PresentationRef | None:
+        # FOR SHARE on the presentation row only: the joined rows are just read.
+        statement = (
+            _select()
+            .where(presentations.c.id == presentation_id)
+            .with_for_update(read=True, of=presentations)
+        )
+        row = (await self._database.session.execute(statement)).mappings().one_or_none()
+        return _ref(row) if row is not None else None
+
     async def list_in_stock(self) -> list[PresentationRef]:
         conditions: list[ColumnElement[bool]] = [
             presentations.c.is_active,

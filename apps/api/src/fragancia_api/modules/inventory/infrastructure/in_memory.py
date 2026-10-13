@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from copy import deepcopy
+from datetime import datetime
 from uuid import UUID
 
 from fragancia_api.modules.inventory.application.ports import StockedPresentation
@@ -23,7 +24,7 @@ class InMemoryStock:
 
     # StockRepository
 
-    async def get_for_update(self, presentation_id: UUID) -> StockItem | None:
+    async def get_for_update(self, presentation_id: UUID, *, now: datetime) -> StockItem | None:
         item = self.items.get(presentation_id)
         return deepcopy(item) if item is not None else None
 
@@ -97,6 +98,9 @@ class InMemoryPresentationCatalog:
     async def describe(self, ids: Sequence[UUID]) -> dict[UUID, StockedPresentation]:
         wanted = set(ids)
         return {p.presentation_id: p for p in self.presentations if p.presentation_id in wanted}
+
+    async def describe_for_update(self, presentation_id: UUID) -> StockedPresentation | None:
+        return (await self.describe([presentation_id])).get(presentation_id)
 
     async def in_stock(self) -> list[StockedPresentation]:
         return [p for p in self.presentations if p.stocked]

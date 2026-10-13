@@ -161,6 +161,9 @@ class InMemoryPerfumes:
             if presentation.id in wanted
         }
 
+    async def find_for_update(self, presentation_id: UUID) -> PresentationRef | None:
+        return (await self.find([presentation_id])).get(presentation_id)
+
     async def list_in_stock(self) -> list[PresentationRef]:
         refs = [
             self._presentation_ref(perfume, presentation)

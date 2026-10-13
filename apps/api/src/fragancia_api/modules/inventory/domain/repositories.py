@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -7,11 +8,11 @@ from fragancia_api.modules.inventory.domain.stock import InventorySettings, Stoc
 class StockRepository(Protocol):
     """Write side. Joins the active transaction. No "for a screen" methods: see StockQueries."""
 
-    async def get_for_update(self, presentation_id: UUID) -> StockItem | None:
+    async def get_for_update(self, presentation_id: UUID, *, now: datetime) -> StockItem | None:
         """The stock item with its row locked until the transaction ends. The SQL adapter
-        first inserts an empty item (`ON CONFLICT DO NOTHING`) so that two concurrent first
-        movements on one presentation serialize; the fakes return None when the presentation
-        was never counted. Callers verify the presentation exists before calling."""
+        first inserts an empty item stamped `now` (`ON CONFLICT DO NOTHING`) so that two
+        concurrent first movements on one presentation serialize; the fakes return None when the
+        presentation was never counted. Callers verify the presentation exists before calling."""
         ...
 
     async def save(self, item: StockItem) -> None:

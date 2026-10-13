@@ -80,7 +80,7 @@ async def test_the_first_lock_creates_an_empty_item_that_save_then_fills(
     presentation_id = new_id()
 
     async def first() -> None:
-        item = await repo.get_for_update(presentation_id)
+        item = await repo.get_for_update(presentation_id, now=NOW)
         assert item is not None
         assert (item.on_hand, item.threshold_override) == (0, None)
         restock(item, 10)
@@ -102,14 +102,14 @@ async def test_a_second_load_returns_the_stored_units_override_and_time(
     presentation_id = new_id()
 
     async def write() -> None:
-        item = await repo.get_for_update(presentation_id)
+        item = await repo.get_for_update(presentation_id, now=NOW)
         assert item is not None
         restock(item, 4, at=NOW)
         item.set_threshold(Threshold(25))
         await repo.save(item)
 
     async def read() -> StockItem | None:
-        return await repo.get_for_update(presentation_id)
+        return await repo.get_for_update(presentation_id, now=NOW)
 
     await in_transaction(container, write)
     loaded = await in_transaction(container, read)
@@ -129,7 +129,7 @@ async def test_save_stores_every_field_of_a_movement(container: Container) -> No
     moved: list[Movement] = []
 
     async def write() -> None:
-        item = await repo.get_for_update(presentation_id)
+        item = await repo.get_for_update(presentation_id, now=NOW)
         assert item is not None
         moved.append(restock(item, 10))
         result = item.record_movement(MovementKind.COUNT, 4, Reason("Conteo"), "actor-2", NOW)
@@ -172,7 +172,7 @@ async def test_a_failed_transaction_leaves_neither_item_nor_movements(
     presentation_id = new_id()
 
     async def work() -> Result[None, DomainError]:
-        item = await repo.get_for_update(presentation_id)
+        item = await repo.get_for_update(presentation_id, now=NOW)
         assert item is not None
         restock(item, 5)
         await repo.save(item)
@@ -193,7 +193,7 @@ async def test_two_concurrent_first_movements_serialize_on_the_row_lock(
     presentation_id = new_id()
 
     async def movement(delay_after_lock: float) -> None:
-        item = await repo.get_for_update(presentation_id)
+        item = await repo.get_for_update(presentation_id, now=NOW)
         assert item is not None
         restock(item, 5)
         await asyncio.sleep(delay_after_lock)
@@ -272,7 +272,7 @@ async def test_the_repository_cannot_save_a_negative_on_hand(container: Containe
     presentation_id = new_id()
 
     async def write() -> None:
-        item = await repo.get_for_update(presentation_id)
+        item = await repo.get_for_update(presentation_id, now=NOW)
         assert item is not None
         item.on_hand = -1  # bypasses the aggregate on purpose: the constraint is the backstop
         await repo.save(item)
@@ -393,11 +393,11 @@ async def test_get_and_on_hand_by_id(container: Container) -> None:
     counted, with_override, never = new_id(), new_id(), new_id()
 
     async def write() -> None:
-        first = await repo.get_for_update(counted)
+        first = await repo.get_for_update(counted, now=NOW)
         assert first is not None
         restock(first, 6)
         await repo.save(first)
-        second = await repo.get_for_update(with_override)
+        second = await repo.get_for_update(with_override, now=NOW)
         assert second is not None
         second.set_threshold(Threshold(0))
         await repo.save(second)
