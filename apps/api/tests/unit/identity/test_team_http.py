@@ -424,7 +424,7 @@ async def test_accepting_an_invitation_is_204_and_the_new_staff_member_can_sign_
     assert login.status_code == 200
     assert (login.json()["user"]["role"], login.json()["user"]["permissions"]) == (
         "staff",
-        ["catalog:manage"],
+        ["catalog:manage", "inventory:manage"],
     )
     assert (await client.get(INVITATIONS, headers=owner)).json() == []
 

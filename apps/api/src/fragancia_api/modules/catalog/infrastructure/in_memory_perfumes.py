@@ -1,11 +1,15 @@
 """In-memory perfume adapter for unit tests. It honors the same contracts as the SQL ones."""
 
 import unicodedata
+from collections.abc import Sequence
 from copy import deepcopy
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fragancia_api.modules.catalog.application.ports import PublicPerfumeFilters
+from fragancia_api.modules.catalog.application.queries.presentation_directory import (
+    PresentationRef,
+)
 from fragancia_api.modules.catalog.contracts import (
     AdminPerfume,
     AdminPerfumePage,
@@ -131,6 +135,43 @@ class InMemoryPerfumes:
             name=concentration.name.value,
             abbreviation=concentration.abbreviation.value,
             is_active=concentration.is_active,
+        )
+
+    def _presentation_ref(self, perfume: Perfume, presentation: Presentation) -> PresentationRef:
+        brand = self._brands.by_id[perfume.brand_id]
+        concentration = self._concentrations.by_id[perfume.concentration_id]
+        return PresentationRef(
+            presentation_id=presentation.id,
+            perfume_id=perfume.id,
+            perfume_name=perfume.name.value,
+            brand_name=brand.name.value,
+            concentration_abbreviation=concentration.abbreviation.value,
+            ml=presentation.ml.value,
+            availability=presentation.availability.kind,
+            is_sellable=presentation.is_active and not perfume.is_archived and brand.is_active,
+        )
+
+    async def find(self, ids: Sequence[UUID]) -> dict[UUID, PresentationRef]:
+        """The `PresentationDirectoryQueries` port, over the same store."""
+        wanted = set(ids)
+        return {
+            presentation.id: self._presentation_ref(perfume, presentation)
+            for perfume in self.by_id.values()
+            for presentation in perfume.presentations
+            if presentation.id in wanted
+        }
+
+    async def list_in_stock(self) -> list[PresentationRef]:
+        refs = [
+            self._presentation_ref(perfume, presentation)
+            for perfume in self.by_id.values()
+            if not perfume.is_archived
+            for presentation in perfume.presentations
+            if presentation.is_active and presentation.availability.kind == "in_stock"
+        ]
+        return sorted(
+            refs,
+            key=lambda r: (r.brand_name.lower(), r.perfume_name.lower(), r.ml, r.presentation_id),
         )
 
     async def list_admin(self, *, page: int, size: int, archived: bool) -> AdminPerfumePage:

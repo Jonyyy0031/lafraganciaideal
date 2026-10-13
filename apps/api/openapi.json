@@ -4082,6 +4082,565 @@
           }
         }
       }
+    },
+    "/api/v1/admin/inventory/presentations/{presentation_id}/movements": {
+      "post": {
+        "tags": [
+          "inventory · admin"
+        ],
+        "summary": "Record Stock Movement",
+        "description": "Record a stock movement of an in-stock presentation. 404\n`INVENTORY_PRESENTATION_NOT_FOUND`; 409 `INVENTORY_STOCK_INSUFFICIENT` when the units on\nhand would go below 0; 422 `INVENTORY_PRESENTATION_NOT_STOCKED` (made to order),\n`INVENTORY_QUANTITY_INVALID` or `INVENTORY_REASON_INVALID`.",
+        "operationId": "record_stock_movement",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "presentation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Presentation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MovementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MovementCreated"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "inventory · admin"
+        ],
+        "summary": "List Stock Movements",
+        "description": "The ledger of a presentation, newest first. 404 `INVENTORY_PRESENTATION_NOT_FOUND`.",
+        "operationId": "list_stock_movements",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "presentation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Presentation Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockMovementPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/inventory/presentations/{presentation_id}": {
+      "get": {
+        "tags": [
+          "inventory · admin"
+        ],
+        "summary": "Get Stock",
+        "description": "The units on hand, thresholds and low flag of an in-stock presentation. 404\n`INVENTORY_PRESENTATION_NOT_FOUND`, 422 `INVENTORY_PRESENTATION_NOT_STOCKED`.",
+        "operationId": "get_stock",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "presentation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Presentation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/inventory/presentations/{presentation_id}/threshold": {
+      "put": {
+        "tags": [
+          "inventory · admin"
+        ],
+        "summary": "Set Stock Threshold",
+        "description": "Set the low-stock threshold of a presentation, or clear it with `null`. 404\n`INVENTORY_PRESENTATION_NOT_FOUND`; 422 `INVENTORY_PRESENTATION_NOT_STOCKED` or\n`INVENTORY_THRESHOLD_INVALID`.",
+        "operationId": "set_stock_threshold",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "presentation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Presentation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThresholdRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/inventory/stock": {
+      "get": {
+        "tags": [
+          "inventory · admin"
+        ],
+        "summary": "List Stock",
+        "description": "Every in-stock presentation with its units, in catalog order; `low=true` keeps the low\nones (presentations never counted show 0 on hand).",
+        "operationId": "list_stock",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "low",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Low"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/inventory/settings": {
+      "get": {
+        "tags": [
+          "inventory · admin"
+        ],
+        "summary": "Get Inventory Settings",
+        "description": "The global low-stock threshold.",
+        "operationId": "get_inventory_settings",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventorySettingsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "inventory · admin"
+        ],
+        "summary": "Update Inventory Settings",
+        "description": "Set the global low-stock threshold. 422 `INVENTORY_THRESHOLD_INVALID`.",
+        "operationId": "update_inventory_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventorySettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -5220,6 +5779,34 @@
         ],
         "title": "ErrorResponse"
       },
+      "InventorySettingsRequest": {
+        "properties": {
+          "low_stock_threshold": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "title": "Low Stock Threshold"
+          }
+        },
+        "type": "object",
+        "required": [
+          "low_stock_threshold"
+        ],
+        "title": "InventorySettingsRequest"
+      },
+      "InventorySettingsResponse": {
+        "properties": {
+          "low_stock_threshold": {
+            "type": "integer",
+            "title": "Low Stock Threshold"
+          }
+        },
+        "type": "object",
+        "required": [
+          "low_stock_threshold"
+        ],
+        "title": "InventorySettingsResponse"
+      },
       "InviteUserRequest": {
         "properties": {
           "email": {
@@ -5296,6 +5883,66 @@
         ],
         "title": "LoginResponse",
         "description": "The signed-in user and when the session expires at the latest. The session token\ntravels only in the httpOnly cookie."
+      },
+      "MovementCreated": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "on_hand": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "On Hand"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "on_hand"
+        ],
+        "title": "MovementCreated"
+      },
+      "MovementRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "restock",
+              "adjustment",
+              "loss",
+              "return",
+              "count"
+            ],
+            "title": "Kind"
+          },
+          "quantity": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "title": "Quantity",
+            "examples": [
+              10
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Reason",
+            "examples": [
+              "Compra al proveedor"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "quantity",
+          "reason"
+        ],
+        "title": "MovementRequest",
+        "description": "One stock movement. `quantity` is positive for restock, return and loss, signed and\nnon-zero for an adjustment, and the absolute count (0 or more) for a count."
       },
       "PasswordResetRequest": {
         "properties": {
@@ -6087,6 +6734,259 @@
           "new_password"
         ],
         "title": "ResetPasswordRequest"
+      },
+      "StockLine": {
+        "properties": {
+          "presentation_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Presentation Id"
+          },
+          "perfume_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Perfume Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "on_hand": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "On Hand"
+          },
+          "effective_threshold": {
+            "type": "integer",
+            "title": "Effective Threshold"
+          },
+          "is_low": {
+            "type": "boolean",
+            "title": "Is Low"
+          }
+        },
+        "type": "object",
+        "required": [
+          "presentation_id",
+          "perfume_id",
+          "label",
+          "on_hand",
+          "effective_threshold",
+          "is_low"
+        ],
+        "title": "StockLine",
+        "description": "One in-stock presentation in the stock list."
+      },
+      "StockMovement": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "restock",
+              "adjustment",
+              "loss",
+              "return",
+              "count"
+            ],
+            "title": "Kind"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity"
+          },
+          "delta": {
+            "type": "integer",
+            "title": "Delta"
+          },
+          "on_hand_after": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "On Hand After"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "actor_id": {
+            "type": "string",
+            "title": "Actor Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "quantity",
+          "delta",
+          "on_hand_after",
+          "reason",
+          "actor_id",
+          "created_at"
+        ],
+        "title": "StockMovement",
+        "description": "One line of the ledger."
+      },
+      "StockMovementPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StockMovement"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size"
+        ],
+        "title": "StockMovementPage",
+        "description": "One page of a presentation's movements, newest first."
+      },
+      "StockPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StockLine"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size"
+        ],
+        "title": "StockPage",
+        "description": "One page of the stock list."
+      },
+      "StockResponse": {
+        "properties": {
+          "presentation_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Presentation Id"
+          },
+          "perfume_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Perfume Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "examples": [
+              "Versace Eros EDT 100 ml"
+            ]
+          },
+          "on_hand": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "On Hand"
+          },
+          "threshold_override": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold Override"
+          },
+          "effective_threshold": {
+            "type": "integer",
+            "title": "Effective Threshold"
+          },
+          "is_low": {
+            "type": "boolean",
+            "title": "Is Low"
+          }
+        },
+        "type": "object",
+        "required": [
+          "presentation_id",
+          "perfume_id",
+          "label",
+          "on_hand",
+          "threshold_override",
+          "effective_threshold",
+          "is_low"
+        ],
+        "title": "StockResponse",
+        "description": "The stock of one presentation."
+      },
+      "ThresholdRequest": {
+        "properties": {
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000000.0,
+                "minimum": -1000000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "type": "object",
+        "required": [
+          "threshold"
+        ],
+        "title": "ThresholdRequest",
+        "description": "`null` removes the override: the global threshold applies again."
       },
       "UpdateConcentrationRequest": {
         "properties": {

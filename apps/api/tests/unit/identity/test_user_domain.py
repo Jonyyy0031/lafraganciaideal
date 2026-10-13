@@ -5,6 +5,7 @@ import pytest
 from fragancia_api.modules.identity.domain.errors import EmailInvalid, NameInvalid, PasswordTooWeak
 from fragancia_api.modules.identity.domain.user import (
     CATALOG_MANAGE,
+    INVENTORY_MANAGE,
     ROLE_PERMISSIONS,
     USERS_MANAGE,
     DisplayName,
@@ -94,10 +95,14 @@ def test_a_password_never_shows_in_its_repr() -> None:
     assert repr(PlainPassword("super secret value")) == "PlainPassword(***)"
 
 
-def test_the_owner_has_every_permission_and_staff_only_the_catalog() -> None:
-    assert ROLE_PERMISSIONS[Role.OWNER] == {CATALOG_MANAGE, USERS_MANAGE}
-    assert ROLE_PERMISSIONS[Role.STAFF] == {CATALOG_MANAGE}
-    assert (CATALOG_MANAGE, USERS_MANAGE) == ("catalog:manage", "users:manage")
+def test_the_owner_has_every_permission_and_staff_only_catalog_and_inventory() -> None:
+    assert ROLE_PERMISSIONS[Role.OWNER] == {CATALOG_MANAGE, INVENTORY_MANAGE, USERS_MANAGE}
+    assert ROLE_PERMISSIONS[Role.STAFF] == {CATALOG_MANAGE, INVENTORY_MANAGE}
+    assert (CATALOG_MANAGE, INVENTORY_MANAGE, USERS_MANAGE) == (
+        "catalog:manage",
+        "inventory:manage",
+        "users:manage",
+    )
 
 
 def test_role_values_are_the_wire_names() -> None:
@@ -117,8 +122,8 @@ def test_new_users_are_active_with_both_timestamps_set_to_now() -> None:
 
 
 def test_a_user_gets_the_permissions_of_the_role() -> None:
-    assert _user(Role.OWNER).permissions == {CATALOG_MANAGE, USERS_MANAGE}
-    assert _user(Role.STAFF).permissions == {CATALOG_MANAGE}
+    assert _user(Role.OWNER).permissions == {CATALOG_MANAGE, INVENTORY_MANAGE, USERS_MANAGE}
+    assert _user(Role.STAFF).permissions == {CATALOG_MANAGE, INVENTORY_MANAGE}
 
 
 def test_changing_the_password_replaces_the_hash_and_stamps_the_time() -> None:

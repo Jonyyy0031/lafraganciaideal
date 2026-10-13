@@ -47,13 +47,18 @@ Each module:
   - **Synchronously**: through a port of its own (e.g. `orders` defines `ProductCatalog`)
     implemented by an adapter that calls the other module's facade (anti-corruption layer).
   - **Asynchronously**: domain events published through the **outbox**.
+  - Built example: `inventory` defines `PresentationCatalog`, implemented in
+    `inventory/infrastructure/catalog_presentations.py` over the catalog's public
+    `PresentationDirectory` facade. `.importlinter` allows exactly that import, plus
+    `inventory/module.py` fetching the facade from the service registry (the catalog registers
+    first in `MODULES`).
 
 Modules (✔ = built; `catalog` is the **reference module** — see [recipes/new-module.md](recipes/new-module.md)):
 
 | Module          | Responsibility                                                                        |
 | --------------- | ------------------------------------------------------------------------------------- |
 | `catalog`       | ✔ Brands, olfactory families, concentrations, perfumes and presentations (back office), public catalog (filters, search, sort, detail by slug), perfume photos (S3, WebP). Next: Excel import |
-| `inventory`     | Stock per size; reserve on checkout, release on cancellation, commit on payment       |
+| `inventory`     | ✔ Back-office stock ledger: units per in-stock presentation, append-only movements (restock, adjustment, loss, return, count), low-stock thresholds and list. Next: reserve on checkout, release on cancellation, commit on payment |
 | `orders`        | Cart → order; the `Order` aggregate and its state machine                             |
 | `payments`      | `PaymentGateway` port → Mercado Pago adapter (Checkout Pro); idempotent webhooks      |
 | `identity`      | ✔ Back-office users (owner, staff), opaque sessions in a cookie, login throttle, invitations, password reset by email, deactivation |
