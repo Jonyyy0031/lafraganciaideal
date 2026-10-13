@@ -545,7 +545,7 @@ def test_format_file_formats_python_inside_project(tmp_path: Path) -> None:
     (project / ".venv" / "bin").mkdir(parents=True)
     (project / ".venv" / "bin" / "ruff").symlink_to(REPO / ".venv" / "bin" / "ruff")
     target = project / "messy.py"
-    target.write_text("import os\nx = {  'a':1 }\n")
+    target.write_text("x = {  'a':1 }\n")
     outside = tmp_path / "outside.py"
     outside.write_text("x = {  'a':1 }\n")
 
@@ -556,6 +556,23 @@ def test_format_file_formats_python_inside_project(tmp_path: Path) -> None:
     payload = {"tool_input": {"file_path": str(outside)}}
     assert run_hook("format_file.py", payload, project).returncode == 0
     assert outside.read_text() == "x = {  'a':1 }\n"
+
+
+@pytest.mark.skipif(not (REPO / ".venv" / "bin" / "ruff").exists(), reason="ruff not installed")
+def test_format_file_keeps_imports_not_used_yet_and_only_sorts_them(tmp_path: Path) -> None:
+    # Regression (finding platform-format-hook-fix-rewrites-code-mid-edit): an edit that adds
+    # imports before the edit that uses them must not lose them.
+    project = tmp_path / "project"
+    (project / ".venv" / "bin").mkdir(parents=True)
+    (project / ".venv" / "bin" / "ruff").symlink_to(REPO / ".venv" / "bin" / "ruff")
+    target = project / "mid_edit.py"
+    target.write_text("import sys\nimport os\nfrom typing import Literal\n\nx = {  'a':1 }\n")
+
+    payload = {"tool_input": {"file_path": "mid_edit.py"}}
+    assert run_hook("format_file.py", payload, project).returncode == 0
+    assert target.read_text() == (
+        'import os\nimport sys\nfrom typing import Literal\n\nx = {"a": 1}\n'
+    )
 
 
 def test_format_file_skips_without_ruff(tmp_path: Path) -> None:

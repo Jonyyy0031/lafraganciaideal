@@ -1,5 +1,6 @@
 ---
-status: open
+status: resolved
+plan: catalog-perfumes/008
 module: catalog
 found: 2026-10-12
 ---
@@ -39,3 +40,27 @@ Either accept it and close it, or take a small fix later. One option is to order
 their identity, `(brand_id, name_slug, concentration_id)`, instead of `perfume_id`. Another
 is to map a PostgreSQL deadlock in the confirm to 409 `CATALOG_IMPORT_STALE`. The user
 decides.
+
+## Resolution (2026-10-12, fast lane)
+
+The user asked for the open findings to be fixed. This one was fixed in the fast lane; there
+was no plan.
+
+- **Reproduced** on PostgreSQL. A gated integration test runs two imports that create the
+  same new perfume, one with id `UUID(int=1)` and one with the maximum UUID, and both update
+  the same existing perfume. With the `perfume_id` order it failed with
+  `psycopg.errors.DeadlockDetected`.
+- **Fix:** `ConfirmCatalogImport` applies perfumes ordered by identity: `(brand_id,
+  slugify(name), concentration_id)` (`_identity_order` in
+  `application/commands/catalog_imports.py`). Two imports share it even for a perfume both
+  create, so every confirm takes row locks and unique-index entries in one order.
+- **Regression tests:**
+  - `tests/integration/catalog/test_sql_catalog_import_confirm.py::test_confirms_creating_the_same_new_perfume_with_different_ids_do_not_deadlock`:
+    one confirm applies and the other answers 409 `STALE`.
+  - The unit test of the processing order now pins the identity order:
+    `test_perfumes_are_processed_in_identity_order_whatever_the_plan_or_id_order`.
+- **Verified:**
+  - `uv run just check` is green (1826 passed, 685 harness), and
+    `uv run just test-integration` gives 477 passed.
+  - Live, with the API and worker running: a confirm returned 200 `applied`. A stale confirm
+    returned 409 `CATALOG_IMPORT_STALE` (row 3) and wrote nothing.

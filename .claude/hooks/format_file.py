@@ -29,9 +29,11 @@ def main() -> None:
         ruff = os.path.join(project_dir, ".venv", "bin", "ruff")
         if not os.access(ruff, os.X_OK):
             return
-        # Fix first, then format: fixes such as removing an unused import can leave blank lines.
+        # Only import sorting is fixed here, then the file is formatted. Other autofixes change
+        # meaning between two edits: an import added before its first use would be removed as
+        # unused. `uv run just check` reports every other rule.
         for argv in (
-            [ruff, "check", "--fix", "--force-exclude", "--quiet", abs_path],
+            [ruff, "check", "--fix", "--select", "I", "--force-exclude", "--quiet", abs_path],
             [ruff, "format", "--force-exclude", "--quiet", abs_path],
         ):
             subprocess.run(  # noqa: S603 - fixed argv, no shell

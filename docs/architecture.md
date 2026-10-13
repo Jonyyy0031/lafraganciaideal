@@ -102,6 +102,13 @@ Pydantic v2 request/response models in each module's `http/` are the single sour
 for the HTTP API. FastAPI generates the OpenAPI document; `packages/api-client` is generated
 from it for Angular. No hand-written duplicate types in the frontend.
 
+- **Request body limits**: `BodySizeLimitMiddleware` (outside `RequestContextMiddleware`
+  and inside CORS, before any route code runs) answers 413 `REQUEST_TOO_LARGE` when a body
+  passes the limit, whether declared in `Content-Length` or streamed. JSON, form, text and
+  body-less requests are limited to `REQUEST_MAX_BYTES` (1 MiB); any other media type is a
+  binary upload, limited to the larger of the photo and catalog-import limits. The upload
+  routes keep their own limits, at or below that binary limit.
+
 ## The order lifecycle _(to be built)_
 
 ```
@@ -123,6 +130,7 @@ pending_payment ───────────────────▶ pai
 
 ```
 POST /api/v1/admin/brands
+ → BodySizeLimitMiddleware: body over the limit → 413 REQUEST_TOO_LARGE, before any route code
  → RequestContextMiddleware: request id (X-Request-ID), bound to every log line
  → admin_router dependency require_admin: session cookie → ActorResolver → 401 / 403
  → router dependency require_permission("catalog:manage"): missing permission → 403

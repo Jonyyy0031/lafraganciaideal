@@ -3,7 +3,7 @@
   "info": {
     "title": "La Fragancia Ideal API",
     "version": "1.0.0",
-    "description": "Online perfume store and back office. Admin routes (`/api/v1/admin/*`) need the `fragancia_session` session cookie set by `POST /api/v1/auth/login`. Errors always have the shape `{code, message, details?}`."
+    "description": "Online perfume store and back office. Admin routes (`/api/v1/admin/*`) need the `fragancia_session` session cookie set by `POST /api/v1/auth/login`. Errors always have the shape `{code, message, details?}`. Request bodies over the size limit get 413 `REQUEST_TOO_LARGE`."
   },
   "paths": {
     "/api/v1/health/live": {

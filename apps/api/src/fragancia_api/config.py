@@ -83,6 +83,8 @@ class Settings(DatabaseSettings):
     catalog_import_ttl_minutes: int = Field(default=60, ge=1)
     # Only tests and local QA allow image URLs on private or loopback hosts.
     catalog_import_image_allow_private_hosts: bool = False
+    # Largest accepted JSON, form or text request body (binary uploads have their own limit).
+    request_max_bytes: int = Field(default=1_048_576, ge=1)
 
     @model_validator(mode="after")
     def _check_admin_web_url(self) -> Self:
@@ -99,6 +101,11 @@ class Settings(DatabaseSettings):
                 "MEDIA_PUBLIC_BASE_URL must start with http:// or https:// and not end with /"
             )
         return self
+
+    @property
+    def upload_max_bytes(self) -> int:
+        """The largest binary upload any route accepts (the body limit for binary media types)."""
+        return max(self.photo_max_bytes, self.catalog_import_max_bytes)
 
     @cached_property
     def cors_origin_list(self) -> list[str]:
