@@ -933,4 +933,35 @@ passed, 5 skipped.
 made-to-order 200 ml presentation `01a13650-dc1a-72ad-a151-09990a99d962` on "QA Confirma".
 Nothing is deleted in the catalog. The API is stopped and port 8100 is free.
 
-**Result:** every acceptance criterion that can be exercised locally passes.
+**Result:** every acceptance criterion that can be exercised locally passes. This run is
+superseded for the movement and threshold paths by the re-verification below.
+
+**2026-10-13, re-verification after repair rounds 1 and 2 (main session, inline).**
+
+Branch at `7cf5e01`, which holds `7248d24` and `f5622f2`. The reviewer reports `uv run just
+check` (2017 unit, 685 harness) and `test-integration` (520 passed, 5 skipped). `uv run just
+api` ran with default settings. I created fresh in-stock presentations for this run: 30 ml
+and 75 ml on "QA Confirma" (scratchpad `qa_inv/qa_inv2.py`).
+- **Movements on a never-counted presentation:**
+  - restock 10 gave 201 and 10; loss 3 gave 7; return 1 gave 8; adjustment −2 gave 6;
+    count 20 gave 20;
+  - a loss of 50 gave 409 `INVENTORY_STOCK_INSUFFICIENT`.
+  - The ledger ordered by `created_at` is restock(10), loss(7), return(8), adjustment(6),
+    count(Δ14 → 20), in the order the movements were applied.
+- **L1 at equality.** With an override of 20 and `on_hand` 20, the detail and the stock list
+  both say `is_low true` with an effective threshold of 20.
+- **L2/L4: concurrent first restocks** of 5 and 7 on a new presentation both gave 201, with
+  final `on_hand` 12.
+  - Ordered by `created_at`, the ledger is `[(5, 5), (7, 12)]`, so `on_hand_after` is
+    monotonic.
+  - The stock row's `updated_at` equals the last movement's `created_at`, which the app clock
+    took under the lock.
+- **L3.** The lock wait on a catalog transaction is not reproducible by hand through HTTP. It
+  is covered by the integration tests, which the reviewer confirmed fail without the lock.
+- The earlier checks still hold: the error codes, the refusal of made-to-order and unknown
+  presentations, the list filters, and 401 on every route.
+- The API is stopped and port 8100 is free. More QA data is left in the dev DB: the two fresh
+  presentations above, with their stock.
+
+**Result:** every acceptance criterion passes on the repaired code. Ready for the user to mark
+`done`.
