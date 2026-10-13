@@ -1,5 +1,5 @@
 ---
-status: verify
+status: implementing
 module: inventory
 min_implementer: mid
 depends_on: ["catalog-perfumes/003"]
@@ -365,6 +365,72 @@ All cosmetic or forced by the plan's own change; none touches the design.
 The dev and test databases were migrated to 0012; `alembic check` is clean and a test-database
 downgrade/upgrade round trip worked. Not exercised yet: the SQL repository, queries, the
 `SqlPresentationDirectory` and the routes against a running database (the tester's layers).
+
+### Repair round 1 (2026-10-13, main session: verify → implementing)
+
+**Why.** The review left three advisory Lows (L1–L3) and filed the finding
+`platform-recipe-facade-wiring-ignore-missing`. The user chose to fix all four before `done`
+(README decision 12). The verification of 2026-10-13 stays valid for everything this round
+does not touch. The movement and threshold paths are re-verified.
+
+**Repair spec.**
+
+1. **L1: one low-stock rule.**
+   - In `domain/stock.py`, add pure functions
+     `effective_threshold(override: int | None, global_threshold: int) -> int` and
+     `is_low(on_hand: int, override: int | None, global_threshold: int) -> bool`.
+   - `StockItem.effective_threshold` and `StockItem.is_low` delegate to them.
+   - `application/queries/stock.py` calls them at every place it recomputes the rule today
+     (`:32`, `:41`, `:80`, `:88`).
+2. **L2: the app clock on the placeholder row.**
+   - `StockRepository.get_for_update(presentation_id, *, now: datetime)`. The SQL adapter
+     inserts the placeholder with `updated_at=now` instead of `func.now()`
+     (`infrastructure/sql_stock_repository.py:40`).
+   - The commands pass `self._clock.now()`.
+   - The in-memory fake accepts the same signature.
+3. **L3: lock the catalog check inside the transaction.**
+   - **The facade.** `PresentationDirectory.find_for_update(presentation_id) ->
+     PresentationRef | None`. It runs `SELECT … FOR SHARE` on `catalog.presentations`,
+     joined as in `find`, through `Database.session`. That joins the caller's active
+     transaction, and it raises outside one, as every repository does. It goes in
+     `SqlPresentationDirectory` and the port, with an in-memory version.
+   - **The port.** Inventory's port gains `PresentationCatalog.describe_for_update(id)`,
+     implemented in `catalog_presentations.py`.
+   - **The commands.** `RecordMovement` and `SetThreshold` do the lookup *inside*
+     `transactions.run(...)`, before locking the stock row.
+     - Lock order: the catalog presentation (share), then the stock item.
+     - Catalog commands lock perfume and presentation rows and never touch stock rows, so the
+       two orders cannot form a cycle.
+     - A presentation switched to made to order concurrently now waits, or is seen as
+       switched.
+4. **Recipe.** `docs/recipes/new-module.md` §5 gains two things:
+   - the second `ignore_imports` line, for the consumer's `module.py` when it fetches the
+     facade from the registry;
+   - the rule that the providing module must come before the consumer in `MODULES`.
+
+   Set the finding `platform-recipe-facade-wiring-ignore-missing` to `resolved`, with `plan:
+   inventory-stock/001`.
+
+**Files** (all within this plan's Steps, except the recipe and the finding):
+- `modules/inventory/domain/stock.py`
+- `modules/inventory/domain/repositories.py`
+- `modules/inventory/application/ports.py`
+- `modules/inventory/application/commands/stock.py`
+- `modules/inventory/application/queries/stock.py`
+- `modules/inventory/infrastructure/sql_stock_repository.py`
+- `modules/inventory/infrastructure/catalog_presentations.py`
+- `modules/inventory/infrastructure/in_memory.py`
+- `modules/catalog/application/queries/presentation_directory.py`
+- `modules/catalog/application/ports.py`
+- `modules/catalog/infrastructure/sql_presentation_directory.py`
+- `modules/catalog/infrastructure/in_memory_perfumes.py`
+- `docs/recipes/new-module.md`, which is a deviation, recorded
+
+Then set the status to `testing`. The tester adds these regressions:
+- the queries and the domain agree on `is_low` at equality;
+- the placeholder `updated_at` comes from the clock;
+- the facade lookup is made inside the transaction, and an integration test shows a movement
+  waiting on a catalog transaction that holds the presentation row.
 
 ## Test coverage
 

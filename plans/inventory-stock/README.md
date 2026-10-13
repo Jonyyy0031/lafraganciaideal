@@ -74,6 +74,14 @@ changed.
     - it is not repeated until the stock goes back above the threshold.
 11. (2026-10-13) **A new `inventory:manage` permission** controls stock. Owner and staff both
     get it today, and it can be separated from `catalog:manage` later without code changes.
+12. (2026-10-13) **Plan 001 repair round.** The user chose to fix all three advisory Low
+    findings from the review, plus the recipe finding, before `done`:
+    - **One low-stock rule:** there is a single low-stock rule in the domain, and queries use
+      it.
+    - **App clock:** the app clock stamps the placeholder stock row.
+    - **Locked catalog check:** the catalog check happens inside the movement's transaction,
+      with the presentation row locked `FOR SHARE`.
+    - **Recipe:** the new-module recipe documents the full facade wiring.
 
 ## Delivered
 
