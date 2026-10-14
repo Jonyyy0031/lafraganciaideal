@@ -688,3 +688,56 @@ Reviewed `1c43a20..HEAD` (`3b64144`). All review findings are closed; status →
   checks the running app.
 
 ## Verification
+
+**2026-10-14, verifier (main session, inline).**
+
+**Setup.** Branch `feat/inventory-storefront-status` at `cb566f2`.
+- **Databases.** The dev DB is at `0013`, migrated by the implementer. The test database was
+  reset and re-migrated to `0013` after the review's mutant run.
+- **Suites.** The reviewer reports `uv run just check` green (2107 unit, 685 harness) and
+  `test-integration` at 564 passed, 5 skipped, on a clean test database.
+- **Running app.** `uv run just api` and `uv run just worker` ran with default settings. The
+  QA perfume "QA Confirma" (published) has 30, 50, 75 and 100 ml in stock and 200 ml made to
+  order. The script is in the scratchpad, `qa_inv/qa_status.py`.
+
+**Acceptance criteria.**
+- [x] **Backfill.** Without any new movement, the detail page showed the presentations
+  counted in plan 001 as `available`: 30, 50, 75 and 100 ml. The 200 ml made-to-order size
+  showed `null`.
+- [x] **Events in the outbox.** A loss of 17 on 30 ml (20 → 3) added one
+  `inventory.stock.changed` row. Its payload was `{'available': 3, 'threshold': 3, 'as_of':
+  …, 'presentation_id': …}`. After the worker's relay, the detail showed `30: last_units`.
+- [x] **Each status.**
+  - 30 ml at 0 shows `sold_out`.
+  - Made to order shows `null`.
+  - Never-counted in-stock sizes show `sold_out`: "QA Existente" 100 ml, through its card
+    below.
+- [x] **Thresholds.**
+  - An override of 15 on 100 ml (10 units) showed `last_units`.
+  - A global threshold of 12 re-published the events. After the relay, 75 ml (12) and 100 ml
+    (10) showed `last_units`.
+  - Back to 3, they showed `available` again.
+- [x] **The public list.**
+  - With 30 ml sold out and 75 ml available, `price_from_cents` was 99900 (the 75 ml).
+  - After a count of 0 on 75 ml, it was 189950, the 50 ml. The sold-out sizes at 99900 are
+    skipped.
+  - `min_price_cents=150000` keeps the perfume and `max_price_cents=120000` drops it, so the
+    price filters use the same price.
+- [x] **A perfume with nothing buyable.** "QA Existente" (100 ml, never counted) was published
+  for the check. Its card had `price_from_cents 210000` and `sold_out: true`, and it was still
+  listed. It was hidden again afterwards (204).
+- [x] **`in_stock=true`.** It hides "QA Existente" and keeps "QA Confirma".
+- [x] **The count is never in the public JSON:** there is no `stock_available` in the
+  detail.
+- [x] **Idempotent copy** (an older `as_of` is ignored) and the global-change race. These are
+  not reproducible by hand; they are covered on PostgreSQL by
+  `test_stock_status_flow.py` and `test_stock_settings_race.py`. The reviewer showed that the
+  race tests fail against the pre-repair code.
+
+**Copy lag:** every change showed on the storefront within the polling window of 0.5–10 s,
+after one relay cycle of about 2 s.
+
+**Leftover QA data (dev DB):** "QA Confirma" 30 ml and 75 ml now have 0 units. The global
+threshold is back to 3. The API and the worker are stopped, and port 8100 is free.
+
+**Result:** every acceptance criterion passes. Ready for the user to mark `done`.
