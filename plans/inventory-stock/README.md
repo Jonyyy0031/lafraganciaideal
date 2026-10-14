@@ -161,6 +161,12 @@ changed.
 
     L1 (a race test pinning the item lock order) and L2 (the comment on a refused reserve
     inside a caller's transaction) are fixed too.
+31. (2026-10-14) **Plan 003 repair round 2.**
+    - **The finding (M2):** the re-review found that an import confirm saving several
+      perfumes could still deadlock with a reservation.
+    - **The fix:** the confirm now locks the perfume rows by identity, then every existing
+      presentation in id order, before it writes.
+    - This follows the standing choice to fix review findings.
 
 ## Delivered
 

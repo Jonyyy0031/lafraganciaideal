@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: inventory
 min_implementer: high
 depends_on: ["001", "002"]
@@ -304,6 +304,9 @@ stock item, changed under the item's row lock.
    - Files: `apps/api/src/fragancia_api/modules/inventory/module.py` (modify),
      `apps/api/src/fragancia_api/modules/catalog/infrastructure/sql_perfume_repository.py` (modify, repair round 1),
      `apps/api/tests/unit/catalog/` (modify, repair round 1),
+     `apps/api/src/fragancia_api/modules/catalog/domain/repositories.py` (modify, repair round 2),
+     `apps/api/src/fragancia_api/modules/catalog/infrastructure/in_memory_perfumes.py` (modify, repair round 2),
+     `apps/api/src/fragancia_api/modules/catalog/application/commands/catalog_imports.py` (modify, repair round 2),
      `docs/architecture.md` (modify),
      `apps/api/tests/unit/inventory/` (modify), `apps/api/tests/integration/inventory/` (modify),
      `apps/api/tests/integration/catalog/` (modify)
@@ -464,6 +467,68 @@ deviation.
 
 **Scope.** The product code is `sql_perfume_repository.py` (`save` only) and comments in
 `reservations.py`. The implementer changes no tests.
+
+### Repair round 2 (2026-10-14, main session: review → implementing)
+
+**Why.** Re-review finding M2 (`plans/findings/catalog-import-confirm-presentation-lock-order.md`):
+- `ConfirmCatalogImport` saves every updated perfume in one transaction, in identity order
+  (`modules/catalog/application/commands/catalog_imports.py:419-430`). Each save upserts that
+  perfume's presentations in id order, but across perfumes the rows follow identity order, not
+  id order.
+- A reserve of two perfumes in that import can therefore deadlock with the confirm. The
+  reviewer reproduced it on PostgreSQL.
+- The comments added in round 1 promise more than the code gives
+  (`sql_perfume_repository.py:255-256`, `reservations.py:7-8`).
+
+Following the standing choice to fix review findings (README decision 31), the confirm now
+locks every existing presentation row it will write, in one global id order, before writing.
+
+**Repair spec.**
+1. **A port method to lock presentations in id order.**
+   - Files: `apps/api/src/fragancia_api/modules/catalog/domain/repositories.py`,
+     `apps/api/src/fragancia_api/modules/catalog/infrastructure/sql_perfume_repository.py`,
+     `apps/api/src/fragancia_api/modules/catalog/infrastructure/in_memory_perfumes.py`.
+   - `PerfumeRepository.lock_presentations(perfume_ids: Sequence[UUID]) -> None`. Its
+     docstring: "Lock every stored presentation of these perfumes until the transaction ends,
+     in ascending presentation id order (the order every writer of several presentation rows
+     and inventory's reservations use). Lock the perfume rows first."
+   - **SQL:** `select(presentations.c.id).where(presentations.c.perfume_id.in_(ids))
+     .order_by(presentations.c.id).with_for_update()`, executed. An empty list is a no-op.
+   - **In-memory:** a no-op.
+2. **The confirm takes the locks up front.**
+   - Files: `apps/api/src/fragancia_api/modules/catalog/application/commands/catalog_imports.py`.
+   - In `ConfirmCatalogImport.execute`, after the decision-21 check and before the apply loop:
+     1. for every planned perfume with `is_new` false, in `_identity_order`, call
+        `self._perfumes.get_for_update(perfume_id)` and discard the result. This locks the
+        perfume rows in the order two confirms already share.
+     2. call `self._perfumes.lock_presentations([...those ids])`.
+   - The apply loop is unchanged. Its own `get_for_update` and `save` touch only rows the
+     transaction already holds. New perfumes insert rows nobody else can see yet.
+   - Replace the loop's comment with the full order: the import row, the perfume rows by
+     identity, then every existing presentation by id. This keeps:
+     - an admin perfume save (perfume row, then its presentations by id);
+     - two confirms;
+     - a reserve (presentations by id, share)
+
+     free of wait cycles.
+3. **Comments.**
+   - Files: `apps/api/src/fragancia_api/modules/catalog/infrastructure/sql_perfume_repository.py`,
+     `apps/api/src/fragancia_api/modules/inventory/application/commands/reservations.py`.
+   - The `save` comment (`:255-256`) states the actual guarantee: "within one perfume, in id
+     order; a transaction that saves several perfumes takes `lock_presentations` first".
+   - The `reservations.py` header names both catalog writers: the single perfume save, and the
+     import confirm through `lock_presentations`.
+   - The finding gets `status: resolved`, `plan: inventory-stock/003`, and a resolution line.
+4. **Tests, for the tester.**
+   - A Postgres race: a reserve of two perfumes and an import confirm updating both, with
+     identity order opposite to presentation id order. Both finish. Against the round-1 code
+     the reviewer's scratch reproduction deadlocks.
+   - Unit: the confirm calls `lock_presentations` with the existing perfumes' ids after
+     locking them, and never for an import with only new perfumes.
+
+**Scope.** The product code is the three catalog files and the two comments. The implementer
+changes no tests, except call sites that a fake must satisfy (none expected: the new port
+method has a fake).
 
 ## Test coverage
 
