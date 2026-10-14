@@ -2,9 +2,14 @@
 
 from fragancia_api.modules.catalog import PresentationDirectory
 from fragancia_api.modules.inventory.application.commands.stock import (
+    RecordImportedCounts,
     RecordMovement,
     SetThreshold,
     UpdateInventorySettings,
+)
+from fragancia_api.modules.inventory.application.handlers.import_applied import (
+    IMPORT_APPLIED_EVENT,
+    ApplyImportedCounts,
 )
 from fragancia_api.modules.inventory.application.queries.stock import (
     GetInventorySettings,
@@ -44,6 +49,18 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
             events=platform.events,
             clock=platform.clock,
         ),
+    )
+    record_imported_counts = RecordImportedCounts(
+        stock=stock,
+        settings=settings,
+        catalog=catalog,
+        transactions=platform.transactions,
+        events=platform.events,
+        clock=platform.clock,
+    )
+    services.add(RecordImportedCounts, record_imported_counts)
+    platform.subscriptions.subscribe(
+        IMPORT_APPLIED_EVENT, ApplyImportedCounts(record_imported_counts)
     )
     services.add(
         SetThreshold,

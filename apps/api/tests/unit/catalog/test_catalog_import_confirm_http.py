@@ -33,7 +33,11 @@ from fragancia_api.shared.application.actor import Actor, ActorResolver
 from fragancia_api.shared.http import SESSION_COOKIE
 from fragancia_api.shared.http.health import HealthChecks
 from fragancia_api.shared.http.services import ServiceRegistry
-from fragancia_api.shared.infrastructure.in_memory import FixedClock, InMemoryTransactionRunner
+from fragancia_api.shared.infrastructure.in_memory import (
+    FixedClock,
+    InMemoryTransactionRunner,
+    RecordingEventPublisher,
+)
 from tests.support import ADMIN_HEADERS, TestActorResolver, assert_admin_routes_are_protected
 from tests.unit.catalog.perfume_support import World, add_presentation, make_perfume
 
@@ -82,6 +86,7 @@ async def rig() -> AsyncIterator[Rig]:
             storage=storage,
             transactions=transactions,
             clock=clock,
+            events=RecordingEventPublisher(),
         ),
     )
     services.add(

@@ -5,6 +5,13 @@ REFERENCE MODULE — new modules copy its shape by name (docs/recipes/new-module
 Public API for other modules:
 - `PresentationDirectory` (+ `PresentationRef`): look presentations up by id, or list the
   in-stock ones, with the names that identify them.
+
+Events (published through the outbox; other modules subscribe by name, never by import):
+
+- `catalog.import.applied`: once per applied import, in the confirm's transaction. Payload:
+  `import_id` (UUID string), `actor_id` (the confirming user) and `stock_counts` (an object
+  from presentation id string to its physical count; empty when the file had no counts).
+
 The composition root wires `module.module`.
 """
 

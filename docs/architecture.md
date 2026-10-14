@@ -165,6 +165,13 @@ POST /api/v1/admin/brands
   event only when its `as_of` is newer, so replays and reordering are harmless. The public
   reads compute the stock status from those columns, so they can filter and sort on it without
   reading across schemas.
+- **Initial stock from the Excel import** (an event feeding count movements): confirming a
+  catalog import publishes `catalog.import.applied` (`import_id`, `actor_id`, `stock_counts`:
+  presentation id → count) in the confirm's transaction. `inventory` subscribes by name and
+  records one `count` movement per entry. It is an event because a direct call would make
+  `catalog` and `inventory` depend on each other (inventory already depends on the catalog
+  facade). The counts therefore lag the confirm by one relay cycle (about 2 s); delivery cannot
+  be lost, and it commits with the handler's writes, so a committed delivery is not repeated.
 - Example flow _(to be built)_: Mercado Pago webhook → `payments` verifies signature and stores the
   notification idempotently → `payments.payment.approved` → `orders` moves the order to
   `paid` → `orders.order.paid` → `inventory` commits stock, `notifications` emails the customer.

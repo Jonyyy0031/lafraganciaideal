@@ -59,7 +59,7 @@ from fragancia_api.modules.catalog.infrastructure.tables import (
     presentations,
 )
 from fragancia_api.shared.infrastructure.database import Database, SqlTransactionRunner
-from fragancia_api.shared.infrastructure.in_memory import FixedClock
+from fragancia_api.shared.infrastructure.in_memory import FixedClock, RecordingEventPublisher
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result, new_id
 from tests.integration.catalog.conftest import Bucket
 from tests.integration.catalog.import_fixtures import (
@@ -262,6 +262,7 @@ def _confirm_with(
         storage=InMemoryMediaStorage(),  # no replaced photo here: nothing to delete
         transactions=runner,
         clock=FixedClock(datetime.now(UTC)),
+        events=RecordingEventPublisher(),
     )
 
 
@@ -968,7 +969,7 @@ async def test_the_expiry_job_skips_an_import_a_confirm_is_holding(
         assert locked is not None
         holding.set()
         await release.wait()
-        locked.apply(datetime.now(UTC), ACTOR)
+        locked.apply(datetime.now(UTC), ACTOR, {})
         await repository.save(locked)
         return Ok(None)
 

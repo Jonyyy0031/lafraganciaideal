@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: inventory
 min_implementer: mid
 depends_on: ["001", "catalog-perfumes/008"]
@@ -327,6 +327,8 @@ load its counts in bulk before going live. This plan applies README decisions 1,
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+None to the design. Cosmetic: existing tests that pin the old shapes were updated minimally to keep the suites green (`apply(..., {})` calls, the 22 headers, `stock_counts: 0` in two summary assertions in unit and integration tests, `events=RecordingEventPublisher()` as the plan listed). Step 3 needed no change to `xlsx_sheets.py` (confirmed by reading `_build`).
 
 ## Test coverage
 

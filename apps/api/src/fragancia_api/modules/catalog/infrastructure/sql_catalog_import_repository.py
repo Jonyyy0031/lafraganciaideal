@@ -47,6 +47,7 @@ def summary_to_json(summary: ImportSummary) -> Json:
         "presentations_new": summary.presentations_new,
         "presentations_updated": summary.presentations_updated,
         "photos_new": summary.photos_new,
+        "stock_counts": summary.stock_counts,
     }
 
 
@@ -57,6 +58,7 @@ def summary_from_json(data: Json) -> ImportSummary:
         presentations_new=data["presentations_new"],
         presentations_updated=data["presentations_updated"],
         photos_new=data["photos_new"],
+        stock_counts=data.get("stock_counts", 0),  # absent in imports stored before plan 005
     )
 
 
@@ -82,6 +84,7 @@ def _presentation_to_json(presentation: PlannedPresentation) -> Json:
         "lead_time_min_days": presentation.lead_time_min_days,
         "lead_time_max_days": presentation.lead_time_max_days,
         "row": presentation.row,
+        "stock_count": presentation.stock_count,
     }
 
 
@@ -97,6 +100,7 @@ def _presentation_from_json(data: Json) -> PlannedPresentation:
         lead_time_min_days=data["lead_time_min_days"],
         lead_time_max_days=data["lead_time_max_days"],
         row=data["row"],
+        stock_count=data.get("stock_count"),  # absent in imports stored before plan 005
     )
 
 

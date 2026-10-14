@@ -8,5 +8,8 @@ Events (published through the outbox; other modules subscribe by name, never by 
   `available` (int; on hand for now), `threshold` (int; the effective one) and `as_of` (ISO
   datetime of the change; consumers keep the newest).
 
+Inventory subscribes to `catalog.import.applied` (by name) and records one `count` movement per
+entry of its `stock_counts`, about one relay cycle after the import is confirmed.
+
 Public API for other modules: nothing yet. The composition root wires `module.module`.
 """

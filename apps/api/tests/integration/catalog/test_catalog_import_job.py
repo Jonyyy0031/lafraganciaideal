@@ -127,6 +127,7 @@ async def test_a_valid_file_becomes_ready_stages_the_webp_photos_and_expires_cle
         "presentations_new": 2,
         "presentations_updated": 0,
         "photos_new": 1,
+        "stock_counts": 0,
     }
     assert report.expires_at - report.finished_at == timedelta(minutes=60)
     new_keys = sorted(set(bucket.keys("perfumes/")) - before)

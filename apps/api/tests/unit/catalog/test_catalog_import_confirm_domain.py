@@ -71,7 +71,7 @@ def _not_ready_imports() -> list[CatalogImport]:
     expired = _ready()
     expired.expire()
     applied = _ready()
-    applied.apply(T0, "admin-1")
+    applied.apply(T0, "admin-1", {})
     discarded = _ready()
     discarded.discard(T0)
     return [pending, validating, _invalid(), failed, expired, applied, discarded]
@@ -83,7 +83,7 @@ def _not_ready_imports() -> list[CatalogImport]:
 def test_apply_marks_a_ready_import_applied_with_who_and_when_and_drops_the_plan() -> None:
     item = _ready()
 
-    item.apply(T0 + timedelta(minutes=5), "admin-7")
+    item.apply(T0 + timedelta(minutes=5), "admin-7", {})
 
     assert item.status is ImportStatus.APPLIED
     assert (item.applied_at, item.applied_by) == (T0 + timedelta(minutes=5), "admin-7")
@@ -94,7 +94,7 @@ def test_apply_marks_a_ready_import_applied_with_who_and_when_and_drops_the_plan
 @pytest.mark.parametrize("item", _not_ready_imports(), ids=lambda i: i.status.value)
 def test_apply_raises_from_any_status_but_ready(item: CatalogImport) -> None:
     with pytest.raises(ValueError):
-        item.apply(T0, "admin-1")
+        item.apply(T0, "admin-1", {})
 
 
 # --- CatalogImport.discard --------------------------------------------------------------------

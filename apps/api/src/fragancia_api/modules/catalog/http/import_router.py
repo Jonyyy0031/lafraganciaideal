@@ -25,7 +25,11 @@ from fragancia_api.shared.http import (
     require_permission,
     unwrap,
 )
+from fragancia_api.shared.http.errors import Forbidden
 from fragancia_api.shared.kernel import Err
+
+# The identity permission name (modules may not import each other), like `CATALOG_MANAGE`.
+INVENTORY_MANAGE = "inventory:manage"
 
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -111,7 +115,11 @@ async def get_catalog_import(
 
 @admin_imports.post(
     "/{import_id}/confirm",
-    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    responses={
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
 )
 async def confirm_catalog_import(
     import_id: UUID,
@@ -120,11 +128,18 @@ async def confirm_catalog_import(
     query: Annotated[GetCatalogImport, Depends(provide(GetCatalogImport))],
 ) -> CatalogImportResponse:
     """Apply a ready import, all or nothing, in one transaction; answers the import, now
-    `applied`. 404 `CATALOG_IMPORT_NOT_FOUND`; 409 `CATALOG_IMPORT_NOT_READY` (not ready, or
-    past `expires_at`) or `CATALOG_IMPORT_STALE` when the catalog changed since the validation:
-    nothing is written, the import stays `ready` and `details.issues` lists each affected row
-    (`row`, `column`, `code`, `message`); upload the file again."""
+    `applied`. 403 `FORBIDDEN` when the file has Existencias and the actor lacks
+    `inventory:manage`; 404 `CATALOG_IMPORT_NOT_FOUND`; 409 `CATALOG_IMPORT_NOT_READY` (not
+    ready, or past `expires_at`) or `CATALOG_IMPORT_STALE` when the catalog changed since the
+    validation: nothing is written, the import stays `ready` and `details.issues` lists each
+    affected row (`row`, `column`, `code`, `message`); upload the file again."""
     actor_id: str = request.state.actor.id
+    if INVENTORY_MANAGE not in request.state.actor.permissions:
+        # Decision 21: counts need `inventory:manage`. The plan of a ready import never
+        # changes, so this check cannot race the confirm.
+        current = unwrap(await query.execute(import_id))  # an unknown id still answers 404
+        if current.summary is not None and current.summary.stock_counts > 0:
+            raise Forbidden
     unwrap(await use_case.execute(import_id, actor_id))
     return unwrap(await query.execute(import_id))
 

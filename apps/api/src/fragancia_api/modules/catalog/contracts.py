@@ -349,13 +349,15 @@ class CatalogImportIssue(BaseModel):
 
 
 class CatalogImportSummary(BaseModel):
-    """What confirming a ready import would do."""
+    """What confirming a ready import would do. `stock_counts` presentations will get a physical
+    count (the default 0 keeps summaries stored before plan 005 valid)."""
 
     perfumes_new: int
     perfumes_updated: int
     presentations_new: int
     presentations_updated: int
     photos_new: int
+    stock_counts: int = 0
 
 
 class CatalogImportResponse(BaseModel):

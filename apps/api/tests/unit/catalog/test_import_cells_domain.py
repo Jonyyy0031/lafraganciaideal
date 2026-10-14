@@ -15,7 +15,7 @@ INVALID = "CATALOG_IMPORT_VALUE_INVALID"
 # --- the header contract ----------------------------------------------------------------------
 
 
-def test_the_template_has_the_21_spanish_headers_in_order() -> None:
+def test_the_template_has_the_22_spanish_headers_in_order() -> None:
     assert cells.COLUMNS == (
         "Marca",
         "Nombre",
@@ -30,6 +30,7 @@ def test_the_template_has_the_21_spanish_headers_in_order() -> None:
         "Disponibilidad",
         "Entrega mín. (días)",
         "Entrega máx. (días)",
+        "Existencias",
         "Publicado",
         "Notas de salida",
         "Notas de corazón",
@@ -39,7 +40,7 @@ def test_the_template_has_the_21_spanish_headers_in_order() -> None:
         "Imagen 2",
         "Imagen 3",
     )
-    assert len(cells.COLUMNS) == 21
+    assert len(cells.COLUMNS) == 22
 
 
 def test_the_required_columns_are_the_eight_of_the_plan_and_all_are_template_columns() -> None:

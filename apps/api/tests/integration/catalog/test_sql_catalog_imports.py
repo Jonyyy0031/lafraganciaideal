@@ -567,6 +567,7 @@ async def test_the_query_maps_a_ready_import_to_the_response(store: Store) -> No
         "presentations_new": 3,
         "presentations_updated": 4,
         "photos_new": 5,
+        "stock_counts": 0,
     }
     assert (response.error_count, response.errors) == (0, [])
 

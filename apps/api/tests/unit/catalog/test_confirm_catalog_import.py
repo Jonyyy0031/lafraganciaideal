@@ -34,7 +34,11 @@ from fragancia_api.modules.catalog.domain.catalog_import import (
 from fragancia_api.modules.catalog.domain.perfume import Gender, Perfume, photo_keys
 from fragancia_api.modules.catalog.infrastructure.in_memory_imports import InMemoryCatalogImports
 from fragancia_api.modules.catalog.infrastructure.in_memory_media import InMemoryMediaStorage
-from fragancia_api.shared.infrastructure.in_memory import FixedClock, InMemoryTransactionRunner
+from fragancia_api.shared.infrastructure.in_memory import (
+    FixedClock,
+    InMemoryTransactionRunner,
+    RecordingEventPublisher,
+)
 from fragancia_api.shared.kernel import Err, Ok, Result
 from tests.unit.catalog.perfume_support import (
     World,
@@ -122,6 +126,7 @@ def _rig(*, fail_deletes: bool = False, world: World | None = None) -> Rig:
         storage=storage,
         transactions=transactions,
         clock=clock,
+        events=RecordingEventPublisher(),
     )
     discard = DiscardCatalogImport(
         imports=imports, storage=storage, transactions=transactions, clock=clock
