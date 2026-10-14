@@ -4,6 +4,7 @@ import unicodedata
 from collections.abc import Sequence
 from copy import deepcopy
 from datetime import UTC, datetime
+from typing import NamedTuple
 from uuid import UUID
 
 from fragancia_api.modules.catalog.application.ports import PublicPerfumeFilters
@@ -32,13 +33,28 @@ from fragancia_api.modules.catalog.domain.errors import (
     PerfumeAlreadyExists,
     PresentationAlreadyExists,
 )
-from fragancia_api.modules.catalog.domain.perfume import Perfume, Presentation
+from fragancia_api.modules.catalog.domain.perfume import (
+    Perfume,
+    Presentation,
+    is_buyable,
+    stock_status,
+)
 from fragancia_api.modules.catalog.infrastructure.in_memory import (
     InMemoryBrands,
     InMemoryConcentrations,
     InMemoryOlfactoryFamilies,
 )
 from fragancia_api.shared.kernel import Err, Ok, Result
+
+
+class _StockFigures(NamedTuple):
+    available: int
+    threshold: int
+    as_of: datetime | None
+
+
+# A presentation never counted: 0 available (sold out) and the default threshold.
+_UNCOUNTED = _StockFigures(0, 3, None)
 
 
 class InMemoryPerfumes:
@@ -63,6 +79,7 @@ class InMemoryPerfumes:
         self.by_id: dict[UUID, Perfume] = {perfume.id: deepcopy(perfume) for perfume in perfumes}
         # Retired slug -> the perfume that dropped it last.
         self.slug_history: dict[str, UUID] = {}
+        self.stock: dict[UUID, _StockFigures] = {}
 
     async def exists_with_identity(
         self,
@@ -211,15 +228,31 @@ class InMemoryPerfumes:
             and self._brands.by_id[perfume.brand_id].is_active
         )
 
+    # StockCopy
+
+    async def apply(
+        self, presentation_id: UUID, available: int, threshold: int, as_of: datetime
+    ) -> None:
+        known = any(x.id == presentation_id for p in self.by_id.values() for x in p.presentations)
+        current = self.stock.get(presentation_id, _UNCOUNTED)
+        if known and (current.as_of is None or current.as_of < as_of):
+            self.stock[presentation_id] = _StockFigures(available, threshold, as_of)
+
+    def _figures(self, presentation: Presentation) -> _StockFigures:
+        return self.stock.get(presentation.id, _UNCOUNTED)
+
     async def list_public(
         self, filters: PublicPerfumeFilters, *, now: datetime
     ) -> PublicPerfumePage:
-        cards: list[tuple[Perfume, int, bool]] = []
+        cards: list[tuple[Perfume, int, bool, bool]] = []
         for p in self.by_id.values():
             active = [x for x in p.presentations if x.is_active]
             if not self._visible(p) or not active:
                 continue
-            price_from = min(x.effective_price(now).cents for x in active)
+            buyable = [x for x in active if is_buyable(x.availability, self._figures(x).available)]
+            price_from = min(x.effective_price(now).cents for x in (buyable or active))
+            if filters.in_stock and not buyable:
+                continue
             on_sale = any(x.sale is not None and x.sale.is_active(now) for x in active)
             brand = self._brands.by_id[p.brand_id]
             family = self._families.by_id[p.family_id]
@@ -239,9 +272,9 @@ class InMemoryPerfumes:
                 )
                 if _fold(filters.q) not in _fold(haystack):
                     continue
-            cards.append((p, price_from, on_sale))
+            cards.append((p, price_from, on_sale, not buyable))
 
-        def by_name(entry: tuple[Perfume, int, bool]) -> tuple[str, str, UUID]:
+        def by_name(entry: tuple[Perfume, int, bool, bool]) -> tuple[str, str, UUID]:
             p = entry[0]
             return (self._brands.by_id[p.brand_id].name.value.lower(), p.name.value.lower(), p.id)
 
@@ -267,9 +300,10 @@ class InMemoryPerfumes:
                 family=self._public_family(p),
                 price_from_cents=price_from,
                 on_sale=on_sale,
+                sold_out=sold_out,
                 photo_url=self._photo_url(p),
             )
-            for p, price_from, on_sale in chunk
+            for p, price_from, on_sale, sold_out in chunk
         ]
         return PublicPerfumePage(
             items=items, total=len(cards), page=filters.page, size=filters.size
@@ -296,7 +330,7 @@ class InMemoryPerfumes:
             heart_notes=list(perfume.notes.heart),
             base_notes=list(perfume.notes.base),
             presentations=[
-                _public_presentation(p, now)
+                _public_presentation(p, now, self._figures(p))
                 for p in sorted(perfume.presentations, key=lambda p: p.ml.value)
                 if p.is_active
             ],
@@ -376,7 +410,9 @@ def _fold(text: str) -> str:
     return "".join(char for char in decomposed if not unicodedata.combining(char))
 
 
-def _public_presentation(presentation: Presentation, now: datetime) -> PublicPresentation:
+def _public_presentation(
+    presentation: Presentation, now: datetime, figures: _StockFigures
+) -> PublicPresentation:
     sale = presentation.sale
     on_sale = sale is not None and sale.is_active(now)
     return PublicPresentation(
@@ -388,6 +424,7 @@ def _public_presentation(presentation: Presentation, now: datetime) -> PublicPre
         price_cents=presentation.effective_price(now).cents,
         regular_price_cents=presentation.price.amount.cents if on_sale else None,
         sale_ends_at=sale.ends_at if sale is not None and on_sale else None,
+        stock_status=stock_status(presentation.availability, figures.available, figures.threshold),
     )
 
 

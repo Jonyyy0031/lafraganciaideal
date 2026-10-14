@@ -30,6 +30,7 @@ from fragancia_api.modules.inventory.infrastructure.sql_stock_repository import 
 )
 from fragancia_api.shared.infrastructure.database import SqlTransactionRunner
 from fragancia_api.shared.infrastructure.in_memory import FixedClock
+from fragancia_api.shared.infrastructure.outbox import OutboxEventPublisher
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result, new_id
 from tests.integration.catalog.presentation_rows import CatalogRows
 
@@ -52,10 +53,16 @@ def commands(container: Container) -> tuple[RecordMovement, SetThreshold]:
         settings=SqlSettingsRepository(database),
         catalog=catalog,
         transactions=transactions,
+        events=OutboxEventPublisher(database),
         clock=clock,
     )
     return record, SetThreshold(
-        stock=stock, catalog=catalog, transactions=transactions, clock=clock
+        stock=stock,
+        settings=SqlSettingsRepository(database),
+        catalog=catalog,
+        transactions=transactions,
+        events=OutboxEventPublisher(database),
+        clock=clock,
     )
 
 

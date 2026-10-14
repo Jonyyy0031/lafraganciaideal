@@ -25,6 +25,7 @@ from fragancia_api.modules.inventory.infrastructure.sql_stock_repository import 
     SqlStockRepository,
 )
 from fragancia_api.shared.infrastructure.database import SqlTransactionRunner
+from fragancia_api.shared.infrastructure.outbox import OutboxEventPublisher
 from fragancia_api.shared.kernel import Ok
 from tests.integration.catalog.presentation_rows import CatalogRows
 
@@ -75,6 +76,7 @@ async def test_ledger_order_by_created_at_follows_the_order_movements_were_appli
         settings=SqlSettingsRepository(database),
         catalog=CatalogPresentations(PresentationDirectory(SqlPresentationDirectory(database))),
         transactions=SqlTransactionRunner(database),
+        events=OutboxEventPublisher(database),
         clock=AdvancingClock(),
     )
 

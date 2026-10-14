@@ -41,6 +41,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
             settings=settings,
             catalog=catalog,
             transactions=platform.transactions,
+            events=platform.events,
             clock=platform.clock,
         ),
     )
@@ -48,14 +49,22 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         SetThreshold,
         SetThreshold(
             stock=stock,
+            settings=settings,
             catalog=catalog,
             transactions=platform.transactions,
+            events=platform.events,
             clock=platform.clock,
         ),
     )
     services.add(
         UpdateInventorySettings,
-        UpdateInventorySettings(settings=settings, transactions=platform.transactions),
+        UpdateInventorySettings(
+            settings=settings,
+            stock=stock,
+            transactions=platform.transactions,
+            events=platform.events,
+            clock=platform.clock,
+        ),
     )
     services.add(GetStock, GetStock(catalog, queries))
     services.add(ListMovements, ListMovements(catalog, queries))

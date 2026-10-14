@@ -257,6 +257,26 @@ class Availability:
         return Ok(cls(kind, min_days, max_days))
 
 
+type StockStatus = Literal["available", "last_units", "sold_out"]
+
+
+def stock_status(availability: Availability, available: int, threshold: int) -> StockStatus | None:
+    """What the storefront shows of a presentation's stock; None when it is made to order.
+    Same comparison as the inventory rule for "low" (`<=`)."""
+    if availability.kind == "made_to_order":
+        return None
+    if available <= 0:
+        return "sold_out"
+    if available <= threshold:
+        return "last_units"
+    return "available"
+
+
+def is_buyable(availability: Availability, available: int) -> bool:
+    """Made to order, or in stock with at least one unit."""
+    return availability.kind == "made_to_order" or available > 0
+
+
 def _availability_invalid() -> PresentationAvailabilityInvalid:
     return PresentationAvailabilityInvalid(
         details={"min_days": LEAD_TIME_MIN_DAYS, "max_days": LEAD_TIME_MAX_DAYS}

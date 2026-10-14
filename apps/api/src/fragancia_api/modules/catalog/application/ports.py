@@ -74,6 +74,7 @@ class PublicPerfumeFilters:
     sort: PublicPerfumeSort
     page: int
     size: int
+    in_stock: bool = False
 
 
 class BrandQueries(Protocol):
@@ -130,6 +131,18 @@ class PresentationDirectoryQueries(Protocol):
         ...
 
 
+class StockCopy(Protocol):
+    """Write side of the stock figures copied onto presentations from `inventory.stock.changed`.
+    Joins the active transaction."""
+
+    async def apply(
+        self, presentation_id: UUID, available: int, threshold: int, as_of: datetime
+    ) -> None:
+        """Store the figures unless the copy already holds a newer or equal `as_of`; an unknown
+        presentation is a no-op."""
+        ...
+
+
 class PerfumeQueries(Protocol):
     """Read side: returns response models directly, no aggregates involved."""
 
@@ -148,7 +161,9 @@ class PerfumeQueries(Protocol):
         """Visible perfumes (published, not archived, brand active; the family and the
         concentration do not matter) with at least one active presentation, one page at a time.
         Ordering: `name` is brand name, then perfume name (both case-insensitive), then id;
-        `price_asc`/`price_desc` is `price_from` then name; `newest` is `first_published_at`
+        `price_asc`/`price_desc` is `price_from` then name (`price_from` is the lowest price
+        among the buyable presentations, or among all when none is buyable; `in_stock` hides
+        perfumes with nothing buyable); `newest` is `first_published_at`
         descending, then id."""
         ...
 

@@ -18,6 +18,7 @@ from fragancia_api.modules.inventory.domain.stock import (
     Threshold,
 )
 from fragancia_api.shared.application.clock import Clock
+from fragancia_api.shared.application.events import EventPublisher
 from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 
@@ -44,12 +45,14 @@ class RecordMovement:
         settings: SettingsRepository,
         catalog: PresentationCatalog,
         transactions: TransactionRunner,
+        events: EventPublisher,
         clock: Clock,
     ) -> None:
         self._stock = stock
         self._settings = settings
         self._catalog = catalog
         self._transactions = transactions
+        self._events = events
         self._clock = clock
 
     async def execute(
@@ -62,10 +65,13 @@ class RecordMovement:
                 pass
 
         async def work() -> Result[MovementCreated, DomainError]:
-            # Lock order: the catalog presentation (share), then the stock item.
+            # Lock order (a settings change takes the settings row, then every stock item
+            # by presentation_id, so no wait cycle forms): the catalog presentation (share),
+            # the settings row (share), then the stock item.
             refusal = await _require_stocked(self._catalog, presentation_id)
             if refusal is not None:
                 return Err(refusal)
+            global_threshold = (await self._settings.get_for_share()).low_stock_threshold
             item = await self._stock.get_for_update(presentation_id, now=self._clock.now())
             # Taken under the stock lock, so ledger order matches the order movements applied.
             now = self._clock.now()
@@ -78,6 +84,7 @@ class RecordMovement:
                 case Ok(movement):
                     pass
             await self._stock.save(item)
+            await self._events.publish([item.changed_event(global_threshold, now)])
             return Ok(MovementCreated(id=movement.id, on_hand=item.on_hand))
 
         return await self._transactions.run(work)
@@ -90,13 +97,17 @@ class SetThreshold:
         self,
         *,
         stock: StockRepository,
+        settings: SettingsRepository,
         catalog: PresentationCatalog,
         transactions: TransactionRunner,
+        events: EventPublisher,
         clock: Clock,
     ) -> None:
         self._stock = stock
+        self._settings = settings
         self._catalog = catalog
         self._transactions = transactions
+        self._events = events
         self._clock = clock
 
     async def execute(
@@ -111,9 +122,12 @@ class SetThreshold:
                     override = valid
 
         async def work() -> Result[None, DomainError]:
+            # Same lock order as `RecordMovement`: presentation (share), settings (share),
+            # then the stock item.
             refusal = await _require_stocked(self._catalog, presentation_id)
             if refusal is not None:
                 return Err(refusal)
+            global_threshold = (await self._settings.get_for_share()).low_stock_threshold
             item = await self._stock.get_for_update(presentation_id, now=self._clock.now())
             # Taken under the stock lock, so updated_at follows the order changes applied.
             now = self._clock.now()
@@ -121,6 +135,7 @@ class SetThreshold:
                 item = StockItem.empty(presentation_id, now)
             item.set_threshold(override)
             await self._stock.save(item)
+            await self._events.publish([item.changed_event(global_threshold, now)])
             return Ok(None)
 
         return await self._transactions.run(work)
@@ -129,9 +144,20 @@ class SetThreshold:
 class UpdateInventorySettings:
     """Command: set the global low-stock threshold."""
 
-    def __init__(self, *, settings: SettingsRepository, transactions: TransactionRunner) -> None:
+    def __init__(
+        self,
+        *,
+        settings: SettingsRepository,
+        stock: StockRepository,
+        transactions: TransactionRunner,
+        events: EventPublisher,
+        clock: Clock,
+    ) -> None:
         self._settings = settings
+        self._stock = stock
         self._transactions = transactions
+        self._events = events
+        self._clock = clock
 
     async def execute(self, low_stock_threshold: int) -> Result[None, DomainError]:
         match Threshold.create(low_stock_threshold):
@@ -141,7 +167,16 @@ class UpdateInventorySettings:
                 pass
 
         async def work() -> Result[None, DomainError]:
+            # Lock order: the settings row (update), then every stock item by
+            # presentation_id. It waits for movements holding the settings share lock, and
+            # they wait for it, so no cycle forms and every committed count is seen.
+            await self._settings.get_for_update()
             await self._settings.save(InventorySettings(low_stock_threshold=threshold))
+            items = await self._stock.list_all_for_update()
+            # Taken under the locks, so no later-stamped event can carry an older count.
+            now = self._clock.now()
+            # The effective threshold of every item without an override changed.
+            await self._events.publish([item.changed_event(threshold, now) for item in items])
             return Ok(None)
 
         return await self._transactions.run(work)

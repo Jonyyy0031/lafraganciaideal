@@ -82,6 +82,29 @@ changed.
     - **Locked catalog check:** the catalog check happens inside the movement's transaction,
       with the presentation row locked `FOR SHARE`.
     - **Recipe:** the new-module recipe documents the full facade wiring.
+13. (2026-10-14) **A perfume whose presentations are all sold out stays in the public list**,
+    marked "Agotado". This applies when it has nothing made to order.
+14. (2026-10-14) **The "from" price and the price filters and sort count only what can be
+    bought:**
+    - presentations with available units, or made to order;
+    - when a perfume has nothing buyable, its lowest price overall.
+15. (2026-10-14) **The storefront learns the stock through an event plus a copy in the
+    catalog:**
+    - every stock change publishes `inventory.stock.changed` through the outbox;
+    - the catalog keeps a copy on each presentation (available units and effective
+      threshold), so filters and sorting stay in SQL;
+    - the copy lags the panel by the outbox relay, about 2 s.
+16. (2026-10-14) **The public list gains an optional "Solo disponibles" filter**
+    (`in_stock=true`), which hides perfumes with nothing to buy.
+17. (2026-10-14) **Plan 002 repair round.** The review found M1: a global threshold change
+    racing a movement could leave the storefront copy stale. Following the standing choice to
+    fix review findings, the settings change and the movements now serialize:
+    - the settings row is locked `FOR UPDATE` by a settings change and `FOR SHARE` by
+      movements and threshold changes;
+    - stock items are locked in `presentation_id` order before their events are stamped.
+
+    L3, the parallel-run guard on the migration test, is also added. L1 (wall-clock ordering)
+    and L2 (the default 3 copied into the catalog) are accepted as is.
 
 ## Delivered
 

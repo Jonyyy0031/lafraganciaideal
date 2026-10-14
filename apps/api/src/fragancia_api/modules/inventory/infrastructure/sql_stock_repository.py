@@ -56,6 +56,23 @@ class SqlStockRepository:
             updated_at=row["updated_at"],
         )
 
+    async def list_all_for_update(self) -> list[StockItem]:
+        statement = select(stock_items).order_by(stock_items.c.presentation_id).with_for_update()
+        rows = (await self._database.session.execute(statement)).mappings().all()
+        return [
+            StockItem(
+                presentation_id=row["presentation_id"],
+                on_hand=row["on_hand"],
+                threshold_override=(
+                    Threshold(row["threshold_override"])
+                    if row["threshold_override"] is not None
+                    else None
+                ),
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+
     async def save(self, item: StockItem) -> None:
         session = self._database.session
         values = {

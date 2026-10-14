@@ -157,6 +157,14 @@ POST /api/v1/admin/brands
   its own transaction to the subscribers registered for its name, and marks it published; a
   failure records `attempts`/`last_error` and backs off exponentially (max 5 minutes).
   Delivery is at-least-once; subscribers are idempotent.
+- **Stock on the storefront** (an event feeding a copy): `inventory` publishes
+  `inventory.stock.changed` (`presentation_id`, `available`, effective `threshold`, `as_of`) on
+  every movement, every threshold change and, for every stock item, every change of the global
+  threshold. The catalog subscribes by name and keeps the figures in three columns of
+  `catalog.presentations` (`stock_available`, `stock_threshold`, `stock_as_of`), applying an
+  event only when its `as_of` is newer, so replays and reordering are harmless. The public
+  reads compute the stock status from those columns, so they can filter and sort on it without
+  reading across schemas.
 - Example flow _(to be built)_: Mercado Pago webhook → `payments` verifies signature and stores the
   notification idempotently → `payments.payment.approved` → `orders` moves the order to
   `paid` → `orders.order.paid` → `inventory` commits stock, `notifications` emails the customer.

@@ -13,7 +13,11 @@ from fragancia_api.modules.inventory.infrastructure.in_memory import (
     InMemorySettings,
     InMemoryStock,
 )
-from fragancia_api.shared.infrastructure.in_memory import FixedClock, InMemoryTransactionRunner
+from fragancia_api.shared.infrastructure.in_memory import (
+    FixedClock,
+    InMemoryTransactionRunner,
+    RecordingEventPublisher,
+)
 
 STOCKED = UUID(int=101)
 STOCKED_2 = UUID(int=102)
@@ -51,14 +55,27 @@ class Inventory:
         self.clock = FixedClock()
         settings = InMemorySettings(self.store)
         transactions = InMemoryTransactionRunner()
+        self.events = RecordingEventPublisher()
         self.record = RecordMovement(
             stock=self.store,
             settings=settings,
             catalog=self.catalog,
             transactions=transactions,
+            events=self.events,
             clock=self.clock,
         )
         self.set_threshold = SetThreshold(
-            stock=self.store, catalog=self.catalog, transactions=transactions, clock=self.clock
+            stock=self.store,
+            settings=settings,
+            catalog=self.catalog,
+            transactions=transactions,
+            events=self.events,
+            clock=self.clock,
         )
-        self.update_settings = UpdateInventorySettings(settings=settings, transactions=transactions)
+        self.update_settings = UpdateInventorySettings(
+            settings=settings,
+            stock=self.store,
+            transactions=transactions,
+            events=self.events,
+            clock=self.clock,
+        )

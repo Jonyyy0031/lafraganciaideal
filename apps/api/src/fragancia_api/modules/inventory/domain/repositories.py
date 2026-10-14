@@ -15,6 +15,11 @@ class StockRepository(Protocol):
         presentation was never counted. Callers verify the presentation exists before calling."""
         ...
 
+    async def list_all_for_update(self) -> list[StockItem]:
+        """Every stock item with its row locked until the transaction ends, ordered by
+        `presentation_id` (the lock order of a global settings change)."""
+        ...
+
     async def save(self, item: StockItem) -> None:
         """Upsert the item and insert its `new_movements` (then forget them)."""
         ...
@@ -23,6 +28,18 @@ class StockRepository(Protocol):
 class SettingsRepository(Protocol):
     async def get(self) -> InventorySettings:
         """The global settings (the default when nothing is stored)."""
+        ...
+
+    async def get_for_update(self) -> InventorySettings:
+        """The global settings with their row locked `FOR UPDATE` until the transaction ends (a
+        settings change). The SQL adapter first inserts the default row when none is stored, so
+        there is always a row to lock."""
+        ...
+
+    async def get_for_share(self) -> InventorySettings:
+        """The global settings with their row locked `FOR SHARE` until the transaction ends (a
+        movement or threshold change: they wait for a settings change in progress, and a
+        settings change waits for them)."""
         ...
 
     async def save(self, settings: InventorySettings) -> None: ...

@@ -56,6 +56,10 @@ from fragancia_api.modules.catalog.application.commands.rename_olfactory_family 
 from fragancia_api.modules.catalog.application.commands.update_concentration import (
     UpdateConcentration,
 )
+from fragancia_api.modules.catalog.application.handlers.stock_changed import (
+    STOCK_CHANGED_EVENT,
+    ApplyStockChanged,
+)
 from fragancia_api.modules.catalog.application.import_validation import ImportValidator
 from fragancia_api.modules.catalog.application.queries.catalog_imports import (
     DownloadCatalogTemplate,
@@ -122,6 +126,7 @@ from fragancia_api.modules.catalog.infrastructure.sql_perfume_repository import 
 from fragancia_api.modules.catalog.infrastructure.sql_presentation_directory import (
     SqlPresentationDirectory,
 )
+from fragancia_api.modules.catalog.infrastructure.sql_stock_copy import SqlStockCopy
 from fragancia_api.modules.catalog.infrastructure.xlsx_sheets import (
     OpenpyxlSheetReader,
     OpenpyxlTemplateWriter,
@@ -253,6 +258,10 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     services.add(PhotoUploadLimit, PhotoUploadLimit(max_bytes=platform.settings.photo_max_bytes))
     services.add(
         PresentationDirectory, PresentationDirectory(SqlPresentationDirectory(platform.database))
+    )
+    platform.subscriptions.subscribe(
+        STOCK_CHANGED_EVENT,
+        ApplyStockChanged(copy=SqlStockCopy(platform.database), transactions=platform.transactions),
     )
     services.add(ListAdminPerfumes, ListAdminPerfumes(perfume_queries))
     services.add(GetAdminPerfume, GetAdminPerfume(perfume_queries))
