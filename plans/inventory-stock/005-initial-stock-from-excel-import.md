@@ -390,4 +390,101 @@ on `Inventory`), the `events` field on the `Rig` of `test_confirm_catalog_import
 
 ## Review findings
 
+Reviewed 2026-10-14 against `git diff main...HEAD` (3a88085 implementation, 40634a6 tests; no
+uncommitted changes, no PR open yet).
+
+**Checklist: 13/14 pass, 1 not applicable. No item failed.**
+
+- [x] `plans-scope`: every change is inside the plan (`xlsx_sheets.py` declared but unchanged, as
+  step 3 allowed). No hot file touched.
+- [x] `uv run just check` green (2187 passed, 3 skipped, 1 xfailed; harness 685 passed).
+- [x] `uv run just test-integration` green (580 passed, 5 skipped).
+- [x] Business rules in `domain/`: the bound and parser live in `import_cells.py`, the made-to-order
+  refusal and the count rules in validation and `StockItem`. The router holds only the decision-21
+  permission gate, which is access control.
+- [x] CQRS-lite: `RecordImportedCounts` goes aggregate → repository inside one
+  `transactions.run`, and returns `Result`. The confirm publishes inside `work`.
+- [x] Contracts: `CatalogImportSummary.stock_counts` is in `contracts.py`, and `openapi.json` was
+  regenerated (it matches `just openapi`, since `check` is green).
+- [x] Errors: `CATALOG_IMPORT_STOCK_MADE_TO_ORDER` is SCREAMING_SNAKE and typed as
+  `InvalidValueError`. The 403 uses the shared `Forbidden`.
+- [x] Money, time and ids: no money. `now` comes from `Clock` under the stock lock. No new ids.
+- [x] No schema change: the new fields live in existing JSON columns, and old rows are read with
+  `.get` defaults.
+- [x] Routes: the confirm route stays on `admin_imports`, and `catalog:manage` is unchanged.
+- [x] Wiring: `RecordImportedCounts` is registered once, and the subscription is made in
+  `inventory/module.py`. `events=platform.events` is passed to the confirm.
+- [x] No secrets or personal data.
+- [x] Deviations are honest. Spot check: `xlsx_sheets.py` is unchanged and the template test
+  shows the header in place.
+- [x] Docs: `architecture.md` and both facade docstrings are updated. No other doc lists module
+  events.
+- [n/a] PR body: no PR exists yet. The main session must write the six sections when it opens one.
+
+**Bug hunt.** I traced each flow: cell → `_parse_presentation` → `_plan` → JSON → confirm →
+`CatalogImportApplied` → outbox → `_relay_one` (one event per transaction) → `ApplyImportedCounts`
+→ `RecordImportedCounts` → `stock.changed` → catalog copy.
+
+The lock order holds across several presentations. No transaction takes a stock item and then
+an exclusive catalog presentation lock. A settings change needs the settings row before any
+item, so it cannot form a cycle with the per-presentation interleaving.
+
+Retries re-apply absolute counts, so they are harmless apart from the lag noted below. No leftover
+rows were found in `fragancia_test` (`catalog.imports` is empty, and the outbox has no plan-005
+rows).
+
+### Medium
+
+1. **Decision 21 can be bypassed by a race with the validation job** (certain on reading,
+   not reproduced). Location: `apps/api/src/fragancia_api/modules/catalog/http/import_router.py:137-143`.
+   - **What fails:** the router checks the permission against a snapshot read before the
+     command. The comment at `:139-140` says the check "cannot race the confirm" because a ready
+     import's plan never changes. That is true only when the import is already `ready` when it is
+     read.
+   - **How it happens:** while the import is `pending` or `validating`, `summary` is `None`
+     (`sql_catalog_import_queries.py:36-44`, and only `finish_ready` sets it,
+     `catalog_import.py:207`). So `current.summary is not None and ...` is False, and the request
+     proceeds. If the `catalog_validate_imports` job commits `ready` (with counts) between the
+     query and `ConfirmCatalogImport`'s `get_for_update` (`catalog_imports.py:403`), the command
+     sees `ready` and applies the counts.
+   - **Failure scenario:** an admin with `catalog:manage` but without `inventory:manage`
+     uploads a file with `Existencias`. They then send confirm repeatedly while it validates.
+     The first request that lands in the window gets 200, and inventory records the counts.
+     The 409s before it are harmless, so retrying costs nothing.
+   - **Suggested direction** (the implementer's choice): make the decision inside the
+     transaction that holds the import lock. For example, `ConfirmCatalogImport.execute` could
+     take `may_count: bool` and return an error that maps to 403 when
+     `catalog_import.summary.stock_counts > 0` and `may_count` is False. Or the router could
+     refuse when the actor lacks the permission and the snapshot is not `ready`. A regression
+     test is needed either way.
+
+### Low
+
+2. **The confirm's 403 lost its description in OpenAPI.**
+   Location: `apps/api/src/fragancia_api/modules/catalog/http/import_router.py:119`, which affects
+   `apps/api/openapi.json` (the `/confirm` 403).
+   - **What fails:** `responses={403: {"model": ErrorResponse}}` replaces the router-level
+     `ADMIN_RESPONSES[403]` (`shared/http/access.py`) for that status. The documented
+     description therefore went from "The actor is not an admin or lacks the permission" to
+     "Forbidden".
+   - **Scenario:** the generated web client and the API docs lose the explanation of the 403.
+     It is now the only admin route whose 403 says only "Forbidden".
+   - **Fix:** add a `description` to the entry, for example one that also mentions
+     Existencias and `inventory:manage`, and regenerate with `just openapi`.
+3. **The in-memory import query drops `summary.stock_counts`.**
+   Location: `apps/api/src/fragancia_api/modules/catalog/infrastructure/in_memory_imports.py:146-153`.
+   - The tester already recorded this in
+     `plans/findings/catalog-in-memory-import-query-drops-stock-counts.md`, with a strict xfail.
+   - Production is not affected. However, this plan's contract change caused it, and the
+     decision-21 gate cannot fire against the fake.
+   - Fixing it while repairing finding 1 would add one file to the plan (a deviation) and would
+     remove the `_StoreReportingCounts` workaround. Otherwise the open finding covers it.
+
+### Noted, not a defect
+
+- **Lag.** The counts land one relay cycle after the confirm, as the plan accepts. A manual
+  movement recorded in that window, or before a retried delivery after a transient failure, is
+  overwritten by the absolute count. This is inherent to decision 22. Verify may want to state
+  it plainly in the evidence.
+
 ## Verification
