@@ -483,4 +483,127 @@ the run: no inventory, reservation or catalog rows left; the one `platform.outbo
 
 ## Review findings
 
+Reviewed 2026-10-14 against `main...HEAD` (df9a2e1 implementation, d08d504 tests). The tree was
+clean, with no uncommitted changes.
+
+**Checklist: 14/15 pass, 1 not applicable.**
+
+- [x] `plans-scope`: every change is inside the plan (23 declared, 34 changed). No hot file
+  was touched (`container.py`, `docs/modules.json` and `.importlinter` are unchanged).
+- [x] `uv run just check` is green: 2358 unit passed, 3 skipped; 685 harness.
+- [x] `uv run just test-integration` is green: 652 passed, 5 skipped. Afterwards
+  `fragancia_test` had 0 rows in `stock_items`, `reservations`, `reservation_lines`,
+  `stock_movements`, `platform.outbox` and `catalog.presentations`.
+- [x] Business rules live in `domain/` (`hold`, `unhold`, `sell`, the `Reservation`
+  transitions). The commands only orchestrate, and the queries reuse `available_units` and
+  `is_low`.
+- [x] CQRS-lite: every command runs in `transactions.run` and returns a `Result`.
+  `ListReservationHolds` goes through `StockQueries.active_holds`.
+- [x] The contracts are in `contracts.py`. `openapi.json` was regenerated (the drift check in
+  `check` passes).
+- [x] Errors are `Err(DomainError)` with stable codes (`INVENTORY_STOCK_UNAVAILABLE`,
+  `INVENTORY_RESERVATION_*`). A `ValueError` is raised only for programming errors.
+- [x] Datetimes come from `Clock` and ids from `new_id()`. No money is involved.
+- [x] Migration 0014 is new and adds nothing unexpected. It drops nothing, has no cross-schema
+  FK (the only FK is lines → `inventory.reservations`) and has a full downgrade. The check
+  constraint was added by hand, as Deviations says.
+- [x] The new route is on `admin` and the existing protection test covers it.
+- [x] Wiring resolves (`test_reservation_wiring.py`). The job is declared on `AppModule.jobs`
+  and the adapters are created in `module.py`.
+- [x] No secrets, `.env` contents or personal data.
+- [x] Deviations are honest. Spot-checks: `hold`/`unhold` do not stamp `updated_at`
+  (`domain/stock.py:211-222`), and extend/release answer `ReservationNotFound`
+  (`reservations.py:145`, `:269`).
+- [x] Docs were updated: `docs/architecture.md`, the event docstring in `inventory/__init__.py`
+  and the module docstring of `domain/stock.py`.
+- [ ] (n/a) PR body: no PR is open for `feat/inventory-reservations` yet. Check it when the PR
+  is opened.
+
+**Mutants** (each edited in place and restored by hand; `git status` was clean after each):
+
+| Mutant | Result |
+| --- | --- |
+| Reservation `get_for_update` without `FOR UPDATE` | Killed by `test_a_commit_waits_for_the_job_then_sells_as_a_late_commit` (`ValueError` from `unhold`). |
+| A late `sell` checks `on_hand` instead of `available` | Killed in the domain, application and integration layers. |
+| `get_many_for_update` locks items `ORDER BY presentation_id DESC` | Killed only by the dict-order assertion of `test_sql_reservations.py::test_get_many_for_update_inserts_the_missing_items_empty_and_returns_all_ascending`. The race file passed in full, the storm included. See L1. |
+
+**Bug hunt.** Traced reserve, extend, commit, release and expire end to end (domain →
+repositories → outbox → catalog copy).
+
+What holds:
+
+- The counter is changed only under the item row lock. Locks are taken in `ORDER BY` order
+  (LockRows sits above Sort), so concurrent first inserts of the same keys queue on the unique
+  index in one order.
+- Reservation rows are locked only by reservation operations. The job uses `SKIP LOCKED`.
+- All or nothing holds: every short line is listed and nothing is saved before the decision.
+- On a commit, `held` follows the locked status:
+  - an active reservation needs `on_hand` (`STOCK_INSUFFICIENT`);
+  - a late commit needs `available` (`STOCK_UNAVAILABLE`) and leaves the status as it is.
+
+  This matches decisions 25 and 28.
+- Each event's `as_of` is taken after the locks, so a later writer always stamps a later time.
+- Within the inventory module I found no correctness bug.
+
+### Medium
+
+- **M1. The lock-order claim ignores catalog writers: a two-line reserve can deadlock with a
+  perfume save.** Out of scope; recorded as
+  `plans/findings/catalog-perfume-save-presentation-lock-order.md`. Not reproduced: this is
+  reasoned from PostgreSQL row-lock semantics.
+  - How the locks cross:
+    - `ReserveStock` share-locks the catalog presentations one by one, by `presentation_id`
+      (`application/commands/reservations.py:89`).
+    - The catalog's perfume save upserts every presentation of the perfume in `ml` order
+      (`catalog/infrastructure/sql_perfume_repository.py:224`, `:255`), which row-locks each
+      one.
+  - Failure scenario: a perfume's 100 ml presentation was created before its 50 ml one, so
+    `id(100) < id(50)`. A checkout reserves both while an admin edits the perfume. The two
+    transactions take the two rows in opposite orders. PostgreSQL aborts one of them after
+    `deadlock_timeout`, so the checkout or the admin save fails with a 500.
+  - What is wrong in this plan: the comment at `reservations.py:3-13` and the plan's Approach
+    both say "no wait cycle forms", but they consider only inventory's own commands.
+  - Why it is not repaired here: the fix (upsert in `id` order) is in catalog, outside this
+    plan's file list. `RecordImportedCounts` (plan 005) already has the same pattern, but this
+    plan puts it on the checkout path.
+  - The user decides between:
+    - fixing it in catalog before orders lands (fast lane, plus a race test);
+    - accepting it;
+    - widening this plan with a deviation.
+
+### Low
+
+- **L1. The race tests do not pin the item lock order.** Test-only; it goes to the tester.
+  - The DESC-order mutant above passed the whole race file, including
+    `test_a_mixed_storm_*` and `test_reserves_over_the_same_presentations_in_opposite_order_*`.
+    - Every reserve sorts its lines in the aggregate, so reserves always agree on the order.
+    - The storm did not interleave a settings change (ascending `list_all_for_update`) between
+      the locks of a two-line reserve.
+  - The only guard is the order of the returned dict (`test_sql_reservations.py:488-500`). If
+    an implementation locked in DESC order and then re-sorted the dict in Python, it would
+    still pass.
+  - Suggested test: pause a `RecordMovement` on the higher id. Start a two-line reserve and
+    assert that the lower id is locked and not blocked. For example, a second `RecordMovement`
+    on the lower id should block behind the reserve. Then open the gate.
+- **L2 (uncertain). A refusal inside a joined transaction is not rolled back.** Uncertain
+  because orders is not built yet.
+  - The facade's docstring says a call "joins the caller's [transaction] when one is active"
+    (`stock_reservations.py:39`). `SqlTransactionRunner.run` then returns the inner `Err`
+    without a rollback (`shared/infrastructure/database.py:64-65`).
+  - Failure scenario: a refused reserve leaves the empty `stock_items` rows that
+    `get_many_for_update` inserted. If orders commits its outer transaction, those rows are
+    committed too.
+  - Those rows are harmless (0 on hand, 0 reserved). However, the comment "the runner rolls
+    back whatever the locks inserted" (`reservations.py:111`) and the test claim "leaves no
+    rows (not even the empty item)" hold only for a standalone call.
+  - When orders is planned, it should rely on `Err` meaning "no stock was held", not on "no
+    rows were written".
+
+No High findings. Status stays `review`:
+
+- M1 needs a user decision (a catalog-side fix outside this plan's scope).
+- L1 is a test-only correction for the tester.
+- If the user accepts M1 as the separate finding and accepts or defers L1 and L2, the main
+  session can move this plan to `verify`.
+
 ## Verification
