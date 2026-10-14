@@ -720,9 +720,11 @@ async def test_reserve_is_all_or_nothing_and_leaves_no_row_behind(
     assert len(await outbox_rows(container)) == outbox_before
 
 
-async def test_a_refused_reserve_does_not_leave_the_empty_item_it_locked(
+async def test_a_standalone_refused_reserve_does_not_leave_the_empty_item_it_locked(
     container: Container, catalog_rows: CatalogRows
 ) -> None:
+    """Standalone only: the runner rolls back the whole transaction, including the empty stock row
+    the lock inserted. Inside a caller's transaction that row remains (0 on hand, harmless)."""
     _, [presentation_id] = await catalog_rows.perfume()
 
     result = await container.services.get(ReserveStock).execute(
@@ -731,7 +733,7 @@ async def test_a_refused_reserve_does_not_leave_the_empty_item_it_locked(
 
     assert isinstance(result, Err)
     assert result.error.code == "INVENTORY_STOCK_UNAVAILABLE"
-    assert await table_count(container, "stock_items") == 0  # the empty insert rolled back
+    assert await table_count(container, "stock_items") == 0
 
 
 async def test_reserving_with_a_reference_already_taken_changes_nothing(

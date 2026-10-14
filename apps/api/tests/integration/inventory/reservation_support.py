@@ -19,6 +19,7 @@ from fragancia_api.modules.inventory.application.commands.reservations import (
     ReleaseReservation,
     ReserveStock,
 )
+from fragancia_api.modules.inventory.application.ports import PresentationCatalog
 from fragancia_api.modules.inventory.infrastructure.catalog_presentations import (
     CatalogPresentations,
 )
@@ -44,14 +45,21 @@ def in_minutes(minutes: float) -> datetime:
 class Commands:
     """The reservation commands wired over the real adapters and `events`."""
 
-    def __init__(self, container: Container, events: EventPublisher) -> None:
+    def __init__(
+        self,
+        container: Container,
+        events: EventPublisher,
+        catalog: PresentationCatalog | None = None,
+    ) -> None:
         database = container.database
         reservations = SqlReservationRepository(database)
         stock = SqlStockRepository(database)
         settings = SqlSettingsRepository(database)
         transactions = SqlTransactionRunner(database)
         clock = SystemClock()
-        catalog = CatalogPresentations(PresentationDirectory(SqlPresentationDirectory(database)))
+        catalog = catalog or CatalogPresentations(
+            PresentationDirectory(SqlPresentationDirectory(database))
+        )
         self.reserve = ReserveStock(
             reservations=reservations,
             stock=stock,

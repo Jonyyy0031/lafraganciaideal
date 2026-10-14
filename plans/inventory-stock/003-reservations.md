@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: high
 depends_on: ["001", "002"]
@@ -506,7 +506,7 @@ were green (about 0.5 s per race).
 | `SqlReservationRepository`: add / reload with lines, reference conflict writes nothing, rollback, `save` fields, `claim_expired` (due, ordered by id, limit, exact instant, `SKIP LOCKED`) | `sql_reservation_repository.py` | integration | `::test_add_*`, `::test_save_*`, `::test_claim_expired_*` | CONFIRMED |
 | `get_many_for_update`: inserts missing items empty, ascending and deduplicated, keeps stored values, locks all rows | `sql_stock_repository.py:56-80` | integration | `::test_get_many_for_update_*` | CONFIRMED |
 | `SqlStockQueries`: `reserved` in `get` / `on_hand_by_id`; `active_holds` order, ties, only active, pages | `sql_stock_queries.py` | integration | `::test_queries_*`, `::test_active_holds_*` | CONFIRMED |
-| Flows on Postgres: reserve shows in stock, holds and catalog copy; all or nothing leaves no rows (not even the empty item); reference taken; not stocked; extend; commit (sale row, idempotent); release; late commit both ways; loss below reserved then commit refused; list low by available; facade | `reservations.py` | integration | `::test_reserve_*`, `::test_extend_*`, `::test_commit_*`, `::test_release_*`, `::test_a_late_commit_*`, `::test_a_loss_below_reserved_*` | CONFIRMED |
+| Flows on Postgres: reserve shows in stock, holds and catalog copy; all or nothing leaves no rows (a standalone refusal also rolls back the empty item its lock inserted); reference taken; not stocked; extend; commit (sale row, idempotent); release; late commit both ways; loss below reserved then commit refused; list low by available; facade | `reservations.py` | integration | `::test_reserve_*`, `::test_extend_*`, `::test_commit_*`, `::test_release_*`, `::test_a_late_commit_*`, `::test_a_loss_below_reserved_*` | CONFIRMED |
 | Expiry job on Postgres, storefront follows | `reservations.py:296` | integration | `::test_the_expiry_job_*` | CONFIRMED |
 | Race: two reserves for the last unit, exactly one wins (gated; and 8 concurrent for 3 units); same reference once; opposite key order does not deadlock | locks in `reservations.py` | integration | `test_reservation_races.py::test_the_second_reserve_waits_*`, `::test_many_concurrent_reserves_*`, `::test_two_reserves_with_one_reference_*`, `::test_reserves_over_the_same_presentations_in_opposite_order_*` | CONFIRMED |
 | Race: reserve vs loss, both orders (loss may leave `on_hand` below `reserved`; reserve sees the units a loss left) | | integration | `::test_a_loss_waits_for_a_reserve_*`, `::test_a_reserve_waits_for_a_loss_*` | CONFIRMED |
@@ -529,6 +529,41 @@ was 581 passed). New tests: 157 unit (domain 67, commands 53, queries 13, http 2
 integration (SQL 48, races 23). `fragancia_test` was checked after
 the run: no inventory, reservation or catalog rows left; the one `platform.outbox` row
 (`tests.something.happened`) comes from a platform suite, not from these tests.
+
+### Test coverage, repair round 1 (2026-10-14, L1; supersedes nothing above)
+
+Files: `apps/api/tests/integration/inventory/test_reservation_lock_order.py` (new),
+`reservation_support.py` (modified: `Commands` takes an optional presentation catalog, so a test
+can pause a reserve between two presentation locks), `test_sql_reservations.py` (modified: the
+refused-reserve test is renamed and documented as the standalone case). Product code unchanged.
+
+| Behavior (repair spec) | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| A two-line reserve locks the lower `presentation_id` stock item before waiting on the higher one, whatever order the caller lists them | `sql_stock_repository.py` (`get_many_for_update`), `reservations.py:89-95` | integration | `test_reservation_lock_order.py::test_a_two_line_reserve_locks_the_lower_id_before_waiting_on_the_higher` | CONFIRMED |
+| A two-size reserve and a perfume save of those sizes (created in reverse `ml` order) both finish with no deadlock | `sql_perfume_repository.py` `save` (id order), `reservations.py` | integration | `::test_a_two_size_reserve_and_a_perfume_save_of_those_sizes_do_not_deadlock` | CONFIRMED |
+| A refused reserve leaves no empty stock row when it runs standalone (inside a caller's transaction the row remains, harmless) | `reservations.py:111-115` | integration | `test_sql_reservations.py::test_a_standalone_refused_reserve_does_not_leave_the_empty_item_it_locked` | CONFIRMED (standalone case only; the in-caller case is not tested: no caller exists yet) |
+
+How the tests work: the lock-order test holds the higher stock row in a paused transaction, runs
+a reserve listing the higher id first, and polls (5 s bound) with a `FOR UPDATE SKIP LOCKED`
+probe until the lower row is held by the reserve while the reserve is still unfinished. The
+deadlock test pauses the reserve (a catalog wrapper) after it share-locks the lower presentation,
+starts the save, asserts the save is blocked, then opens the gate. Both use `Scenario`, so gates
+open and tasks finish or are cancelled when the test ends, and every wait is bounded.
+
+Mutation checks (product edited in place, restored by hand from a scratchpad copy; `git diff`
+on `apps/api/src` was empty afterwards):
+- Save iterating `perfume.presentations` in `ml` order (the old behaviour): the deadlock test
+  fails with `psycopg.errors.DeadlockDetected` in about 1 s. The lock-order test is unaffected.
+- `get_many_for_update` ordering by `presentation_id DESC`: the lock-order test fails (the lower
+  row is never locked while the reserve waits). The deadlock test is unaffected.
+
+Commands run: baseline `uv run just check` green (2358 unit, 685 harness) and
+`uv run just test-integration` green (652 passed, 5 skipped). Closing: `uv run just check` green
+(2358 unit passed, 3 skipped; 685 harness; plans-lint and harness-check OK) and
+`uv run just test-integration` green (654 passed, 5 skipped). New tests: 2 integration; no unit
+test added (L1 is a Postgres lock behaviour). `fragancia_test` afterwards: 0 rows in
+`stock_items`, `reservations`, `reservation_lines`, `stock_movements`, `catalog.presentations`,
+`catalog.perfumes`; the single `platform.outbox` row is the same platform-suite row as before.
 
 ## Review findings
 
