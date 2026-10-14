@@ -87,6 +87,7 @@ type = layers
 containers =
     fragancia_api.modules.catalog
     fragancia_api.modules.identity
+    fragancia_api.modules.inventory
 layers =
     module
     http | infrastructure
@@ -98,3 +99,6 @@ name = Modules do not import each other (cross-module calls go through ports + a
 type = independence
 modules =
     fragancia_api.modules.*
+ignore_imports =
+    fragancia_api.modules.inventory.infrastructure.catalog_presentations -> fragancia_api.modules.catalog
+    fragancia_api.modules.inventory.module -> fragancia_api.modules.catalog

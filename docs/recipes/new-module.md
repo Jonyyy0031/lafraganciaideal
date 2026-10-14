@@ -48,8 +48,16 @@ Never import another module's internals. If `orders` needs prices from `catalog`
 2. `catalog/__init__.py` exposes a small facade (a use case or query) as its public API.
 3. `orders/infrastructure/catalog_product_prices.py` implements the port by calling that
    facade (anti-corruption layer), and `orders/module.py` wires it.
-4. In `.importlinter`, allow exactly that import in the `modules-independent` contract
-   (`ignore_imports = fragancia_api.modules.orders.infrastructure.catalog_product_prices -> fragancia_api.modules.catalog`).
+4. In `.importlinter`, allow exactly two imports in the `modules-independent` contract:
+   the adapter's, and the consumer's `module.py`, which imports the facade type to fetch it
+   from the service registry:
+   ```
+   ignore_imports =
+       fragancia_api.modules.orders.infrastructure.catalog_product_prices -> fragancia_api.modules.catalog
+       fragancia_api.modules.orders.module -> fragancia_api.modules.catalog
+   ```
+5. The providing module must come **before** the consumer in `MODULES` (`container.py`), or the
+   facade is not in the registry yet when the consumer's `register()` asks for it.
 
 For reactions ("when an order is paid, commit stock") use events instead: subscribe in
 `register()` with `platform.subscriptions.subscribe("orders.order.paid", handler)`; handlers

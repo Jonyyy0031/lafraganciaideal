@@ -78,11 +78,12 @@ class Role(StrEnum):
 
 
 CATALOG_MANAGE = "catalog:manage"
+INVENTORY_MANAGE = "inventory:manage"
 USERS_MANAGE = "users:manage"
 
 ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
-    Role.OWNER: frozenset({CATALOG_MANAGE, USERS_MANAGE}),
-    Role.STAFF: frozenset({CATALOG_MANAGE}),
+    Role.OWNER: frozenset({CATALOG_MANAGE, INVENTORY_MANAGE, USERS_MANAGE}),
+    Role.STAFF: frozenset({CATALOG_MANAGE, INVENTORY_MANAGE}),
 }
 
 

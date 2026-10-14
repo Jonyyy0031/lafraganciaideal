@@ -79,6 +79,9 @@ from fragancia_api.modules.catalog.application.queries.perfumes import (
     ListAdminPerfumes,
     ListPublicPerfumes,
 )
+from fragancia_api.modules.catalog.application.queries.presentation_directory import (
+    PresentationDirectory,
+)
 from fragancia_api.modules.catalog.http.import_router import import_routers
 from fragancia_api.modules.catalog.http.perfume_router import perfume_routers
 from fragancia_api.modules.catalog.http.router import routers
@@ -115,6 +118,9 @@ from fragancia_api.modules.catalog.infrastructure.sql_olfactory_family_repositor
 from fragancia_api.modules.catalog.infrastructure.sql_perfume_queries import SqlPerfumeQueries
 from fragancia_api.modules.catalog.infrastructure.sql_perfume_repository import (
     SqlPerfumeRepository,
+)
+from fragancia_api.modules.catalog.infrastructure.sql_presentation_directory import (
+    SqlPresentationDirectory,
 )
 from fragancia_api.modules.catalog.infrastructure.xlsx_sheets import (
     OpenpyxlSheetReader,
@@ -245,6 +251,9 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         ReorderPhotos, ReorderPhotos(perfumes=perfumes, transactions=platform.transactions)
     )
     services.add(PhotoUploadLimit, PhotoUploadLimit(max_bytes=platform.settings.photo_max_bytes))
+    services.add(
+        PresentationDirectory, PresentationDirectory(SqlPresentationDirectory(platform.database))
+    )
     services.add(ListAdminPerfumes, ListAdminPerfumes(perfume_queries))
     services.add(GetAdminPerfume, GetAdminPerfume(perfume_queries))
     services.add(ListPublicPerfumes, ListPublicPerfumes(perfume_queries, platform.clock))

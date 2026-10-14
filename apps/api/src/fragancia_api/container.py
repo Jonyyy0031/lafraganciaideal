@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from fragancia_api.config import Settings
 from fragancia_api.modules.catalog.module import module as catalog
 from fragancia_api.modules.identity.module import module as identity
+from fragancia_api.modules.inventory.module import module as inventory
 from fragancia_api.shared.application.actor import ActorResolver
 from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.http.health import HealthChecks
@@ -27,7 +28,7 @@ from fragancia_api.shared.infrastructure.tables import metadata
 from fragancia_api.shared.infrastructure.valkey import ValkeyHealth
 from fragancia_api.shared.module import AppModule, Platform
 
-MODULES: Sequence[AppModule] = (identity, catalog)
+MODULES: Sequence[AppModule] = (identity, catalog, inventory)
 
 __all__ = ["MODULES", "Container", "build_container", "metadata"]
 

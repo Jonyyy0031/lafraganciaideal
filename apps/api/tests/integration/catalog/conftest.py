@@ -12,6 +12,7 @@ from botocore.exceptions import ClientError, EndpointConnectionError  # type: ig
 
 from fragancia_api.config import Settings
 from fragancia_api.modules.catalog.infrastructure.s3_media_storage import S3MediaStorage
+from tests.integration.catalog.presentation_rows import catalog_rows  # noqa: F401  (fixture)
 
 
 @dataclass

@@ -4,6 +4,9 @@ from datetime import datetime
 from typing import Literal, Protocol
 from uuid import UUID
 
+from fragancia_api.modules.catalog.application.queries.presentation_directory import (
+    PresentationRef,
+)
 from fragancia_api.modules.catalog.contracts import (
     AdminBrandPage,
     AdminConcentrationPage,
@@ -106,6 +109,24 @@ class ConcentrationQueries(Protocol):
 
     async def list_all(self, *, page: int, size: int) -> AdminConcentrationPage:
         """Every concentration ordered by name (case-insensitive), one page at a time."""
+        ...
+
+
+class PresentationDirectoryQueries(Protocol):
+    """Read side behind the `PresentationDirectory` facade other modules use."""
+
+    async def find(self, ids: Sequence[UUID]) -> dict[UUID, PresentationRef]:
+        """The known presentations by id; unknown ids are absent."""
+        ...
+
+    async def find_for_update(self, presentation_id: UUID) -> PresentationRef | None:
+        """One presentation under a share lock held until the active transaction ends; None
+        when unknown. Joins the caller's transaction and raises outside one."""
+        ...
+
+    async def list_in_stock(self) -> list[PresentationRef]:
+        """Every active in-stock presentation of a non-archived perfume, ordered by brand
+        name, perfume name (both case-insensitive) and ml."""
         ...
 
 
