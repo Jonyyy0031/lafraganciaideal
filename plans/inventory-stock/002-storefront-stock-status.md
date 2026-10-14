@@ -118,6 +118,7 @@ This plan exposes the stock status on the storefront. It applies README decision
      `apps/api/src/fragancia_api/modules/inventory/domain/repositories.py` (modify),
      `apps/api/src/fragancia_api/modules/inventory/infrastructure/sql_stock_repository.py` (modify),
      `apps/api/src/fragancia_api/modules/inventory/infrastructure/in_memory.py` (modify),
+     `apps/api/src/fragancia_api/modules/inventory/infrastructure/sql_settings_repository.py` (modify),
      `apps/api/src/fragancia_api/modules/inventory/module.py` (modify)
    - Do:
      - **Wiring.** `RecordMovement`, `SetThreshold` and `UpdateInventorySettings` take
@@ -554,5 +555,100 @@ Status stays `review` because M1 needs a code change.
   - **Risk:** if the integration suite ever runs in parallel (xdist), the downgrade would
     drop columns under other tests. The module docstring says so. A skip guard on
     `PYTEST_XDIST_WORKER` would make that explicit. This is not a blocker today.
+
+### Re-review after repair round 1
+
+Reviewed 2026-10-14 against `d165352..HEAD` (`872f301` fix, `e80b6ad` regressions).
+
+**Result: M1 is fixed in the code. Status stays `review` because of one checklist failure
+(R1), which is a plan-paperwork fix. No product code changes are needed.**
+
+- [ ] **`plans-scope` fails:** `apps/api/src/fragancia_api/modules/inventory/infrastructure/sql_settings_repository.py`
+  is out of scope (see R1).
+- [x] **`uv run just check`:** green (2107 unit passed, 3 skipped; harness 685).
+- [ ] **NOT RE-RUN by me: `uv run just test-integration` after the repair.** The tester's
+  table above reports 564 passed. My mutant run left fixture rows in `fragancia_test` (see
+  "Environment note"), so a clean run needs that cleanup first.
+
+**Lock order (deadlock check).** No wait cycle.
+- **The two paths:**
+  - A movement or `SetThreshold` takes the catalog presentation `FOR SHARE`
+    (`describe_for_update`), then settings `FOR SHARE`, then the stock item `FOR UPDATE`.
+  - `UpdateInventorySettings` takes settings `FOR UPDATE`, then every item `FOR UPDATE` in
+    `presentation_id` order. It never touches catalog rows.
+- **Why no cycle can form:**
+  - While a settings change holds the settings row, no movement can hold the settings share
+    lock. Every holder of a stock-item lock in this module first holds that share lock: the
+    only item lockers are `get_for_update` (always after `get_for_share`) and
+    `list_all_for_update`. So the settings change's item locks never wait on a movement.
+  - A movement that holds the share lock only waits on its own item, which a settings change
+    cannot hold at the same time. Two movements share the settings row (share/share), and
+    their item locks are single-row.
+  - Two settings changes serialize on the settings row before touching any item.
+  - Catalog writers lock catalog rows only, so they cannot join a cycle with inventory.
+  - PostgreSQL queues waiters on the tuple lock, so the share/update mix does not starve.
+- **Timestamp ordering:** a settings change stamps `now` after every item lock is granted.
+  Any movement it raced has therefore committed (released its share lock) before that, and
+  any later movement stamps after the settings change commits.
+- **Two residuals:**
+  - L1 (wall clock) still applies.
+  - A movement that creates an item does so under the settings share lock, so the old
+    "uncounted item missed by the listing" gap is closed too.
+
+**Default-row insert in the locked reads** (`sql_settings_repository.py` `_locked`). Correct.
+- **Normal case:** migration 0012 seeds the row, so `INSERT … ON CONFLICT DO NOTHING` finds
+  it, inserts nothing and takes no row lock. The following `SELECT … FOR SHARE` / `FOR UPDATE`
+  then locks the row.
+- **Missing row:** concurrent first callers serialize on the speculative insert. Under READ
+  COMMITTED the loser's next statement sees the committed row, so `scalar_one()` cannot miss.
+- **Value:** the inserted value equals what `get()` returned for a missing row (3), so behavior
+  is unchanged. The extra deviation is recorded honestly in the repair section.
+
+**Mutant check.** I ran it in a scratchpad copy; the worktree was not touched.
+- **The mutant:** I exported `HEAD` with `git archive`, then restored the pre-repair
+  semantics: plain `settings.get()` in both commands, no settings lock in the change, unlocked
+  listing, and `now` stamped before the listing. I ran
+  `test_stock_settings_race.py` against it.
+- **Result: partly confirmed.**
+  - On the first run, `test_a_settings_change_waits_for_a_movement_and_the_copy_ends_up_sold_out`
+    ended while its gated sale was still open, so it did not pass. Its teardown
+    (`TRUNCATE catalog.perfumes CASCADE`) then waited forever on that idle-in-transaction
+    session, which I saw in `pg_stat_activity`, and the suite hung. I killed it.
+  - The second run failed all five DB-touching race tests, but with fixture setup errors
+    (duplicate `zz-rows-family`) left over from the killed run. That second run is not
+    evidence.
+- **What this means:** the regression does trip on the old code, but it shows up as a hang
+  rather than a failure (R2).
+
+**Findings.**
+- **R1 (checklist, blocks `verify`): `sql_settings_repository.py` is changed but missing from
+  the plan's file list.**
+  - **Detail:** the repair spec names "the SQL adapter", but no Step lists the file, so
+    `plans-scope` fails.
+  - **Fix (plan-only):** add it to Step 2's Files in the plan, then re-run `plans-scope`. No
+    code change.
+- **R2 (low, test-only, tester's call):** the gated race tests do not release their gate when
+  an assertion fails.
+  - **Where:** `tests/integration/inventory/test_stock_settings_race.py`: `GatedPublisher`
+    and the `hold()` helpers.
+  - **Failure scenario:** a future regression of the lock order leaves an uncommitted
+    transaction holding locks, and the suite hangs in the next `TRUNCATE` instead of reporting
+    a failure.
+  - **Fix:** wrap each `release.set()` in `try/finally`, or wait on the gate with a timeout.
+- **L1/L2:** accepted by the user (README decision 17). L3 is resolved: the xdist `skipif` is
+  in place.
+
+**Environment note (caused by this review; not a product finding).**
+- **What's left:** killing the hung mutant run left catalog fixture rows in `fragancia_test`:
+  - brand `Zz Brand` (id `01a13b9b-de3d-70a0-9ca2-ee8904fddde2`);
+  - olfactory family slug `zz-rows-family`;
+  - concentration slug `zz-rows-eau`.
+- **Impact:** until they are removed, integration tests that use `catalog_rows` fail with a
+  unique violation.
+- **Why I didn't clean it up:** the sandbox denied my targeted `DELETE`, and
+  `just db-reset --test` needs an interactive confirmation.
+- **Cleanup (test database only):** run `uv run just db-reset --test` and then
+  `uv run just db-migrate --test`. Alternatively, delete those three rows; each count is
+  exactly 1.
 
 ## Verification
