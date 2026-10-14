@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: high
 depends_on: ["001", "002"]
@@ -417,6 +417,69 @@ registered through `AppModule.jobs` but was not seen running), and the acceptanc
 against the running app (verify phase).
 
 ## Test coverage
+
+Files (all new unless noted): `apps/api/tests/unit/inventory/test_reservation_domain.py`,
+`test_reservation_commands.py`, `test_reservation_queries.py`, `test_reservation_http.py`,
+`test_reservation_wiring.py`, `support.py` (modified: the reservation commands and the facade on
+`Inventory`); `apps/api/tests/integration/inventory/test_sql_reservations.py`,
+`test_reservation_races.py`, `reservation_support.py`, `conftest.py` (modified: the cleanup
+fixture also truncates the reservation tables and the outbox after each test, so no row stays in
+`fragancia_test`).
+
+Race tests (Postgres) pause one transaction on a gate while the other starts, assert the second
+is blocked (or, for `SKIP LOCKED`, returns without waiting), then open the gate. `Scenario`
+opens every gate and finishes or cancels every task on exit, and every wait is bounded by 5 s, so
+a lock-order regression fails fast instead of hanging. Three consecutive runs of the race file
+were green (about 0.5 s per race).
+
+| Behavior (plan / code) | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| `available = max(on_hand - reserved, 0)`; `is_low` and `changed_event` use it | `stock.py:131`, `:183` | domain | `test_reservation_domain.py::test_available_is_on_hand_minus_reserved_never_below_zero`, `::test_is_low_uses_available_...`, `::test_the_changed_event_carries_available_not_on_hand` | CONFIRMED |
+| `hold` refuses beyond available; `unhold` below 0 is a `ValueError` | `stock.py:211`, `:218` | domain | `::test_hold_*`, `::test_unhold_*` | CONFIRMED |
+| `sell` held needs only `on_hand`; late needs `available`; refusals change nothing | `stock.py:224` | domain | `::test_a_held_sale_*`, `::test_a_late_sale_*` | CONFIRMED |
+| `record_movement` refuses `sale` | `stock.py:196` | domain | `::test_record_movement_refuses_a_sale_whatever_the_quantity` | CONFIRMED |
+| `Reservation.create` bounds (reference 1..64 stripped, lines, quantity 1..max, expiry in future), lines sorted | `reservation.py:74` | domain | `::test_create_*` | CONFIRMED |
+| `extend`, `commit`, `release`, `expire`, `holds_units`, `sale_reason`, every refused transition | `reservation.py:107-141` | domain | `::test_extend_*`, `::test_an_active_reservation_can_be_closed_three_ways`, `::test_*_only_applies_to_an_active_reservation`, `::test_a_released_or_expired_reservation_can_still_be_committed` | CONFIRMED |
+| Reserve is all or nothing, lists every short line, nothing written | `reservations.py:96-112` | application | `test_reservation_commands.py::test_reserve_is_all_or_nothing_...`, `::test_reserve_lists_every_short_line_not_just_the_first` | CONFIRMED |
+| Reserve: reference taken, not stocked / unknown, invalid input, event per changed item with `available`, threshold from settings | `reservations.py:76-122` | application | `::test_reserve_*` | CONFIRMED |
+| Extend: later expiry, earlier refused, expired / closed not active, unknown, no event | `reservations.py:125` | application | `::test_extend_*` | CONFIRMED |
+| Commit: `sale` movement (reason `Venta: QA-1`, actor `system`, delta -2), idempotent, one sale per presentation, event | `reservations.py:158-241` | application | `::test_commit_*` | CONFIRMED |
+| Late commit both ways (units available / not), released late commit, other holds untouched | `reservations.py:158` | application | `::test_a_late_commit_*` | CONFIRMED |
+| Loss below reserved is recorded, commit then refused (`INSUFFICIENT`, `on_hand` in details), nothing changes, other lines untouched | `reservations.py:203-230` | application | `::test_a_loss_below_reserved_*`, `::test_committing_a_reservation_a_loss_left_short_*`, `::test_a_refused_commit_sells_no_line_*` | CONFIRMED |
+| Release: units back, no movement, idempotent (released / expired), committed refused, unknown | `reservations.py:244` | application | `::test_release_*` | CONFIRMED |
+| Expiry job: due only (exact instant counts), ignores closed ones, batch limit, one event per changed item, count | `reservations.py:296` | application | `::test_the_job_*`, `::test_an_expiry_frees_units_for_a_new_reservation` | CONFIRMED |
+| Facade delegates and is exported from the module | `stock_reservations.py`, `__init__.py` | application | `::test_the_facade_*` | CONFIRMED |
+| `GetStock`, `ListStock` fill `reserved` / `available`; low flag by available; holds query (soonest first, active only, pages, 404) | `queries/stock.py` | application | `test_reservation_queries.py` | CONFIRMED |
+| Stock detail and list carry the new fields; reservations route (401, 403, 200, paging, 404, 422); `sale` on the movement route is 422; a sale shows in the ledger | `router.py:99`, `contracts.py:18`, `:47` | http | `test_reservation_http.py` | CONFIRMED |
+| OpenAPI: the route, required `reserved`/`available`, `sale` in the ledger kind but not in the request, no reserve/commit/release route | `openapi.json` | http | `test_reservation_http.py::test_openapi_*` | CONFIRMED |
+| Container resolves the commands, the facade and the holds query; the job is declared (60 s, timeout 120 s) and runs the command | `module.py` | application | `test_reservation_wiring.py` | CONFIRMED |
+| Schema: `reserved` default 0 and `>= 0` check, `reference` unique, `quantity > 0`, FK to reservations, line PK, no FK to catalog, partial index on active expiry | `tables.py` | integration | `test_sql_reservations.py::test_the_database_*`, `::test_a_line_*`, `::test_the_expiry_scan_has_a_partial_index_*` | CONFIRMED |
+| `SqlReservationRepository`: add / reload with lines, reference conflict writes nothing, rollback, `save` fields, `claim_expired` (due, ordered by id, limit, exact instant, `SKIP LOCKED`) | `sql_reservation_repository.py` | integration | `::test_add_*`, `::test_save_*`, `::test_claim_expired_*` | CONFIRMED |
+| `get_many_for_update`: inserts missing items empty, ascending and deduplicated, keeps stored values, locks all rows | `sql_stock_repository.py:56-80` | integration | `::test_get_many_for_update_*` | CONFIRMED |
+| `SqlStockQueries`: `reserved` in `get` / `on_hand_by_id`; `active_holds` order, ties, only active, pages | `sql_stock_queries.py` | integration | `::test_queries_*`, `::test_active_holds_*` | CONFIRMED |
+| Flows on Postgres: reserve shows in stock, holds and catalog copy; all or nothing leaves no rows (not even the empty item); reference taken; not stocked; extend; commit (sale row, idempotent); release; late commit both ways; loss below reserved then commit refused; list low by available; facade | `reservations.py` | integration | `::test_reserve_*`, `::test_extend_*`, `::test_commit_*`, `::test_release_*`, `::test_a_late_commit_*`, `::test_a_loss_below_reserved_*` | CONFIRMED |
+| Expiry job on Postgres, storefront follows | `reservations.py:296` | integration | `::test_the_expiry_job_*` | CONFIRMED |
+| Race: two reserves for the last unit, exactly one wins (gated; and 8 concurrent for 3 units); same reference once; opposite key order does not deadlock | locks in `reservations.py` | integration | `test_reservation_races.py::test_the_second_reserve_waits_*`, `::test_many_concurrent_reserves_*`, `::test_two_reserves_with_one_reference_*`, `::test_reserves_over_the_same_presentations_in_opposite_order_*` | CONFIRMED |
+| Race: reserve vs loss, both orders (loss may leave `on_hand` below `reserved`; reserve sees the units a loss left) | | integration | `::test_a_loss_waits_for_a_reserve_*`, `::test_a_reserve_waits_for_a_loss_*` | CONFIRMED |
+| Race: commit vs expiry job, both orders (job skips; commit after job is a late commit; one sale; copy ends at the newest event) | | integration | `::test_the_job_skips_a_reservation_a_commit_*`, `::test_a_commit_waits_for_the_job_*` | CONFIRMED |
+| Race: release vs job, two job runs, two commits, two releases, commit vs release (each hold consumed once, never below 0) | | integration | `::test_the_job_skips_a_reservation_a_release_*`, `::test_a_release_waiting_for_the_job_*`, `::test_two_job_runs_*`, `::test_two_commits_*`, `::test_two_releases_*`, `::test_a_commit_and_a_release_*` | CONFIRMED |
+| Race: settings change vs reserve, both orders; vs commit / release / job; no deadlock | | integration | `::test_a_reserve_waits_for_a_settings_change_*`, `::test_a_settings_change_waits_for_a_reserve_*`, `::test_a_reservation_command_waits_for_a_settings_change_*`, `::test_a_settings_change_waits_for_a_commit_*` | CONFIRMED |
+| Storm: reserves, commits, releases, loss, settings change and job runs at once keep `reserved` equal to what active reservations hold (3 rounds) | | integration | `::test_a_mixed_storm_*` | CONFIRMED |
+| The event reaches the catalog copy (`available` 3 after reserve; restored after expiry; storefront `sold_out` / `last_units`) | | integration | `test_sql_reservations.py::test_reserve_shows_in_the_stock_*`, `::test_a_reservation_that_empties_the_shelf_*`, `::test_the_expiry_job_expires_*` | CONFIRMED |
+| Migration downgrade/upgrade round trip | `0014_inventory_reservations.py` | integration | not tested: running a downgrade on the shared test database would race other suites; the implementer recorded one round trip and `alembic check` (Deviations, step 3) | NOT CONFIRMED (by a test) |
+| The worker process runs `cron:inventory_expire_reservations` | `module.py` | none | the job declaration and its command are tested; the worker process was not started | NOT CONFIRMED (verify phase) |
+
+No GAP found: every behavior the plan promises is implemented as written. Deviations recorded by
+the implementer (details shape of a held-commit refusal, unknown id on extend/release, `updated_at`
+untouched by hold/unhold) are asserted as implemented.
+
+Commands run: baseline `uv run just check` green (2201 unit + 685 harness tests) before any test.
+Closing: `uv run just check` green (2358 unit passed, 3 skipped; 685 harness) and
+`uv run just test-integration` green (652 passed, 5 skipped; the plan's own run before the tests
+was 581 passed). New tests: 157 unit (domain 67, commands 53, queries 13, http 21, wiring 3) and 71
+integration (SQL 48, races 23). `fragancia_test` was checked after
+the run: no inventory, reservation or catalog rows left; the one `platform.outbox` row
+(`tests.something.happened`) comes from a platform suite, not from these tests.
 
 ## Review findings
 
