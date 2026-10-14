@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: inventory
 min_implementer: mid
 depends_on: ["001"]
@@ -659,5 +659,32 @@ Reviewed 2026-10-14 against `d165352..HEAD` (`872f301` fix, `e80b6ad` regression
 - **Cleanup (test database only):** run `uv run just db-reset --test` and then
   `uv run just db-migrate --test`. Alternatively, delete those three rows; each count is
   exactly 1.
+
+### Closing note (2026-10-14, after R1 and R2)
+
+Reviewed `1c43a20..HEAD` (`3b64144`). All review findings are closed; status → `verify`.
+
+- **R1 closed:** Step 2 lists `sql_settings_repository.py`, and `plans-scope` reports "Every
+  change is inside the plan" (26 declared, 39 changed).
+- **R2 closed:** `Scenario` opens every gate and then finishes or cancels every task when the
+  block exits, whether the test passed or failed. Every gate wait and every awaited call is
+  bounded. The 0.5 s "must be blocked" window is unchanged.
+- **Mutant re-run, observed:** I re-ran the old-code mutant against the new tests in the
+  scratchpad copy.
+  - **Failed fast with `assert False`, no hang:** 3 tests.
+    - `test_a_settings_change_waits_for_a_movement_and_the_copy_ends_up_sold_out`
+    - `test_a_movement_waits_for_a_settings_change_and_carries_the_new_threshold`
+    - `test_list_all_for_update_is_ordered_by_presentation_id_and_locks_every_item`
+  - **Passed:** the other 10, as expected. They test behavior that also holds without
+    concurrency, or the settings-repository locks, which the mutant left intact.
+  - **Database afterwards:** no idle-in-transaction session and no leftover fixture rows.
+- **Re-run on the real code:**
+  - `uv run just check` is green (2107 passed, 3 skipped; harness 685).
+  - `uv run just test-integration` is green on the reset test database (564 passed,
+    5 skipped).
+- **The earlier environment note is resolved:** the coordinator reset and re-migrated the test
+  database.
+- **Still open, by design:** L1 and L2 are accepted (README decision 17). The verifier
+  checks the running app.
 
 ## Verification
