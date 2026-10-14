@@ -18,6 +18,7 @@ from fragancia_api.modules.inventory.domain.stock import (
     Threshold,
 )
 from fragancia_api.shared.application.clock import Clock
+from fragancia_api.shared.application.events import EventPublisher
 from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 
@@ -44,12 +45,14 @@ class RecordMovement:
         settings: SettingsRepository,
         catalog: PresentationCatalog,
         transactions: TransactionRunner,
+        events: EventPublisher,
         clock: Clock,
     ) -> None:
         self._stock = stock
         self._settings = settings
         self._catalog = catalog
         self._transactions = transactions
+        self._events = events
         self._clock = clock
 
     async def execute(
@@ -78,6 +81,8 @@ class RecordMovement:
                 case Ok(movement):
                     pass
             await self._stock.save(item)
+            global_threshold = (await self._settings.get()).low_stock_threshold
+            await self._events.publish([item.changed_event(global_threshold, now)])
             return Ok(MovementCreated(id=movement.id, on_hand=item.on_hand))
 
         return await self._transactions.run(work)
@@ -90,13 +95,17 @@ class SetThreshold:
         self,
         *,
         stock: StockRepository,
+        settings: SettingsRepository,
         catalog: PresentationCatalog,
         transactions: TransactionRunner,
+        events: EventPublisher,
         clock: Clock,
     ) -> None:
         self._stock = stock
+        self._settings = settings
         self._catalog = catalog
         self._transactions = transactions
+        self._events = events
         self._clock = clock
 
     async def execute(
@@ -121,6 +130,8 @@ class SetThreshold:
                 item = StockItem.empty(presentation_id, now)
             item.set_threshold(override)
             await self._stock.save(item)
+            global_threshold = (await self._settings.get()).low_stock_threshold
+            await self._events.publish([item.changed_event(global_threshold, now)])
             return Ok(None)
 
         return await self._transactions.run(work)
@@ -129,9 +140,20 @@ class SetThreshold:
 class UpdateInventorySettings:
     """Command: set the global low-stock threshold."""
 
-    def __init__(self, *, settings: SettingsRepository, transactions: TransactionRunner) -> None:
+    def __init__(
+        self,
+        *,
+        settings: SettingsRepository,
+        stock: StockRepository,
+        transactions: TransactionRunner,
+        events: EventPublisher,
+        clock: Clock,
+    ) -> None:
         self._settings = settings
+        self._stock = stock
         self._transactions = transactions
+        self._events = events
+        self._clock = clock
 
     async def execute(self, low_stock_threshold: int) -> Result[None, DomainError]:
         match Threshold.create(low_stock_threshold):
@@ -142,6 +164,10 @@ class UpdateInventorySettings:
 
         async def work() -> Result[None, DomainError]:
             await self._settings.save(InventorySettings(low_stock_threshold=threshold))
+            # The effective threshold of every item without an override changed.
+            now = self._clock.now()
+            items = await self._stock.list_all()
+            await self._events.publish([item.changed_event(threshold, now) for item in items])
             return Ok(None)
 
         return await self._transactions.run(work)

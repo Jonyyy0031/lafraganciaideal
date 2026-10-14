@@ -285,7 +285,8 @@ class PublicPhoto(BaseModel):
 
 
 class PublicPerfumeCard(BaseModel):
-    """One perfume of the public list, with its lowest current price."""
+    """One perfume of the public list, with its lowest current price. `price_from_cents` skips
+    sold-out presentations unless none can be bought; `sold_out` is true when none can."""
 
     slug: str
     name: str
@@ -295,6 +296,7 @@ class PublicPerfumeCard(BaseModel):
     family: PublicPerfumeFamily
     price_from_cents: int
     on_sale: bool
+    sold_out: bool
     photo_url: str | None
 
 
@@ -303,7 +305,8 @@ class PublicPerfumePage(Page[PublicPerfumeCard]):
 
 
 class PublicPresentation(BaseModel):
-    """An active presentation with its current (effective) price."""
+    """An active presentation with its current (effective) price. `stock_status` is null for
+    made-to-order presentations; the exact count is never exposed."""
 
     id: UUID
     ml: int
@@ -313,6 +316,7 @@ class PublicPresentation(BaseModel):
     price_cents: int
     regular_price_cents: int | None
     sale_ends_at: datetime | None
+    stock_status: Literal["available", "last_units", "sold_out"] | None
 
 
 class PublicPerfume(BaseModel):

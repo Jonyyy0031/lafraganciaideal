@@ -19,7 +19,7 @@ one.
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Self
+from typing import ClassVar, Self
 from uuid import UUID
 
 from fragancia_api.modules.inventory.domain.errors import (
@@ -28,7 +28,14 @@ from fragancia_api.modules.inventory.domain.errors import (
     StockReasonInvalid,
     ThresholdInvalid,
 )
-from fragancia_api.shared.kernel import AggregateRoot, Err, Ok, Result, new_id
+from fragancia_api.shared.kernel import (
+    AggregateRoot,
+    DomainEvent,
+    Err,
+    Ok,
+    Result,
+    new_id,
+)
 
 __all__ = [
     "DEFAULT_LOW_STOCK_THRESHOLD",
@@ -37,6 +44,7 @@ __all__ = [
     "Movement",
     "MovementKind",
     "Reason",
+    "StockChanged",
     "StockItem",
     "Threshold",
 ]
@@ -118,6 +126,19 @@ def is_low(on_hand: int, override: int | None, global_threshold: int) -> bool:
     return on_hand <= effective_threshold(override, global_threshold)
 
 
+@dataclass(frozen=True, kw_only=True)
+class StockChanged(DomainEvent):
+    """The stock figures of a presentation changed. `available` is what can be bought (on hand
+    for now), `threshold` the effective low-stock threshold, `as_of` the time of the change (a
+    consumer keeps the newest)."""
+
+    name: ClassVar[str] = "inventory.stock.changed"
+    presentation_id: UUID
+    available: int
+    threshold: int
+    as_of: datetime
+
+
 class StockItem(AggregateRoot):
     def __init__(
         self,
@@ -191,4 +212,12 @@ class StockItem(AggregateRoot):
         override = self.threshold_override
         return is_low(
             self.on_hand, override.value if override is not None else None, global_threshold.value
+        )
+
+    def changed_event(self, global_threshold: Threshold, as_of: datetime) -> StockChanged:
+        return StockChanged(
+            presentation_id=self.presentation_id,
+            available=self.on_hand,
+            threshold=self.effective_threshold(global_threshold),
+            as_of=as_of,
         )

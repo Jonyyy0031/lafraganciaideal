@@ -309,13 +309,17 @@ async def list_public_perfumes(
     gender: Annotated[list[Literal["women", "men", "unisex"]], Query()] = [],  # noqa: B006
     min_price_cents: Annotated[int | None, Query(ge=0)] = None,
     max_price_cents: Annotated[int | None, Query(ge=0)] = None,
+    in_stock: bool = False,
     sort: Literal["name", "price_asc", "price_desc", "newest"] = "name",
     page: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 1,
     size: Annotated[int, Query(ge=1, le=48)] = 24,
 ) -> PublicPerfumePage:
     """Published perfumes of active brands, filtered (`brand`, `family` and `gender` are
     repeatable; prices filter the "from" price), searched (`q`, accent and case insensitive over
-    name, brand and notes) and sorted (default: brand, then name)."""
+    name, brand and notes) and sorted (default: brand, then name). The "from" price, the price
+    filters and the price sort use only presentations that can be bought (made to order, or in
+    stock with units), falling back to all of them when none can; `in_stock=true` hides perfumes
+    with nothing to buy."""
     return await use_case.execute(
         PublicPerfumeFilters(
             q=q,
@@ -327,6 +331,7 @@ async def list_public_perfumes(
             sort=sort,
             page=page,
             size=size,
+            in_stock=in_stock,
         )
     )
 

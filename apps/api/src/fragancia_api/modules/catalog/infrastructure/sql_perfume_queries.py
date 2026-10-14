@@ -29,6 +29,7 @@ from fragancia_api.modules.catalog.domain.perfume import (
     Presentation,
     Price,
     Sale,
+    stock_status,
 )
 from fragancia_api.modules.catalog.infrastructure.tables import (
     brands,
@@ -88,6 +89,11 @@ def _effective_price(now: datetime) -> ColumnElement[int]:
     )
 
 
+def _buyable() -> ColumnElement[bool]:
+    """SQL mirror of `is_buyable`."""
+    return or_(presentations.c.availability == "made_to_order", presentations.c.stock_available > 0)
+
+
 _VISIBLE = perfumes.c.is_published & ~perfumes.c.is_archived & brands.c.is_active
 
 _PUBLIC_ORDER = {
@@ -139,6 +145,9 @@ def _public_presentation(row: Any, now: datetime) -> PublicPresentation:
         price_cents=presentation.effective_price(now).cents,
         regular_price_cents=presentation.price.amount.cents if on_sale else None,
         sale_ends_at=sale.ends_at if sale is not None and on_sale else None,
+        stock_status=stock_status(
+            presentation.availability, row["stock_available"], row["stock_threshold"]
+        ),
     )
 
 
@@ -162,14 +171,16 @@ class SqlPerfumeQueries:
         prices = (
             select(
                 presentations.c.perfume_id.label("perfume_id"),
-                func.min(_effective_price(now)).label("price_from"),
+                func.min(_effective_price(now)).filter(_buyable()).label("price_buyable"),
+                func.min(_effective_price(now)).label("price_all"),
+                func.bool_or(_buyable()).label("any_buyable"),
                 func.bool_or(_sale_active(now)).label("on_sale"),
             )
             .where(presentations.c.is_active)
             .group_by(presentations.c.perfume_id)
             .subquery("prices")
         )
-        price_from = prices.c.price_from
+        price_from = func.coalesce(prices.c.price_buyable, prices.c.price_all)
         conditions: list[ColumnElement[bool]] = [_VISIBLE]
         if filters.brands:
             conditions.append(brands.c.slug.in_(filters.brands))
@@ -181,6 +192,8 @@ class SqlPerfumeQueries:
             conditions.append(price_from >= filters.min_price_cents)
         if filters.max_price_cents is not None:
             conditions.append(price_from <= filters.max_price_cents)
+        if filters.in_stock:
+            conditions.append(prices.c.any_buyable)
         if filters.q is not None:
             haystack = func.concat_ws(
                 " ",
@@ -221,6 +234,7 @@ class SqlPerfumeQueries:
                 olfactory_families.c.slug.label("family_slug"),
                 price_from.label("price_from"),
                 prices.c.on_sale.label("on_sale"),
+                (~prices.c.any_buyable).label("sold_out"),
                 first_photo.label("photo_key"),
             )
             .join_from(perfumes, brands, perfumes.c.brand_id == brands.c.id)
@@ -248,6 +262,7 @@ class SqlPerfumeQueries:
                 family=PublicPerfumeFamily(name=row["family_name"], slug=row["family_slug"]),
                 price_from_cents=row["price_from"],
                 on_sale=row["on_sale"],
+                sold_out=row["sold_out"],
                 photo_url=self._url(row["photo_key"]) if row["photo_key"] is not None else None,
             )
             for row in rows

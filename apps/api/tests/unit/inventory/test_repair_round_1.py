@@ -24,7 +24,7 @@ from fragancia_api.modules.inventory.infrastructure.in_memory import (
     InMemorySettings,
     InMemoryStock,
 )
-from fragancia_api.shared.infrastructure.in_memory import FixedClock
+from fragancia_api.shared.infrastructure.in_memory import FixedClock, RecordingEventPublisher
 from fragancia_api.shared.kernel import Ok, Result
 from tests.unit.inventory.support import STOCKED, Inventory
 
@@ -101,9 +101,17 @@ async def test_commands_pass_the_injected_clock_to_the_stock_lock() -> None:
         settings=InMemorySettings(spy),
         catalog=inv.catalog,
         transactions=transactions,
+        events=RecordingEventPublisher(),
         clock=clock,
     )
-    threshold = SetThreshold(stock=spy, catalog=inv.catalog, transactions=transactions, clock=clock)
+    threshold = SetThreshold(
+        stock=spy,
+        settings=InMemorySettings(spy),
+        catalog=inv.catalog,
+        transactions=transactions,
+        events=RecordingEventPublisher(),
+        clock=clock,
+    )
 
     await record.execute(STOCKED, MovementRequest(kind="restock", quantity=1, reason="x"), "a")
     await threshold.execute(STOCKED, 5)
@@ -154,9 +162,17 @@ async def test_the_catalog_lookup_is_locked_and_inside_the_transaction(command: 
         settings=InMemorySettings(store),
         catalog=catalog,
         transactions=transactions,
+        events=RecordingEventPublisher(),
         clock=clock,
     )
-    threshold = SetThreshold(stock=store, catalog=catalog, transactions=transactions, clock=clock)
+    threshold = SetThreshold(
+        stock=store,
+        settings=InMemorySettings(store),
+        catalog=catalog,
+        transactions=transactions,
+        events=RecordingEventPublisher(),
+        clock=clock,
+    )
 
     if command == "record":
         await record.execute(STOCKED, MovementRequest(kind="restock", quantity=1, reason="x"), "a")

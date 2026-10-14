@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: inventory
 min_implementer: mid
 depends_on: ["001"]
@@ -255,6 +255,21 @@ This plan exposes the stock status on the storefront. It applies README decision
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+- **Cosmetic, step 2:** `SetThreshold` and `UpdateInventorySettings` also gained the
+  dependencies they need to publish (`SetThreshold` takes `settings`; `UpdateInventorySettings`
+  takes `stock` and `clock`), beyond the plan's "take `events`". Existing tests that build the
+  commands directly (`tests/unit/inventory/support.py`, `test_repair_round_1.py`,
+  `test_repair_round_2.py`, `tests/integration/inventory/test_sql_repair_round_1.py`,
+  `test_sql_repair_round_2.py`) got the new constructor arguments, and the existing public list
+  HTTP test (`tests/unit/catalog/test_public_perfume_http.py`) got `sold_out` in its expected
+  card, only to keep the build green. No new tests were written; that is the tester's phase.
+- **Cosmetic, step 3:** the migration backfill takes the global threshold from a scalar
+  subquery on `inventory.settings` with a fallback of 3, instead of a join, so it still works
+  when the settings row was never stored.
+- **Cosmetic, step 5:** `PublicPerfumeFilters.in_stock` defaults to `False`, so existing
+  constructors keep working. The status rule is computed in Python only (detail); the list uses
+  the SQL `_buyable` expression, so there is no SQL copy of the status itself.
 
 ## Test coverage
 

@@ -10,6 +10,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.types import Uuid
@@ -103,6 +104,11 @@ presentations = Table(
     Column("lead_time_max_days", Integer, nullable=True),
     Column("is_active", Boolean, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    # A copy of the stock figures, kept by the `inventory.stock.changed` handler (never written
+    # by the perfume repository); a presentation never counted has 0 available.
+    Column("stock_available", Integer, nullable=False, server_default=text("0")),
+    Column("stock_threshold", Integer, nullable=False, server_default=text("3")),
+    Column("stock_as_of", DateTime(timezone=True), nullable=True),
     UniqueConstraint("perfume_id", "ml", name="uq_presentations_perfume_ml"),
     schema=SCHEMA,
 )

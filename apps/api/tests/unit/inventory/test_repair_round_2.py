@@ -13,7 +13,10 @@ from fragancia_api.modules.inventory.infrastructure.in_memory import (
     InMemorySettings,
     InMemoryStock,
 )
-from fragancia_api.shared.infrastructure.in_memory import InMemoryTransactionRunner
+from fragancia_api.shared.infrastructure.in_memory import (
+    InMemoryTransactionRunner,
+    RecordingEventPublisher,
+)
 from fragancia_api.shared.kernel import Ok
 from tests.unit.inventory.support import STOCKED, make_catalog
 
@@ -49,6 +52,7 @@ async def test_the_movement_time_is_read_after_the_stock_lock() -> None:
         settings=InMemorySettings(stock),
         catalog=make_catalog(),
         transactions=InMemoryTransactionRunner(),
+        events=RecordingEventPublisher(),
         clock=clock,
     )
 
@@ -71,6 +75,7 @@ async def test_a_second_movement_on_an_existing_item_also_uses_the_post_lock_tim
         settings=InMemorySettings(stock),
         catalog=make_catalog(),
         transactions=InMemoryTransactionRunner(),
+        events=RecordingEventPublisher(),
         clock=clock,
     )
     request = MovementRequest(kind="restock", quantity=1, reason="x")
@@ -90,8 +95,10 @@ async def test_the_threshold_updated_at_is_read_after_the_stock_lock() -> None:
     stock, clock = SpyStock(), AdvancingClock()
     set_threshold = SetThreshold(
         stock=stock,
+        settings=InMemorySettings(stock),
         catalog=make_catalog(),
         transactions=InMemoryTransactionRunner(),
+        events=RecordingEventPublisher(),
         clock=clock,
     )
 

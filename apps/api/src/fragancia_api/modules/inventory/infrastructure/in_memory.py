@@ -28,6 +28,9 @@ class InMemoryStock:
         item = self.items.get(presentation_id)
         return deepcopy(item) if item is not None else None
 
+    async def list_all(self) -> list[StockItem]:
+        return [deepcopy(item) for item in self.items.values()]
+
     async def save(self, item: StockItem) -> None:
         self.movements_log.extend(item.new_movements)
         item.new_movements.clear()

@@ -15,6 +15,10 @@ class StockRepository(Protocol):
         presentation was never counted. Callers verify the presentation exists before calling."""
         ...
 
+    async def list_all(self) -> list[StockItem]:
+        """Every stock item (read without locking; used to re-publish after a global change)."""
+        ...
+
     async def save(self, item: StockItem) -> None:
         """Upsert the item and insert its `new_movements` (then forget them)."""
         ...
