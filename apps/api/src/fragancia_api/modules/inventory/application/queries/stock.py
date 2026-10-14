@@ -3,6 +3,7 @@ from uuid import UUID
 from fragancia_api.modules.inventory.application.ports import PresentationCatalog, StockQueries
 from fragancia_api.modules.inventory.contracts import (
     InventorySettingsResponse,
+    ReservationHoldPage,
     StockLine,
     StockMovementPage,
     StockPage,
@@ -12,7 +13,11 @@ from fragancia_api.modules.inventory.domain.errors import (
     PresentationNotFound,
     PresentationNotStocked,
 )
-from fragancia_api.modules.inventory.domain.stock import effective_threshold, is_low
+from fragancia_api.modules.inventory.domain.stock import (
+    available_units,
+    effective_threshold,
+    is_low,
+)
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 
 
@@ -29,18 +34,21 @@ class GetStock:
             return Err(PresentationNotFound())
         if not found.stocked:
             return Err(PresentationNotStocked())
-        on_hand, override = await self._queries.get(presentation_id) or (0, None)
+        on_hand, reserved, override = await self._queries.get(presentation_id) or (0, 0, None)
         global_threshold = await self._queries.low_stock_threshold()
         threshold = effective_threshold(override, global_threshold)
+        available = available_units(on_hand, reserved)
         return Ok(
             StockResponse(
                 presentation_id=presentation_id,
                 perfume_id=found.perfume_id,
                 label=found.label,
                 on_hand=on_hand,
+                reserved=reserved,
+                available=available,
                 threshold_override=override,
                 effective_threshold=threshold,
-                is_low=is_low(on_hand, override, global_threshold),
+                is_low=is_low(available, override, global_threshold),
             )
         )
 
@@ -58,6 +66,22 @@ class ListMovements:
         if presentation_id not in await self._catalog.describe([presentation_id]):
             return Err(PresentationNotFound())
         return Ok(await self._queries.movements(presentation_id, page=page, size=size))
+
+
+class ListReservationHolds:
+    """Query: the active reservations holding units of one presentation, soonest expiry
+    first."""
+
+    def __init__(self, catalog: PresentationCatalog, queries: StockQueries) -> None:
+        self._catalog = catalog
+        self._queries = queries
+
+    async def execute(
+        self, presentation_id: UUID, *, page: int, size: int
+    ) -> Result[ReservationHoldPage, DomainError]:
+        if presentation_id not in await self._catalog.describe([presentation_id]):
+            return Err(PresentationNotFound())
+        return Ok(await self._queries.active_holds(presentation_id, page=page, size=size))
 
 
 class ListStock:
@@ -78,16 +102,19 @@ class ListStock:
         global_threshold = await self._queries.low_stock_threshold()
         lines: list[StockLine] = []
         for presentation in presentations:
-            on_hand, override = counted.get(presentation.presentation_id, (0, None))
+            on_hand, reserved, override = counted.get(presentation.presentation_id, (0, 0, None))
             threshold = effective_threshold(override, global_threshold)
+            available = available_units(on_hand, reserved)
             lines.append(
                 StockLine(
                     presentation_id=presentation.presentation_id,
                     perfume_id=presentation.perfume_id,
                     label=presentation.label,
                     on_hand=on_hand,
+                    reserved=reserved,
+                    available=available,
                     effective_threshold=threshold,
-                    is_low=is_low(on_hand, override, global_threshold),
+                    is_low=is_low(available, override, global_threshold),
                 )
             )
         if low:

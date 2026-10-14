@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: inventory
 min_implementer: high
 depends_on: ["001", "002"]
@@ -377,6 +377,44 @@ the API and the worker running. There is no HTTP route to reserve (out of scope)
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+All cosmetic, fixed forward (no design or scope impact):
+
+- **Step 1.** Added a pure helper `available_units(on_hand, reserved)` in `domain/stock.py`.
+  `StockItem.available` and the queries (`GetStock`, `ListStock`) share it, so the
+  `max(on_hand − reserved, 0)` rule exists only once. `StockItem.__init__` also defaults
+  `reserved` to 0 (not just `empty`), so existing callers keep working (step 6). The common
+  ledger append moved into a private `StockItem._append`, which `record_movement` and `sell`
+  both use.
+- **Step 4, refusal details of a held commit.** The plan says a refusal lists "every short
+  line" but gives a shape only for `StockUnavailable`. `StockInsufficient` from
+  `CommitReservation` uses `{"lines": [{"presentation_id", "requested", "on_hand"}]}`.
+  `presentation_id` is a string in both, so the details serialize as JSON.
+- **Step 4, unknown id.** `ExtendReservation` and `ReleaseReservation` also answer
+  `ReservationNotFound` for an unknown id. The plan states this only for commit.
+- **Step 4, `updated_at`.** Reserve, release and expire leave `stock_items.updated_at` as it
+  is (the domain's `hold`/`unhold` don't stamp it, as `set_threshold` doesn't). Only the
+  `sale` movement of a commit stamps it, like every movement. The plan doesn't specify this.
+- **Step 4, `ExpireReservations`.** Takes the settings row (share) after claiming the
+  reservations, as the lock-order comment says, to stamp the events with the effective
+  threshold. It logs `inventory.reservations_expired` with the count.
+- **Step 3, migration.** `uv run just db-revision` already numbered it `0014` (no rename).
+  Autogenerate did not detect the new `ck_stock_items_reserved_not_negative` check on the
+  existing table, so it was added by hand (`op.create_check_constraint`, dropped in the
+  downgrade). A round trip on the test database (upgrade → downgrade 0013 → upgrade) ran
+  clean, and `alembic check` reports no drift. Applied to the development database with
+  `uv run just db-migrate`.
+- **Step 6, tests.** Minimal shape updates only: `tests/unit/inventory/test_stock_http.py`
+  (the new `reserved`/`available` keys) and `tests/integration/inventory/test_sql_stock.py`
+  (`StockQueries.get`/`on_hand_by_id` 3-tuples). `tests/integration/catalog/` needed no
+  change.
+
+Commands run: `uv run just typecheck` ✔, `uv run just arch` ✔ (7 kept), `uv run just openapi`
+✔, `uv run just check` ✔, `uv run just test-integration` ✔ (581 passed, 5 skipped),
+`uv run just plans-scope plans/inventory-stock/003-reservations.md` ✔ (every change inside
+the plan). Not run: the worker process itself (`cron:inventory_expire_reservations` is
+registered through `AppModule.jobs` but was not seen running), and the acceptance criteria
+against the running app (verify phase).
 
 ## Test coverage
 

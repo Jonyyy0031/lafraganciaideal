@@ -274,6 +274,8 @@ async def test_get_stock_shows_label_units_and_threshold(client: AsyncClient) ->
         "perfume_id": str(UUID(int=201)),
         "label": "Versace Eros EDT 50 ml",
         "on_hand": 20,
+        "reserved": 0,
+        "available": 20,
         "threshold_override": 25,
         "effective_threshold": 25,
         "is_low": True,
@@ -426,6 +428,8 @@ async def test_stock_list_shows_every_in_stock_presentation_and_excludes_made_to
         "perfume_id",
         "label",
         "on_hand",
+        "reserved",
+        "available",
         "effective_threshold",
         "is_low",
     }

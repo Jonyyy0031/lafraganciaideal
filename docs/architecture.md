@@ -172,6 +172,15 @@ POST /api/v1/admin/brands
   `catalog` and `inventory` depend on each other (inventory already depends on the catalog
   facade). The counts therefore lag the confirm by one relay cycle (about 2 s); delivery cannot
   be lost, and it commits with the handler's writes, so a committed delivery is not repeated.
+- **Stock reservations** (a counter under the item's row lock): each `inventory.stock_items`
+  row keeps a `reserved` counter beside `on_hand`, changed under the same row lock, so a
+  reserve and a movement on one presentation serialize. Available is
+  `max(on_hand − reserved, 0)`; the storefront copy, the low-stock flag and the panel use it.
+  Other modules (orders) call the `StockReservations` facade exported by `inventory`:
+  reserve (all or nothing, with the caller's expiry), extend, commit (a `sale` movement per
+  presentation, idempotent) and release. The `inventory_expire_reservations` cron (every
+  minute) claims active reservations past their expiry with `FOR UPDATE SKIP LOCKED`, expires
+  them and frees their units.
 - Example flow _(to be built)_: Mercado Pago webhook → `payments` verifies signature and stores the
   notification idempotently → `payments.payment.approved` → `orders` moves the order to
   `paid` → `orders.order.paid` → `inventory` commits stock, `notifications` emails the customer.

@@ -12,6 +12,7 @@ from fragancia_api.modules.inventory.application.queries.stock import (
     GetInventorySettings,
     GetStock,
     ListMovements,
+    ListReservationHolds,
     ListStock,
 )
 from fragancia_api.modules.inventory.contracts import (
@@ -19,6 +20,7 @@ from fragancia_api.modules.inventory.contracts import (
     InventorySettingsResponse,
     MovementCreated,
     MovementRequest,
+    ReservationHoldPage,
     StockMovementPage,
     StockPage,
     StockResponse,
@@ -76,7 +78,8 @@ async def get_stock(
     presentation_id: UUID,
     use_case: Annotated[GetStock, Depends(provide(GetStock))],
 ) -> StockResponse:
-    """The units on hand, thresholds and low flag of an in-stock presentation. 404
+    """The units on hand, reserved and available, thresholds and low flag (by available) of an
+    in-stock presentation. 404
     `INVENTORY_PRESENTATION_NOT_FOUND`, 422 `INVENTORY_PRESENTATION_NOT_STOCKED`."""
     return unwrap(await use_case.execute(presentation_id))
 
@@ -89,6 +92,18 @@ async def list_stock_movements(
     size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
 ) -> StockMovementPage:
     """The ledger of a presentation, newest first. 404 `INVENTORY_PRESENTATION_NOT_FOUND`."""
+    return unwrap(await use_case.execute(presentation_id, page=page, size=size))
+
+
+@admin.get("/presentations/{presentation_id}/reservations", responses=_404)
+async def list_stock_reservations(
+    presentation_id: UUID,
+    use_case: Annotated[ListReservationHolds, Depends(provide(ListReservationHolds))],
+    page: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 1,
+    size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+) -> ReservationHoldPage:
+    """The active reservations holding units of a presentation, soonest expiry first. 404
+    `INVENTORY_PRESENTATION_NOT_FOUND`."""
     return unwrap(await use_case.execute(presentation_id, page=page, size=size))
 
 

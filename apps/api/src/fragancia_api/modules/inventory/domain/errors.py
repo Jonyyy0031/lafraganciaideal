@@ -42,3 +42,53 @@ class ThresholdInvalid(InvalidValueError):
 class StockInsufficient(ConflictError):
     code: str = "INVENTORY_STOCK_INSUFFICIENT"
     message: str = "There are not enough units on hand for this movement"
+
+
+@dataclass(frozen=True)
+class StockUnavailable(ConflictError):
+    """`details`, set by the command: `{"lines": [{"presentation_id", "requested",
+    "available"}]}`, one entry per short presentation."""
+
+    code: str = "INVENTORY_STOCK_UNAVAILABLE"
+    message: str = "Not enough units are available"
+
+
+@dataclass(frozen=True)
+class ReservationNotFound(NotFoundError):
+    code: str = "INVENTORY_RESERVATION_NOT_FOUND"
+    message: str = "Reservation not found"
+
+
+@dataclass(frozen=True)
+class ReservationReferenceTaken(ConflictError):
+    code: str = "INVENTORY_RESERVATION_REFERENCE_TAKEN"
+    message: str = "A reservation with this reference already exists"
+
+
+@dataclass(frozen=True)
+class ReservationInvalid(InvalidValueError):
+    code: str = "INVENTORY_RESERVATION_INVALID"
+    message: str = (
+        "A reservation needs a reference of 1 to 64 characters and at least one line, each "
+        "with a quantity from 1 to 100000"
+    )
+
+
+@dataclass(frozen=True)
+class ReservationExpiryInvalid(InvalidValueError):
+    code: str = "INVENTORY_RESERVATION_EXPIRY_INVALID"
+    message: str = (
+        "The expiry must be in the future and, when extending, later than the current one"
+    )
+
+
+@dataclass(frozen=True)
+class ReservationNotActive(ConflictError):
+    code: str = "INVENTORY_RESERVATION_NOT_ACTIVE"
+    message: str = "The reservation is not active or is past its expiry"
+
+
+@dataclass(frozen=True)
+class ReservationCommitted(ConflictError):
+    code: str = "INVENTORY_RESERVATION_COMMITTED"
+    message: str = "The reservation was already committed"

@@ -4,16 +4,21 @@ One stock item per in-stock presentation, created by its first movement (a prese
 without one has 0 on hand). Every change is an append-only `Movement`; `on_hand` never goes
 below 0, so a movement that would make it negative is refused.
 
-| kind       | quantity       | effect                       |
-| ---------- | -------------- | ---------------------------- |
-| restock    | 1..max         | adds                         |
-| return     | 1..max         | adds                         |
-| loss       | 1..max         | subtracts                    |
-| adjustment | -max..max, != 0| adds or subtracts            |
-| count      | 0..max         | sets `on_hand` to the number |
+| kind       | quantity       | effect                                   |
+| ---------- | -------------- | ---------------------------------------- |
+| restock    | 1..max         | adds                                     |
+| return     | 1..max         | adds                                     |
+| loss       | 1..max         | subtracts                                |
+| adjustment | -max..max, != 0| adds or subtracts                        |
+| count      | 0..max         | sets `on_hand` to the number             |
+| sale       | 1..max         | subtracts; only a reservation's commit   |
 
-A presentation is low when `on_hand <= effective threshold`: its own override, else the global
-one.
+`reserved` counts the units that active reservations hold; `available` is
+`max(on_hand - reserved, 0)`. A loss or count may leave `on_hand` below `reserved` (it reflects
+the warehouse); `available` is then 0.
+
+A presentation is low when `available <= effective threshold`: its own override, else the
+global one.
 """
 
 from dataclasses import dataclass
@@ -26,6 +31,7 @@ from fragancia_api.modules.inventory.domain.errors import (
     StockInsufficient,
     StockQuantityInvalid,
     StockReasonInvalid,
+    StockUnavailable,
     ThresholdInvalid,
 )
 from fragancia_api.shared.kernel import (
@@ -61,6 +67,7 @@ class MovementKind(StrEnum):
     LOSS = "loss"
     RETURN = "return"
     COUNT = "count"
+    SALE = "sale"
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +115,7 @@ class Movement:
 
 def _quantity_valid(kind: MovementKind, quantity: int) -> bool:
     match kind:
-        case MovementKind.RESTOCK | MovementKind.RETURN | MovementKind.LOSS:
+        case MovementKind.RESTOCK | MovementKind.RETURN | MovementKind.LOSS | MovementKind.SALE:
             return 1 <= quantity <= QUANTITY_MAX
         case MovementKind.ADJUSTMENT:
             return quantity != 0 and abs(quantity) <= QUANTITY_MAX
@@ -121,16 +128,21 @@ def effective_threshold(override: int | None, global_threshold: int) -> int:
     return override if override is not None else global_threshold
 
 
-def is_low(on_hand: int, override: int | None, global_threshold: int) -> bool:
-    """The one low-stock rule: `on_hand <= effective threshold` (equality is low)."""
-    return on_hand <= effective_threshold(override, global_threshold)
+def available_units(on_hand: int, reserved: int) -> int:
+    """What can be bought: the units on hand that no reservation holds, never below 0."""
+    return max(on_hand - reserved, 0)
+
+
+def is_low(available: int, override: int | None, global_threshold: int) -> bool:
+    """The one low-stock rule: `available <= effective threshold` (equality is low)."""
+    return available <= effective_threshold(override, global_threshold)
 
 
 @dataclass(frozen=True, kw_only=True)
 class StockChanged(DomainEvent):
     """The stock figures of a presentation changed. `available` is what can be bought (on hand
-    for now), `threshold` the effective low-stock threshold, `as_of` the time of the change (a
-    consumer keeps the newest)."""
+    minus reserved, never below 0), `threshold` the effective low-stock threshold, `as_of` the
+    time of the change (a consumer keeps the newest)."""
 
     name: ClassVar[str] = "inventory.stock.changed"
     presentation_id: UUID
@@ -147,10 +159,12 @@ class StockItem(AggregateRoot):
         on_hand: int,
         threshold_override: Threshold | None,
         updated_at: datetime,
+        reserved: int = 0,
     ) -> None:
         super().__init__()
         self.presentation_id = presentation_id
         self.on_hand = on_hand
+        self.reserved = reserved
         self.threshold_override = threshold_override
         self.updated_at = updated_at
         self.new_movements: list[Movement] = []
@@ -158,8 +172,17 @@ class StockItem(AggregateRoot):
     @classmethod
     def empty(cls, presentation_id: UUID, now: datetime) -> StockItem:
         return cls(
-            presentation_id=presentation_id, on_hand=0, threshold_override=None, updated_at=now
+            presentation_id=presentation_id,
+            on_hand=0,
+            threshold_override=None,
+            updated_at=now,
+            reserved=0,
         )
+
+    @property
+    def available(self) -> int:
+        """What can be bought: `max(on_hand - reserved, 0)`."""
+        return available_units(self.on_hand, self.reserved)
 
     def record_movement(
         self,
@@ -169,35 +192,81 @@ class StockItem(AggregateRoot):
         actor_id: str,
         now: datetime,
     ) -> Result[Movement, StockQuantityInvalid | StockInsufficient]:
-        if not _quantity_valid(kind, quantity):
+        # A sale only comes from committing a reservation (`sell`).
+        if kind is MovementKind.SALE or not _quantity_valid(kind, quantity):
             return Err(StockQuantityInvalid(details={"kind": kind.value, "max": QUANTITY_MAX}))
         match kind:
             case MovementKind.RESTOCK | MovementKind.RETURN:
                 delta = quantity
-            case MovementKind.LOSS:
+            case MovementKind.LOSS | MovementKind.SALE:
                 delta = -quantity
             case MovementKind.ADJUSTMENT:
                 delta = quantity
             case MovementKind.COUNT:
                 delta = quantity - self.on_hand
-        on_hand_after = self.on_hand + delta
-        if on_hand_after < 0:
+        if self.on_hand + delta < 0:
             return Err(StockInsufficient(details={"on_hand": self.on_hand}))
+        return Ok(self._append(kind, quantity, delta, reason, actor_id, now))
+
+    def hold(self, quantity: int) -> Result[None, StockUnavailable]:
+        """Hold units for a reservation; refused when more than `available` are asked."""
+        if quantity > self.available:
+            return Err(StockUnavailable())
+        self.reserved += quantity
+        return Ok(None)
+
+    def unhold(self, quantity: int) -> None:
+        """Give back units a reservation held (its release or expiry)."""
+        if self.reserved - quantity < 0:
+            raise ValueError("Cannot unhold more units than are reserved")
+        self.reserved -= quantity
+
+    def sell(
+        self,
+        quantity: int,
+        reason: Reason,
+        actor_id: str,
+        now: datetime,
+        *,
+        held: bool,
+    ) -> Result[Movement, StockInsufficient | StockUnavailable]:
+        """Record the `sale` of one line of a committed reservation.
+
+        `held`: the reservation still holds these units, so only `on_hand >= quantity` is
+        required and the hold is consumed. Otherwise (a late commit) the units must be
+        available."""
+        if held:
+            if self.on_hand < quantity:
+                return Err(StockInsufficient(details={"on_hand": self.on_hand}))
+            self.unhold(quantity)
+        elif self.available < quantity:
+            return Err(StockUnavailable())
+        return Ok(self._append(MovementKind.SALE, quantity, -quantity, reason, actor_id, now))
+
+    def _append(
+        self,
+        kind: MovementKind,
+        quantity: int,
+        delta: int,
+        reason: Reason,
+        actor_id: str,
+        now: datetime,
+    ) -> Movement:
         movement = Movement(
             id=new_id(),
             presentation_id=self.presentation_id,
             kind=kind,
             quantity=quantity,
             delta=delta,
-            on_hand_after=on_hand_after,
+            on_hand_after=self.on_hand + delta,
             reason=reason,
             actor_id=actor_id,
             created_at=now,
         )
-        self.on_hand = on_hand_after
+        self.on_hand = movement.on_hand_after
         self.updated_at = now
         self.new_movements.append(movement)
-        return Ok(movement)
+        return movement
 
     def set_threshold(self, threshold: Threshold | None) -> None:
         self.threshold_override = threshold
@@ -211,13 +280,13 @@ class StockItem(AggregateRoot):
     def is_low(self, global_threshold: Threshold) -> bool:
         override = self.threshold_override
         return is_low(
-            self.on_hand, override.value if override is not None else None, global_threshold.value
+            self.available, override.value if override is not None else None, global_threshold.value
         )
 
     def changed_event(self, global_threshold: Threshold, as_of: datetime) -> StockChanged:
         return StockChanged(
             presentation_id=self.presentation_id,
-            available=self.on_hand,
+            available=self.available,
             threshold=self.effective_threshold(global_threshold),
             as_of=as_of,
         )
