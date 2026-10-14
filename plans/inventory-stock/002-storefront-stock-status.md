@@ -324,4 +324,145 @@ Notes:
 
 ## Review findings
 
+Reviewed 2026-10-14 against `main...HEAD` (head `a4f7d74`, clean worktree).
+
+**Checklist: 14/15 passed, 1 N/A, 0 failed.** **Findings: 0 high, 1 medium, 3 low.**
+Status stays `review` because M1 needs a code change.
+
+- [x] `plans-scope`: "Every change is inside the plan" (25 declared, 36 changed, including
+  the test directories and the initiative README). No hot file was touched: `container.py`,
+  `docs/modules.json` and `.importlinter` are unchanged.
+- [x] `uv run just check`: green (2100 unit passed, 3 skipped; harness 685).
+- [x] `uv run just test-integration`: green (551 passed, 5 skipped). This includes
+  `test_migration_0013_backfill.py`.
+- [x] Business rules: `stock_status` and `is_buyable` are in `catalog/domain/perfume.py`. The
+  SQL `_buyable()` in `sql_perfume_queries.py` mirrors `is_buyable`, which the plan requires
+  so the list can filter and sort in SQL (same pattern as `_effective_price`). The status is
+  computed in Python only.
+- [x] CQRS-lite: all three inventory commands publish inside their `TransactionRunner.run`
+  and return `Result`. `ApplyStockChanged` calls the port inside `transactions.run`, which
+  joins the relay's session (`SqlTransactionRunner.run`, the nested branch). The public reads
+  stay on `PerfumeQueries`. `StockRepository.list_all` is a repository method used by a
+  command, not a screen query.
+- [x] Contracts: `stock_status`, `sold_out` and `in_stock` are in `catalog/contracts.py` and
+  the route. `openapi.json` is fresh (`unit/test_openapi.py` is green).
+- [x] Errors: no new expected errors. A malformed payload raises, which is correct for a
+  subscriber because the relay records it and retries.
+- [x] Time, money and ids: `as_of` comes from `Clock`, prices stay in integer cents, and event
+  ids come from `DomainEvent` (`new_id`).
+- [x] Migration `0013` is new. It adds three columns with server defaults, has no foreign
+  keys, and its downgrade drops the three columns. The backfill `UPDATE … FROM
+  inventory.stock_items` is the only cross-schema read, and a comment marks it as a one-time
+  step. The scalar subquery on `inventory.settings` with a fallback of 3 matches Deviation 2.
+- [x] Routes: `in_stock` is added to the existing public route. No new routes.
+- [x] Wiring: the catalog subscribes in `register()` with `SqlStockCopy` created in
+  `module.py`. Inventory passes `platform.events`. `test_container.py` is green.
+- [x] No secrets or personal data.
+- [x] `## Deviations` is honest. I checked Deviation 1 (`SetThreshold` takes `settings`,
+  `UpdateInventorySettings` takes `stock` and `clock`, in `module.py:49-67`) and Deviation 3
+  (`in_stock: bool = False` in `ports.py`, and no SQL copy of the status).
+- [x] Docs: `docs/architecture.md` describes the event-to-copy flow under "Events, outbox and
+  jobs". The `inventory/__init__.py` docstring documents the event and its payload.
+- [ ] N/A: no PR exists yet. The main session writes the six-section body when it opens one.
+
+**The areas I was asked to focus on:**
+
+- **Event path.**
+  - **Payload:** `presentation_id` is a string, `available` = `on_hand`, `threshold` is the
+    effective one, and `as_of` is ISO with an offset (the `DomainEvent.payload` mapping in
+    `_to_json`).
+  - **Movements and thresholds:** `RecordMovement` and `SetThreshold` publish after `save`,
+    with `now` taken under the stock row lock, so their `as_of` values follow the lock order.
+  - **Global settings change:** it publishes one event per item, but the snapshot is
+    unlocked (see M1).
+  - **Newer wins:** `SqlStockCopy.apply` runs one `UPDATE` guarded by
+    `stock_as_of IS NULL OR stock_as_of < :as_of`. It is idempotent, and an equal `as_of` is
+    a no-op.
+  - **Handler failure:** the handler joins the relay's session. An exception rolls back the
+    copy update and leaves `published_at` unset, then `_record_failure` runs in its own
+    transaction. No partial write survives. The perfume repository's presentation upsert
+    only sets `_PRESENTATION_MUTABLE`, so editing a perfume never resets the copy columns.
+- **Money-visible SQL.** Correct.
+  - `price_buyable` is `min(...) FILTER (WHERE buyable)` over active presentations, with
+    `coalesce` to `price_all`. The card, both price filters and the sort use the same
+    `price_from` expression.
+  - `any_buyable` is never null: the inner join with `prices` requires at least one active
+    presentation. `sold_out = NOT any_buyable`, and `in_stock` adds `any_buyable`.
+  - `on_sale` is unchanged. The `count` subquery uses the same conditions.
+- **Rule consistency.** The rules match. Catalog `last_units` is `0 < available <=
+  threshold`, and inventory `is_low` is `on_hand <= effective_threshold`. Both use `<=`. At 0
+  the catalog says `sold_out` and inventory says low, which is consistent. Tests pin the
+  agreement (`test_the_catalog_status_and_the_inventory_low_rule_agree` and its siblings).
+- **Module boundaries.** Clean. This plan adds no imports between catalog and inventory. The
+  only cross-module imports are plan 001's catalog facade. The catalog subscribes by the
+  literal `"inventory.stock.changed"`. The migration backfill is the only cross-schema read.
+- **Migration test.** Acceptable as written; it does not need to be NOT CONFIRMED.
+  - **Isolation:** `-x test=true` routes through `DatabaseSettings.for_tests()`, which raises
+    when `DATABASE_URL_TEST` is missing, so it cannot fall back to the development database.
+  - **Scope:** it only downgrades to `0012`, so it touches nothing but these three columns.
+  - **Cleanup:** the fixture always upgrades to `head`, disposes the pool and restores the
+    settings row. The `DELETE FROM inventory.settings` is preceded by a count assertion and
+    runs on the test database only.
+  - **Precedent:** this improves on the identity precedent, because the reversibility claim
+    now has evidence instead of a manual run.
+  - **Residual risk:** see L3.
+
+### Medium
+
+- **M1: A global threshold change can permanently overwrite the copy with stale figures.**
+  - **Where:** `inventory/application/commands/stock.py:168-169` and
+    `inventory/infrastructure/sql_stock_repository.py:59`.
+  - **What fails:** `UpdateInventorySettings` takes `now` first, then reads every item with
+    an unlocked `SELECT` (`list_all`). Under READ COMMITTED it does not see a concurrent
+    movement that already took its own `now` under the item lock but has not committed yet.
+  - **Failure scenario:**
+    1. A sale of the last unit locks item X and takes `now_m = 10:00:00.000`, with `on_hand`
+       going 1 → 0.
+    2. Before it commits, the admin saves the global threshold. That command takes
+       `now_s = 10:00:00.003`, reads X with `on_hand 1` (the last committed value), and
+       publishes `(available 1, as_of .003)`.
+    3. The movement commits and publishes `(available 0, as_of .000)`.
+    4. The relay applies `.003` and ignores `.000` as older. The copy says 1 unit
+       ("¡Últimas piezas!", counted in `price_from`, shown under `in_stock=true`) while
+       inventory holds 0.
+    5. Nothing self-heals: the copy stays wrong until the next movement or threshold change
+       on X.
+  - **Threshold variant:** the same race on the settings read in `RecordMovement` and
+    `SetThreshold` (`:84`, `:133`) can leave a stale effective threshold.
+  - **Fix direction (implementer's call):**
+    - Make the re-publish read lock the items (`SELECT … FOR UPDATE` ordered by
+      `presentation_id`).
+    - Take `now` after that read.
+    - Update the `list_all` docstring ("read without locking"). It reflects the plan's text,
+      so the repair should note the change in `## Deviations`.
+  - **Why the fix works:** the settings command then waits for in-flight movements and
+    re-reads their committed `on_hand`, and its `as_of` comes later than theirs. A movement
+    that starts after it reads the new global threshold. No lock cycle appears, because the
+    settings command never locks catalog rows.
+  - **Severity:** the window is narrow (a rare admin action concurrent with a movement), but
+    the result is a lasting, customer-visible wrong status and price. A regression test can
+    drive two sessions, or at least assert that `list_all` emits `FOR UPDATE`.
+
+### Low
+
+- **L1 (uncertain): `as_of` is wall-clock time.**
+  - **Where:** `stock.py:74`, `:128` and `:168`.
+  - **Risk:** newer-wins assumes the clock never steps backward. If NTP steps the host clock
+    back between two serialized movements on one item, the later event carries an earlier
+    `as_of` and is ignored until the next change.
+  - **Action:** none required now. A per-item monotonic version (for example
+    `max(now, previous updated_at + 1µs)`) would remove the assumption, and could be added
+    if it ever matters.
+- **L2: The copy's default threshold (3) duplicates the inventory default.**
+  - **Where:** `catalog/infrastructure/tables.py:109` and migration `0013:33` duplicate
+    `DEFAULT_LOW_STOCK_THRESHOLD`.
+  - **Impact:** it only matters for never-counted rows, which are `sold_out` at any
+    threshold. Noted so a future change to the inventory default is not expected to flow
+    here.
+- **L3: The migration test depends on a serial suite.**
+  - **Where:** `tests/integration/catalog/test_migration_0013_backfill.py`.
+  - **Risk:** if the integration suite ever runs in parallel (xdist), the downgrade would
+    drop columns under other tests. The module docstring says so. A skip guard on
+    `PYTEST_XDIST_WORKER` would make that explicit. This is not a blocker today.
+
 ## Verification
