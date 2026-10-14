@@ -674,3 +674,62 @@ Neither needs a product-code change.
 The review is closed, and the plan moves to `verify`.
 
 ## Verification
+
+Verified by the main session on 2026-10-14, against `feat/inventory-excel-stock` at `0461248`.
+The API (`just api`, port 8100) and the worker (`just worker`) were running on the development
+database, migrated to `0013` (no new migration in this plan). The QA script lives in the session
+scratchpad as `qa_inv/qa_import_stock.py`.
+
+**Suites**
+- `uv run just check`: green, with 2201 unit tests passed, 3 skipped, and 685 harness tests passed.
+- `uv run just test-integration`: 581 passed, 5 skipped.
+- `plans-scope`: every change is inside the plan. `xlsx_sheets.py` is declared but unchanged,
+  as step 3 allows.
+
+**Flows driven against the acceptance criteria**
+- [x] **Template.**
+  - `GET /admin/catalog-imports/template` has `Existencias` right after `Entrega máx. (días)`,
+    followed by `Publicado`.
+- [x] **Validation.**
+  - A file with Existencias `2` on a "Sobre pedido" row, `-1`, `100001` and `2.5` came back
+    `invalid`.
+  - Row 2 got `CATALOG_IMPORT_STOCK_MADE_TO_ORDER`, and rows 3–5 got
+    `CATALOG_IMPORT_VALUE_INVALID`, all on column `Existencias`.
+  - A file without the column came back `ready` with `stock_counts: 0`, and was then discarded
+    (204).
+- [x] **Confirm.**
+  - The file updated perfume `qa-versace-qa-confirma-edp` with counts 30 ml → 7, 50 ml → 20
+    (equal to its stock), 75 ml empty and 100 ml → 4. It also created "QA Existencias", with
+    30 ml in stock and count 5, and 100 ml made to order.
+  - Validation reported `stock_counts: 4`. The confirm answered 200 `applied`.
+  - Exactly one `catalog.import.applied` outbox row was written. Its `stock_counts` mapped the
+    four final presentation ids, including the new perfume's 30 ml, to 7, 20, 4 and 5.
+- [x] **Relay, by the real worker.** Within about 2 s of the confirm, `on_hand` was 7, 20, 4 and
+  5. Each latest movement was:
+  - `kind=count`;
+  - reason "Conteo desde la importación de Excel";
+  - actor equal to the confirming user;
+  - the expected delta: +7, 0, −6 and +5.
+- [x] **Overwrite.** 100 ml went from 10 to 4 (delta −6).
+- [x] **Same number.** 50 ml went from 20 to 20, and a count movement with delta 0 was recorded.
+- [x] **Empty cell.** 75 ml stayed at 0, with no new movement.
+- [x] **Storefront.**
+  - `GET /perfumes/qa-versace-qa-confirma-edp` shows 30, 50 and 100 ml `available`, 75 ml
+    `sold_out`, and the made-to-order 200 ml `null`.
+  - The new perfume's copy reads 30 ml `stock_available 5`.
+- [x] **Logs.** There were no errors or warnings in the API or worker logs during the run.
+
+**NOT VERIFIED live** (covered by tests only)
+- **The 403 for an admin without `inventory:manage`.** Both roles have that permission
+  (`identity/domain/user.py:85-86`), so no live user lacks it. It is covered by the command,
+  HTTP and Postgres tests, and by the reviewer's run of the race regression against the old
+  route.
+- **Skipping a presentation switched to "Sobre pedido" between confirm and relay.** The window
+  is about 2 s. It is covered by `test_import_counts_flow.py`.
+- **Reading an import stored before this plan.** It is covered by the integration test of the
+  JSON mappers. I did not read one live.
+
+**Accepted, as noted by the review:** a manual movement recorded during the relay lag is
+overwritten by the imported count (decision 22).
+
+**Verdict: verified.** The plan is ready for the user to mark it `done`.
