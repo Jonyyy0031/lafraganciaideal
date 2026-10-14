@@ -3969,14 +3969,14 @@
             }
           },
           "403": {
+            "description": "The actor is not an admin or lacks the permission (inventory:manage too when the file has Existencias)",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            },
-            "description": "Forbidden"
+            }
           },
           "404": {
             "content": {

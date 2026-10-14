@@ -305,6 +305,12 @@ class ImportStockMadeToOrder(InvalidValueError):
 
 
 @dataclass(frozen=True)
+class ImportStockPermissionRequired(DomainError):
+    code: str = "CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED"
+    message: str = "Confirming a file with Existencias requires inventory:manage"
+
+
+@dataclass(frozen=True)
 class ImportBrandUnknown(InvalidValueError):
     code: str = "CATALOG_IMPORT_BRAND_UNKNOWN"
     message: str = "No brand has this name"

@@ -150,6 +150,7 @@ class InMemoryCatalogImports:
                     presentations_new=summary.presentations_new,
                     presentations_updated=summary.presentations_updated,
                     photos_new=summary.photos_new,
+                    stock_counts=summary.stock_counts,
                 )
                 if summary is not None
                 else None

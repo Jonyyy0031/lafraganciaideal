@@ -186,7 +186,9 @@ async def _forget_the_outbox(container: Container) -> None:
 
 
 async def _confirm(container: Container, import_id: UUID) -> None:
-    result = await container.services.get(ConfirmCatalogImport).execute(import_id, ACTOR)
+    result = await container.services.get(ConfirmCatalogImport).execute(
+        import_id, ACTOR, may_record_stock=True
+    )
     assert isinstance(result, Ok), result
 
 
@@ -415,7 +417,9 @@ async def test_a_stale_confirm_writes_no_event_and_no_count(
         ),
     )
 
-    result = await container.services.get(ConfirmCatalogImport).execute(import_id, ACTOR)
+    result = await container.services.get(ConfirmCatalogImport).execute(
+        import_id, ACTOR, may_record_stock=True
+    )
 
     assert not isinstance(result, Ok)
     assert result.error.code == "CATALOG_IMPORT_STALE"

@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: inventory
 min_implementer: mid
 depends_on: ["001", "catalog-perfumes/008"]
@@ -389,6 +389,8 @@ deviation.
 - The test-file changes for the implementer are only:
   - the `may_record_stock=` argument at the existing `execute` call sites;
   - the xfail marker.
+
+**Repair round 1 done (implementer).** M1, L1, L2 implemented as specified. One extra test edit, forced by the new answer order (404, 409, 403): `test_a_file_with_counts_that_is_not_ready_still_answers_403_before_the_409` was renamed `..._answers_409_before_the_403` and now expects 409 `CATALOG_IMPORT_NOT_READY`. The finding got `plan: inventory-stock/005` because plans-lint requires it for `resolved`. `just check` green; `just test-integration` 580 passed, 5 skipped.
 
 ## Test coverage
 

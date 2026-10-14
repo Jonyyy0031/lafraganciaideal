@@ -1,5 +1,6 @@
 ---
-status: open
+status: resolved
+plan: inventory-stock/005
 module: catalog
 found: 2026-10-14
 ---
@@ -30,3 +31,7 @@ the count, and the confirm route's 403 check (`import_router.py`, decision 21) r
 
 Fast-lane fix: pass `stock_counts=summary.stock_counts` in the in-memory adapter, then drop the
 xfail marker and the test-local subclass `_StoreReportingCounts`.
+
+## Resolution
+
+Resolved by repair round 1 of plan `inventory-stock/005-initial-stock-from-excel-import`: `InMemoryCatalogImports.get` now passes `stock_counts=summary.stock_counts`.

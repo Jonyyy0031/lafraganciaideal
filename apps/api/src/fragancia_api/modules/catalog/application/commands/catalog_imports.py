@@ -41,6 +41,7 @@ from fragancia_api.modules.catalog.domain.errors import (
     ImportNotReady,
     ImportPresentationArchived,
     ImportStale,
+    ImportStockPermissionRequired,
     PerfumeBrandUnavailable,
     PerfumeConcentrationUnavailable,
     PerfumeFamilyUnavailable,
@@ -397,7 +398,9 @@ class ConfirmCatalogImport:
         self._clock = clock
         self._events = events
 
-    async def execute(self, import_id: UUID, actor_id: str) -> Result[None, DomainError]:
+    async def execute(
+        self, import_id: UUID, actor_id: str, *, may_record_stock: bool
+    ) -> Result[None, DomainError]:
         async def work() -> Result[list[str], DomainError]:
             now = self._clock.now()
             catalog_import = await self._imports.get_for_update(import_id)
@@ -406,6 +409,13 @@ class ConfirmCatalogImport:
             plan = catalog_import.plan
             if not catalog_import.is_confirmable(now) or plan is None:
                 return Err(ImportNotReady())
+            # Decision 21, checked under the import lock: the plan cannot change after this.
+            if not may_record_stock and any(
+                presentation.stock_count is not None
+                for perfume in plan.perfumes
+                for presentation in perfume.presentations
+            ):
+                return Err(ImportStockPermissionRequired())
             issues: list[ImportIssue] = []
             old_keys: list[str] = []
             counts: dict[UUID, int] = {}

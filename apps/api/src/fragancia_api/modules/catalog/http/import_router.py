@@ -16,7 +16,11 @@ from fragancia_api.modules.catalog.application.queries.catalog_imports import (
     GetCatalogImport,
 )
 from fragancia_api.modules.catalog.contracts import CatalogImportResponse, CreatedResponse
-from fragancia_api.modules.catalog.domain.errors import ImportFormatInvalid, ImportTooLarge
+from fragancia_api.modules.catalog.domain.errors import (
+    ImportFormatInvalid,
+    ImportStockPermissionRequired,
+    ImportTooLarge,
+)
 from fragancia_api.modules.catalog.http.router import CATALOG_MANAGE
 from fragancia_api.shared.http import (
     ErrorResponse,
@@ -116,7 +120,13 @@ async def get_catalog_import(
 @admin_imports.post(
     "/{import_id}/confirm",
     responses={
-        403: {"model": ErrorResponse},
+        403: {
+            "model": ErrorResponse,
+            "description": (
+                "The actor is not an admin or lacks the permission "
+                "(inventory:manage too when the file has Existencias)"
+            ),
+        },
         404: {"model": ErrorResponse},
         409: {"model": ErrorResponse},
     },
@@ -134,13 +144,14 @@ async def confirm_catalog_import(
     validation: nothing is written, the import stays `ready` and `details.issues` lists each
     affected row (`row`, `column`, `code`, `message`); upload the file again."""
     actor_id: str = request.state.actor.id
-    if INVENTORY_MANAGE not in request.state.actor.permissions:
-        # Decision 21: counts need `inventory:manage`. The plan of a ready import never
-        # changes, so this check cannot race the confirm.
-        current = unwrap(await query.execute(import_id))  # an unknown id still answers 404
-        if current.summary is not None and current.summary.stock_counts > 0:
-            raise Forbidden
-    unwrap(await use_case.execute(import_id, actor_id))
+    result = await use_case.execute(
+        import_id,
+        actor_id,
+        may_record_stock=INVENTORY_MANAGE in request.state.actor.permissions,
+    )
+    if isinstance(result, Err) and isinstance(result.error, ImportStockPermissionRequired):
+        raise Forbidden  # decision 21, decided by the command under the import lock
+    unwrap(result)
     return unwrap(await query.execute(import_id))
 
 

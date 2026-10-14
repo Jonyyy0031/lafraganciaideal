@@ -273,7 +273,7 @@ async def test_confirming_a_valid_plan_creates_new_perfumes_with_the_planned_ids
     )
     import_id = await _store(rig, planned)
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     created = rig.world.perfumes.by_id[UUID(int=7)]
     assert created.slug == "versace-eros-edt"
@@ -295,7 +295,7 @@ async def test_confirming_marks_the_import_applied_with_the_actor_and_the_clock(
     rig = _rig()
     import_id = await _store(rig, _new(rig, 7, "Eros"))
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     item = rig.imports.by_id[import_id]
     assert item.status is ImportStatus.APPLIED
@@ -311,7 +311,7 @@ async def test_confirming_updates_an_existing_perfume_and_keeps_its_presentation
     )
     import_id = await _store(rig, planned)
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     updated = rig.world.perfumes.by_id[stored.id]
     assert (updated.description.value, updated.gender) == ("Nuevo texto", Gender.WOMEN)
@@ -334,7 +334,7 @@ async def test_confirming_adds_a_new_presentation_to_an_existing_perfume() -> No
     )
     import_id = await _store(rig, planned)
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     updated = rig.world.perfumes.by_id[stored.id]
     assert sorted(p.ml.value for p in updated.presentations) == [50, 100]
@@ -359,7 +359,7 @@ async def test_the_publish_column_publishes_hides_or_leaves_the_flag() -> None:
         _new(rig, 8, "Oculto", publish=None, first_row=6),
     )
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     by_id = rig.world.perfumes.by_id
     assert by_id[published.id].is_published is True
@@ -388,7 +388,7 @@ async def test_a_replaced_photo_keeps_its_position_and_its_objects_go_after_the_
     )
     import_id = await _store(rig, planned)
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     photos = rig.world.perfumes.by_id[stored.id].photos
     assert [p.position for p in photos] == [1, 2, 3]
@@ -403,7 +403,7 @@ async def test_a_confirm_without_replaced_photos_deletes_no_objects() -> None:
     rig = _rig()
     import_id = await _store(rig, _new(rig, 7, "Eros"))
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     assert rig.storage.deleted == []
 
@@ -421,7 +421,7 @@ async def test_a_failure_deleting_replaced_objects_does_not_undo_the_confirm() -
     import_id = await _store(rig, planned)
 
     with structlog.testing.capture_logs() as logs:
-        unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+        unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     assert rig.imports.by_id[import_id].status is ImportStatus.APPLIED
     assert [log["event"] for log in logs] == ["catalog_import_objects_not_deleted"]
@@ -437,7 +437,7 @@ async def test_an_unchanged_archived_family_brand_and_concentration_do_not_block
     rig.world.concentration.is_active = False
     import_id = await _store(rig, _existing(rig, stored, presentation_id))
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     assert rig.imports.by_id[import_id].status is ImportStatus.APPLIED
 
@@ -445,10 +445,10 @@ async def test_an_unchanged_archived_family_brand_and_concentration_do_not_block
 async def test_confirming_twice_applies_once_and_the_second_is_not_ready() -> None:
     rig = _rig()
     import_id = await _store(rig, _new(rig, 7, "Eros"))
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
     after_first = _snapshot(rig)
 
-    second = await rig.confirm.execute(import_id, ACTOR)
+    second = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert error_code(second) == "CATALOG_IMPORT_NOT_READY"
     assert _snapshot(rig) == after_first
@@ -460,7 +460,10 @@ async def test_confirming_twice_applies_once_and_the_second_is_not_ready() -> No
 async def test_confirming_an_unknown_import_is_not_found() -> None:
     rig = _rig()
 
-    assert error_code(await rig.confirm.execute(UUID(int=404), ACTOR)) == "CATALOG_IMPORT_NOT_FOUND"
+    assert (
+        error_code(await rig.confirm.execute(UUID(int=404), ACTOR, may_record_stock=True))
+        == "CATALOG_IMPORT_NOT_FOUND"
+    )
 
 
 def _with_status(item: CatalogImport, status: ImportStatus) -> CatalogImport:
@@ -488,7 +491,7 @@ async def test_confirming_an_import_that_is_not_ready_is_refused_and_writes_noth
     await rig.imports.add(item)
     before = _snapshot(rig)
 
-    result = await rig.confirm.execute(item.id, ACTOR)
+    result = await rig.confirm.execute(item.id, ACTOR, may_record_stock=True)
 
     assert error_code(result) == "CATALOG_IMPORT_NOT_READY"
     assert _snapshot(rig) == before
@@ -500,7 +503,7 @@ async def test_a_ready_import_past_expires_at_is_not_ready_even_if_the_cron_did_
     import_id = await _store(rig, _new(rig, 7, "Eros"), expires_at=NOW - timedelta(seconds=1))
     before = _snapshot(rig)
 
-    result = await rig.confirm.execute(import_id, ACTOR)
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert error_code(result) == "CATALOG_IMPORT_NOT_READY"
     assert _snapshot(rig) == before
@@ -510,14 +513,17 @@ async def test_a_ready_import_at_expires_at_exactly_is_not_ready() -> None:
     rig = _rig()
     import_id = await _store(rig, _new(rig, 7, "Eros"), expires_at=NOW)
 
-    assert error_code(await rig.confirm.execute(import_id, ACTOR)) == "CATALOG_IMPORT_NOT_READY"
+    assert (
+        error_code(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
+        == "CATALOG_IMPORT_NOT_READY"
+    )
 
 
 async def test_a_ready_import_one_second_before_expires_at_is_confirmed() -> None:
     rig = _rig()
     import_id = await _store(rig, _new(rig, 7, "Eros"), expires_at=NOW + timedelta(seconds=1))
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
 
 # --- confirm: the stock counts event (plan 005) -----------------------------------------------
@@ -561,7 +567,7 @@ async def test_confirming_publishes_one_event_with_the_final_ids_of_new_and_upda
     )
     import_id = await _store(rig, new, update)
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     [event] = _applied_events(rig)
     assert (event.import_id, event.actor_id) == (import_id, ACTOR)
@@ -579,7 +585,7 @@ async def test_the_ids_in_the_event_are_the_ids_the_presentations_were_saved_wit
         rig, _new(rig, 7, "Eros", presentations=(_presentation(100, 250_000, stock_count=5),))
     )
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     [event] = _applied_events(rig)
     [(presentation_id, count)] = event.stock_counts.items()
@@ -591,7 +597,7 @@ async def test_an_import_without_counts_publishes_the_event_with_an_empty_map() 
     rig = _rig()
     import_id = await _store(rig, _new(rig, 7, "Eros"))
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     [event] = _applied_events(rig)
     assert event.stock_counts == {}
@@ -610,7 +616,7 @@ async def test_a_stale_confirm_publishes_nothing() -> None:
     )
     import_id = await _store(rig, planned, _new(rig, 7, "Eros"))
 
-    result = await rig.confirm.execute(import_id, ACTOR)
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert error_code(result) == "CATALOG_IMPORT_STALE"
     assert rig.events.published == []
@@ -622,7 +628,7 @@ async def test_confirming_an_import_that_is_not_ready_publishes_nothing() -> Non
         rig, _new(rig, 7, "Eros", presentations=(_presentation(stock_count=3),)), expires_at=NOW
     )
 
-    result = await rig.confirm.execute(import_id, ACTOR)
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert error_code(result) == "CATALOG_IMPORT_NOT_READY"
     assert rig.events.published == []
@@ -631,7 +637,7 @@ async def test_confirming_an_import_that_is_not_ready_publishes_nothing() -> Non
 async def test_confirming_an_unknown_import_publishes_nothing() -> None:
     rig = _rig()
 
-    result = await rig.confirm.execute(UUID(int=404), ACTOR)
+    result = await rig.confirm.execute(UUID(int=404), ACTOR, may_record_stock=True)
 
     assert error_code(result) == "CATALOG_IMPORT_NOT_FOUND"
     assert rig.events.published == []
@@ -642,7 +648,7 @@ async def test_confirming_an_unknown_import_publishes_nothing() -> None:
 
 async def _stale_issue(rig: Rig, planned: PlannedPerfume) -> tuple[int | None, str]:
     import_id = await _store(rig, planned)
-    result = await rig.confirm.execute(import_id, ACTOR)
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
     assert error_code(result) == "CATALOG_IMPORT_STALE"
     [issue] = _issues(result)
     return issue
@@ -803,7 +809,7 @@ async def test_stale_a_changed_brand_or_concentration_archived_for_an_existing_p
     )
     import_id = await _store(rig, brand_change, concentration_change)
 
-    result = await rig.confirm.execute(import_id, ACTOR)
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert _issues(result) == [
         (2, "CATALOG_PERFUME_BRAND_UNAVAILABLE"),
@@ -855,7 +861,7 @@ async def test_every_stale_row_is_reported_together_in_plan_order_one_issue_per_
         _new(rig, 9, "Otro", presentations=(), photos=(), publish=True, first_row=6),
     )
 
-    result = await rig.confirm.execute(import_id, ACTOR)
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert error_code(result) == "CATALOG_IMPORT_STALE"
     assert _issues(result) == [
@@ -879,7 +885,7 @@ async def test_perfumes_are_processed_in_identity_order_whatever_the_plan_or_id_
         _new(rig, 5, "Bravo", first_row=4),
     )
 
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     # The in-memory repository inserts in call order: Alfa, Bravo, Charlie.
     assert list(rig.world.perfumes.by_id) == [UUID(int=9), UUID(int=5), UUID(int=3)]
@@ -903,7 +909,7 @@ async def test_issues_come_out_sorted_by_row_even_when_processing_order_differs(
         _existing(rig, low, presentation_of[low.id], first_row=2),
     )
 
-    result = await rig.confirm.execute(import_id, ACTOR)
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert [row for row, _ in _issues(result)] == [2, 4, 6]
 
@@ -914,7 +920,9 @@ async def test_an_issue_carries_row_column_code_and_message() -> None:
     stored.archive()
     rig.world.seed(stored)
     result = await rig.confirm.execute(
-        await _store(rig, _existing(rig, stored, presentation_id, first_row=4)), ACTOR
+        await _store(rig, _existing(rig, stored, presentation_id, first_row=4)),
+        ACTOR,
+        may_record_stock=True,
     )
 
     details = error_details(result)
@@ -948,7 +956,7 @@ async def test_a_stale_confirm_saves_nothing_even_though_valid_perfumes_were_wri
     )
     before = _snapshot(rig)
 
-    result = await rig.confirm.execute(import_id, ACTOR)
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert _issues(result) == [(4, "CATALOG_PERFUME_ARCHIVED")]
     written = rig.transactions.before_rollback["perfumes"]
@@ -972,7 +980,7 @@ async def test_a_stale_confirm_leaves_the_import_ready_with_its_plan_and_deletes
     )
     import_id = await _store(rig, _new(rig, 7, "Nuevo"), planned)
 
-    unwrap_ok_or_stale = await rig.confirm.execute(import_id, ACTOR)
+    unwrap_ok_or_stale = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert error_code(unwrap_ok_or_stale) == "CATALOG_IMPORT_STALE"
     item = rig.imports.by_id[import_id]
@@ -1001,7 +1009,7 @@ async def test_an_unexpected_exception_rolls_back_too_and_deletes_no_objects() -
     rig.world.perfumes.add = exploding_add  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError):
-        await rig.confirm.execute(import_id, ACTOR)
+        await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert _snapshot(rig) == before
     assert rig.storage.deleted == []
@@ -1105,7 +1113,7 @@ async def test_a_failure_deleting_the_staged_objects_does_not_undo_the_discard()
 async def test_a_confirmed_import_cannot_be_discarded_and_its_photos_stay() -> None:
     rig = _rig()
     import_id = await _store(rig, _new(rig, 7, "Eros"))
-    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
 
     result = await rig.discard.execute(import_id)
 

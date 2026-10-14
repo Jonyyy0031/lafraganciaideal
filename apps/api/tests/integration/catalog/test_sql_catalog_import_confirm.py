@@ -328,7 +328,7 @@ async def test_a_stale_confirm_leaves_every_catalog_table_and_the_import_unchang
 
     runner = _ProbeRunner(container, probe)
 
-    result = await _confirm_with(container, runner).execute(import_id, ACTOR)
+    result = await _confirm_with(container, runner).execute(import_id, ACTOR, may_record_stock=True)
 
     assert _issues(result) == [
         (5, "CATALOG_PERFUME_ARCHIVED"),
@@ -364,14 +364,16 @@ async def test_after_a_stale_confirm_the_same_import_confirms_once_the_catalog_i
     )
     import_id = await _store_ready(container, new, existing)
     confirm = container.services.get(ConfirmCatalogImport)
-    assert _issues(await confirm.execute(import_id, ACTOR)) == [(4, "CATALOG_PERFUME_ARCHIVED")]
+    assert _issues(await confirm.execute(import_id, ACTOR, may_record_stock=True)) == [
+        (4, "CATALOG_PERFUME_ARCHIVED")
+    ]
 
     async with container.database.engine.begin() as connection:
         await connection.execute(
             text("UPDATE catalog.perfumes SET is_archived = false WHERE id = :id"),
             {"id": archived},
         )
-    result = await confirm.execute(import_id, ACTOR)
+    result = await confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert isinstance(result, Ok), result
     async with container.database.reader() as session:
@@ -407,7 +409,7 @@ async def test_an_exception_in_the_middle_of_the_confirm_rolls_everything_back_t
     )
 
     with pytest.raises(RuntimeError):
-        await confirm.execute(import_id, ACTOR)
+        await confirm.execute(import_id, ACTOR, may_record_stock=True)
 
     assert calls == 2
     assert await _dump(container) == before
@@ -439,7 +441,9 @@ async def test_a_valid_confirm_writes_new_and_existing_perfumes_and_applies_the_
     )
     import_id = await _store_ready(container, new, update)
 
-    result = await container.services.get(ConfirmCatalogImport).execute(import_id, ACTOR)
+    result = await container.services.get(ConfirmCatalogImport).execute(
+        import_id, ACTOR, may_record_stock=True
+    )
 
     assert isinstance(result, Ok), result
     async with container.database.reader() as session:
@@ -654,7 +658,9 @@ async def test_replacing_a_photo_deletes_the_old_objects_and_keeps_the_staged_on
     import_id = await _store_ready(container, update)
     assert all(bucket.public_get(key).status_code == 200 for key in old_keys + staged)
 
-    result = await container.services.get(ConfirmCatalogImport).execute(import_id, ACTOR)
+    result = await container.services.get(ConfirmCatalogImport).execute(
+        import_id, ACTOR, may_record_stock=True
+    )
 
     assert isinstance(result, Ok), result
     assert [bucket.public_get(key).status_code for key in old_keys] == [404, 404]
@@ -699,7 +705,9 @@ async def test_a_stale_confirm_deletes_no_object_neither_old_nor_staged(
             {"id": perfume_id},
         )
 
-    result = await container.services.get(ConfirmCatalogImport).execute(import_id, ACTOR)
+    result = await container.services.get(ConfirmCatalogImport).execute(
+        import_id, ACTOR, may_record_stock=True
+    )
 
     assert _issues(result) == [(2, "CATALOG_PERFUME_ARCHIVED")]
     assert [bucket.public_get(key).status_code for key in old_keys + staged] == [200] * 4
@@ -745,7 +753,9 @@ async def test_concurrent_confirms_of_the_same_import_have_exactly_one_winner(
     import_id = await _store_ready(container, new)
     confirm = container.services.get(ConfirmCatalogImport)
 
-    results = await asyncio.gather(*(confirm.execute(import_id, f"admin-{n}") for n in range(4)))
+    results = await asyncio.gather(
+        *(confirm.execute(import_id, f"admin-{n}", may_record_stock=True) for n in range(4))
+    )
 
     winners = [r for r in results if isinstance(r, Ok)]
     losers = [_code(r) for r in results if isinstance(r, Err)]
@@ -824,8 +834,8 @@ async def test_confirms_touching_the_same_perfumes_in_opposite_order_do_not_dead
         )
 
     results = await asyncio.gather(
-        gated_confirm().execute(ascending, "admin-1"),
-        gated_confirm().execute(descending, "admin-2"),
+        gated_confirm().execute(ascending, "admin-1", may_record_stock=True),
+        gated_confirm().execute(descending, "admin-2", may_record_stock=True),
     )  # a deadlock would raise out of the gather
 
     assert any(isinstance(r, Ok) for r in results), results
@@ -908,8 +918,8 @@ async def test_confirms_creating_the_same_new_perfume_with_different_ids_do_not_
         )
 
     results = await asyncio.gather(
-        gated_confirm().execute(low_new, "admin-1"),
-        gated_confirm().execute(high_new, "admin-2"),
+        gated_confirm().execute(low_new, "admin-1", may_record_stock=True),
+        gated_confirm().execute(high_new, "admin-2", may_record_stock=True),
     )  # a deadlock would raise out of the gather
 
     assert sum(isinstance(r, Ok) for r in results) == 1, results
@@ -939,7 +949,9 @@ async def test_a_confirm_waits_for_the_expiry_that_holds_the_import_and_is_then_
     expiring: asyncio.Task[Result[None, Any]] = asyncio.create_task(runner.run(expire_slowly))
     await holding.wait()
     confirming: asyncio.Task[Result[None, DomainError]] = asyncio.create_task(
-        container.services.get(ConfirmCatalogImport).execute(import_id, ACTOR)
+        container.services.get(ConfirmCatalogImport).execute(
+            import_id, ACTOR, may_record_stock=True
+        )
     )
     await asyncio.sleep(0.3)
     assert not confirming.done()  # blocked on the row lock

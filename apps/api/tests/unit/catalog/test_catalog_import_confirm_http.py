@@ -396,7 +396,7 @@ async def test_a_file_with_counts_that_is_not_ready_still_answers_403_before_the
 
     response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
 
-    assert (response.status_code, response.json()["code"]) == (403, "FORBIDDEN")
+    assert (response.status_code, response.json()["code"]) == (409, "CATALOG_IMPORT_NOT_READY")
 
 
 async def test_discarding_a_file_with_counts_needs_no_inventory_manage(rig: Rig) -> None:
@@ -438,15 +438,6 @@ async def test_the_openapi_documents_the_403_of_the_confirm_and_the_summary_fiel
     assert "stock_counts" not in summary.get("required", [])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "GAP: plan 005 step 2 - the in-memory CatalogImportQueries "
-        "(infrastructure/in_memory_imports.py:146-153) builds CatalogImportSummary without "
-        "stock_counts, so it always reports 0; the SQL query validates the stored JSON and is "
-        "right (integration test_the_query_reports_stock_counts)"
-    ),
-)
 async def test_the_in_memory_query_reports_the_stock_counts_of_the_summary() -> None:
     store = InMemoryCatalogImports()
     world = World()
