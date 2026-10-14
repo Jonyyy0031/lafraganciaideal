@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: mid
 depends_on: ["001", "catalog-perfumes/008"]
@@ -429,11 +429,11 @@ tests, 1 strict xfail (GAP). Paths are under `apps/api/tests/`; `unit/catalog/` 
 | Handler parses the payload (also the one a real event produces) | `import_applied.py` | application | `::test_the_handler_parses_the_payload_and_records_the_counts_for_the_actor`, `::test_the_handler_accepts_the_payload_a_real_event_produces` | CONFIRMED |
 | Malformed or incomplete payload raises (relay retries) and records nothing | `import_applied.py` | application | `::test_a_malformed_payload_raises_so_the_relay_retries_and_records_nothing`, `::test_a_payload_with_a_missing_field_raises`, `::test_a_bad_entry_after_a_good_one_records_nothing_because_parsing_comes_first` | CONFIRMED |
 | Command `Err` path of the handler (`RuntimeError`) | `import_applied.py` | application | no test: the command returns `Err` only if `Reason.create` fails, and the constant is valid | NOT CONFIRMED (unreachable with the real constant; not tested) |
-| 403 `FORBIDDEN` confirming a file with counts without `inventory:manage`; nothing applied or published | `import_router.py:137-142` | http | `u/c/test_catalog_import_confirm_http.py::test_confirming_a_file_with_counts_is_403_without_inventory_manage_and_applies_nothing` | CONFIRMED (through a test-local query store, see GAP) |
+| 403 `FORBIDDEN` confirming a file with counts without `inventory:manage`; nothing applied or published | `import_router.py:147-153` | http | `u/c/test_catalog_import_confirm_http.py::test_confirming_a_file_with_counts_is_403_without_inventory_manage_and_applies_nothing` | CONFIRMED (through the plain in-memory store, since repair 1) |
 | 200 without counts; 200 with counts and `inventory:manage` (event carries actor and ids) | `import_router.py:137-142` | http | `::test_confirming_a_file_without_counts_is_200_without_inventory_manage`, `::test_confirming_a_file_with_counts_is_200_with_inventory_manage_and_publishes_them` | CONFIRMED |
-| Unknown id still 404; 403 comes before 409 for a non-ready file with counts; discard needs no inventory permission | `import_router.py:137-142` | http | `::test_the_permission_check_for_an_unknown_import_is_still_404`, `::test_a_file_with_counts_that_is_not_ready_still_answers_403_before_the_409`, `::test_discarding_a_file_with_counts_needs_no_inventory_manage` | CONFIRMED |
+| Unknown id still 404; a non-ready file with counts answers 409 before the 403 (order changed by repair 1; this row supersedes the earlier "403 before 409"); discard needs no inventory permission | `import_router.py:147-153`, `catalog_imports.py:409-418` | http | `::test_the_permission_check_for_an_unknown_import_is_still_404`, `::test_a_file_with_counts_that_is_not_ready_still_answers_409_before_the_403`, `::test_discarding_a_file_with_counts_needs_no_inventory_manage` | CONFIRMED |
 | Summary field in the response; OpenAPI documents 403 and an optional `stock_counts` | `contracts.py`, `import_router.py` | http | `::test_the_import_status_reports_how_many_counts_the_confirm_will_record`, `::test_the_openapi_documents_the_403_of_the_confirm_and_the_summary_field` | CONFIRMED |
-| The in-memory query reports `summary.stock_counts` | `in_memory_imports.py:146-153` | http | `::test_the_in_memory_query_reports_the_stock_counts_of_the_summary` | GAP (strict xfail; finding `plans/findings/catalog-in-memory-import-query-drops-stock-counts.md`) |
+| The in-memory query reports `summary.stock_counts` | `in_memory_imports.py:146-153` | http | `::test_the_in_memory_query_reports_the_stock_counts_of_the_summary` | CONFIRMED (was a strict-xfail GAP; repaired in round 1, marker removed by the implementer; finding `plans/findings/catalog-in-memory-import-query-drops-stock-counts.md` resolved) |
 | Template has `Existencias` after `Entrega máx. (días)`, bold, wide, no dropdown; dropdowns unmoved; a count reads back | `xlsx_sheets.py:149-189` | integration | `int/catalog/test_xlsx_sheets.py::test_the_template_has_existencias_after_the_max_lead_time_with_no_dropdown`, `::test_a_count_written_under_existencias_is_read_back_by_the_reader`, existing `::test_the_template_puts_a_list_dropdown_on_the_five_columns_for_rows_2_to_2001` | CONFIRMED |
 | New plan fields round trip; stored as plain JSON (`null` for an empty cell) | `sql_catalog_import_repository.py:50`, `:87` | integration | `int/catalog/test_sql_catalog_imports.py::test_the_stock_counts_round_trip_in_the_summary_and_every_planned_presentation`, `::test_the_counts_are_stored_as_plain_json_and_an_empty_cell_as_null` | CONFIRMED |
 | Imports stored before the plan read with `stock_counts: 0` and no counts (store and query) | `sql_catalog_import_repository.py:61`, `:103`; `sql_catalog_import_queries.py:44` | integration | `::test_an_import_stored_before_plan_005_reads_with_no_counts`, `::test_the_query_reads_an_import_stored_before_plan_005_with_stock_counts_zero`, `::test_the_query_reports_stock_counts` | CONFIRMED |
@@ -448,7 +448,35 @@ tests, 1 strict xfail (GAP). Paths are under `apps/api/tests/`; `unit/catalog/` 
 
 Out-of-plan edits kept minimal and test-only: `tests/unit/inventory/support.py` (`record_counts`
 on `Inventory`), the `events` field on the `Rig` of `test_confirm_catalog_import.py` and
-`test_catalog_import_confirm_http.py`, and the `_StoreReportingCounts` workaround in the latter.
+`test_catalog_import_confirm_http.py`. (The `_StoreReportingCounts` workaround that was also listed
+here was removed in repair round 1, below.)
+
+### Repair round 1 (2026-10-14, tester)
+
+Supersedes, for the rows named below, the coverage above: the permission is now decided by
+`ConfirmCatalogImport.execute(..., may_record_stock=)` under the import lock (`catalog_imports.py:412-418`).
+Baseline before any test: `just check` green (2188 passed, 3 skipped; harness 685 passed),
+`just test-integration` green (580 passed, 5 skipped). Closing: `just check` green (2201 passed,
+3 skipped; harness 685 passed), `just test-integration` green (581 passed, 5 skipped). Added: 13 unit
+tests, 1 integration test, 0 GAPs. The workaround `_StoreReportingCounts` is gone: the `rig` fixture
+uses the plain `InMemoryCatalogImports`, and the existing 403/200 tests pass through it.
+
+| Behavior (from plan / code) | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| Without the permission a file with counts is refused with `CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED`; nothing written (stores unchanged, import `ready`, no event, no deletes, transaction not committed) | `catalog_imports.py:412-418` | application | `u/c/test_confirm_catalog_import.py::test_without_the_permission_a_file_with_counts_is_refused_and_writes_nothing` | CONFIRMED |
+| A count of 0, or one count among many rows (existing perfume, new size) still needs the permission | `catalog_imports.py:413-417` | application | `::test_a_count_of_zero_still_needs_the_permission`, `::test_one_count_among_many_rows_of_an_existing_perfume_needs_the_permission` | CONFIRMED |
+| Without the permission a file without counts confirms (empty event); with it, a file with counts confirms and publishes them | `catalog_imports.py:412-418` | application | `::test_without_the_permission_a_file_without_counts_is_confirmed`, `::test_with_the_permission_a_file_with_counts_is_confirmed_and_publishes_them` | CONFIRMED |
+| Answer order 404 → 409 NOT_READY → permission → stale (unknown id, non-ready status, expired ready, permission before stale) | `catalog_imports.py:405-418` | application | `::test_the_answer_order_is_404_first_even_without_the_permission`, `::test_the_answer_order_is_not_ready_before_the_permission`, `::test_an_expired_ready_import_with_counts_is_not_ready_before_the_permission`, `::test_the_answer_order_is_the_permission_before_the_stale_issues` | CONFIRMED |
+| The permission is decided under the import lock: counts landing between a pre-read and the lock are refused with 403, nothing applied. The store reports no summary to the pre-read and `ready` with counts at `get_for_update` | `import_router.py:147-153` | http | `u/c/test_catalog_import_confirm_http.py::test_counts_that_land_between_a_pre_read_and_the_lock_still_need_inventory_manage` | CONFIRMED (regression of M1; written to fail against the old route, whose pre-read sees `summary is None` and lets the confirm through, which the test asserts via the pre-read; the old code is not re-run, see below) |
+| Router maps the command error to `FORBIDDEN` and never leaks the internal code | `import_router.py:152` | http | `::test_the_403_of_a_refused_count_never_exposes_the_internal_error_code` | CONFIRMED |
+| Stale file with counts: 409 with the permission, 403 without | `catalog_imports.py:412-430` | http | `::test_a_file_with_counts_is_409_stale_for_an_actor_with_inventory_manage`, `::test_a_stale_file_with_counts_answers_403_before_the_stale_409_without_permission` | CONFIRMED |
+| OpenAPI 403 description of the confirm | `import_router.py:123-129`, `openapi.json` | http | `::test_the_openapi_documents_the_403_of_the_confirm_and_the_summary_field` (now asserts the description text) | CONFIRMED |
+| Real `catalog.imports` row locked `FOR UPDATE`: the refusal rolls back (import `ready`, empty outbox, no movement) and the same import then confirms with the permission | `sql_catalog_import_repository.py` `get_for_update`, `catalog_imports.py:403-418` | integration | `int/inventory/test_import_counts_flow.py::test_a_confirm_without_the_permission_locks_the_import_and_refuses_before_writing` | CONFIRMED |
+| A real concurrent race (validation job commits `ready` while a confirm waits on the lock) | `catalog_imports.py:403` | integration | not written: the SQL `get_for_update` blocking behavior is covered by `test_a_confirm_waits_for_the_expiry_that_holds_the_import_and_is_then_not_ready`; the in-memory store stands in for the commit-in-the-window here | NOT CONFIRMED (not exercised against Postgres with the permission) |
+
+The regression test was not run against the pre-repair code: restoring it needs `git checkout`/stash,
+which the harness forbids. Its failure against the old route follows from the code read in
+`ce1e221^`: the route only read `current.summary`, which the store returns as `None` here.
 
 ## Review findings
 

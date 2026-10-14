@@ -431,6 +431,43 @@ async def test_a_stale_confirm_writes_no_event_and_no_count(
     assert status == "ready"
 
 
+async def test_a_confirm_without_the_permission_locks_the_import_and_refuses_before_writing(
+    container: Container,
+    world: World,  # noqa: F811
+) -> None:
+    """Repair 1: the permission is decided by the command on the locked row of the real import
+    table; the refusal rolls back, so no event, no count and the import stays ready."""
+    perfume = await seed_perfume(container, world, "Zz Cnt A", presentation_ml=(100,))
+    presentation_id = await _presentation_id(container, perfume, 100)
+    import_id = await _store_ready(
+        container,
+        _planned(
+            world,
+            perfume,
+            "Zz Cnt A",
+            is_new=False,
+            first_row=2,
+            presentations_=(_presentation(100, 2, presentation_id=presentation_id, stock_count=9),),
+        ),
+    )
+
+    result = await container.services.get(ConfirmCatalogImport).execute(
+        import_id, ACTOR, may_record_stock=False
+    )
+
+    assert not isinstance(result, Ok)
+    assert result.error.code == "CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED"
+    assert await outbox_rows(container) == []
+    await relay_all(container)
+    assert await _movements(container, presentation_id) == []
+    async with container.database.reader() as session:
+        status = await session.scalar(select(imports.c.status).where(imports.c.id == import_id))
+    assert status == "ready"
+    # The same import is then confirmable by an actor with the permission.
+    await _confirm(container, import_id)
+    assert len(await _rows_named(container, APPLIED)) == 1
+
+
 async def test_a_presentation_switched_to_made_to_order_before_the_relay_is_skipped_with_a_log(
     container: Container,
     world: World,  # noqa: F811

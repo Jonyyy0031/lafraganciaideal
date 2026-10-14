@@ -2,6 +2,7 @@
 error codes with `details.issues`, access, the response fields)."""
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -66,18 +67,25 @@ class _Resolver:
         return await TestActorResolver().resolve(token)  # `catalog:manage` only
 
 
-class _StoreReportingCounts(InMemoryCatalogImports):
-    """The in-memory query side drops `summary.stock_counts` (see the GAP test below), so this
-    store fills it in from the stored import, as the SQL query does, and the confirm route's
-    permission check can be exercised."""
+class _ValidationFinishesBeforeTheLock(InMemoryCatalogImports):
+    """The race of the review finding M1: a reader that looks before the confirm locks the
+    import sees it `validating` with no summary, and the validation job commits `ready` with
+    its counts just before the confirm takes the row lock (`get_for_update`)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ready_with_counts: CatalogImport | None = None
 
     async def get(self, import_id: UUID) -> CatalogImportResponse | None:
         response = await super().get(import_id)
-        item = self.by_id.get(import_id)
-        if response is None or response.summary is None or item is None or item.summary is None:
+        if response is None or self.ready_with_counts is None:
             return response
-        summary = response.summary.model_copy(update={"stock_counts": item.summary.stock_counts})
-        return response.model_copy(update={"summary": summary})
+        return response.model_copy(update={"status": "validating", "summary": None})
+
+    async def get_for_update(self, import_id: UUID) -> CatalogImport | None:
+        if self.ready_with_counts is not None:
+            self.by_id[import_id] = self.ready_with_counts
+        return await super().get_for_update(import_id)
 
 
 @dataclass
@@ -91,8 +99,19 @@ class Rig:
 
 @pytest.fixture
 async def rig() -> AsyncIterator[Rig]:
+    async with _built(InMemoryCatalogImports()) as built:
+        yield built
+
+
+@pytest.fixture
+async def racing_rig() -> AsyncIterator[Rig]:
+    async with _built(_ValidationFinishesBeforeTheLock()) as built:
+        yield built
+
+
+@asynccontextmanager
+async def _built(store: InMemoryCatalogImports) -> AsyncIterator[Rig]:
     world = World()
-    store = _StoreReportingCounts()
     storage = InMemoryMediaStorage()
     clock = FixedClock(NOW)
     transactions = InMemoryTransactionRunner()
@@ -399,6 +418,60 @@ async def test_a_file_with_counts_that_is_not_ready_still_answers_403_before_the
     assert (response.status_code, response.json()["code"]) == (409, "CATALOG_IMPORT_NOT_READY")
 
 
+async def test_counts_that_land_between_a_pre_read_and_the_lock_still_need_inventory_manage(
+    racing_rig: Rig,
+) -> None:
+    """Regression of review finding M1: the permission is decided under the import lock, not
+    from a read before it. An import that looks without a summary to a pre-read but is `ready`
+    with counts when the confirm locks it must be refused, and nothing is applied."""
+    rig = racing_rig
+    racing = rig.store
+    assert isinstance(racing, _ValidationFinishesBeforeTheLock)
+    item = await _ready(rig, stock_count=5)
+    racing.ready_with_counts = racing.by_id[item.id]
+
+    pre_read = await racing.get(item.id)
+    assert pre_read is not None and pre_read.summary is None  # what the old route saw
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (403, "FORBIDDEN")
+    assert racing.by_id[item.id].status is ImportStatus.READY
+    assert rig.world.perfumes.by_id.get(UUID(int=7)) is None
+    assert rig.events.published == []
+
+
+async def test_the_403_of_a_refused_count_never_exposes_the_internal_error_code(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert "CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED" not in response.text
+
+
+async def test_a_file_with_counts_is_409_stale_for_an_actor_with_inventory_manage(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5, archived_existing=True)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=INVENTORY_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (409, "CATALOG_IMPORT_STALE")
+
+
+async def test_a_stale_file_with_counts_answers_403_before_the_stale_409_without_permission(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5, archived_existing=True)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (403, "FORBIDDEN")
+    assert rig.store.by_id[item.id].status is ImportStatus.READY
+
+
 async def test_discarding_a_file_with_counts_needs_no_inventory_manage(rig: Rig) -> None:
     item = await _ready(rig, stock_count=5)
 
@@ -434,6 +507,10 @@ async def test_the_openapi_documents_the_403_of_the_confirm_and_the_summary_fiel
     summary = document["components"]["schemas"]["CatalogImportSummary"]
 
     assert {"200", "403", "404", "409"} <= set(responses)
+    assert responses["403"]["description"] == (
+        "The actor is not an admin or lacks the permission "
+        "(inventory:manage too when the file has Existencias)"
+    )
     assert summary["properties"]["stock_counts"]["type"] == "integer"
     assert "stock_counts" not in summary.get("required", [])
 

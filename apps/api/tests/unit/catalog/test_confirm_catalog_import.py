@@ -643,6 +643,127 @@ async def test_confirming_an_unknown_import_publishes_nothing() -> None:
     assert rig.events.published == []
 
 
+# --- confirm: the permission to record counts, decided under the import lock (repair 1) ------
+
+
+def _counting(rig: Rig, *, count: int | None = 5) -> PlannedPerfume:
+    return _new(rig, 7, "Eros", presentations=(_presentation(stock_count=count),))
+
+
+async def test_without_the_permission_a_file_with_counts_is_refused_and_writes_nothing() -> None:
+    rig = _rig()
+    import_id = await _store(rig, _counting(rig))
+    before = _snapshot(rig)
+
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=False)
+
+    assert error_code(result) == "CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED"
+    assert _snapshot(rig) == before
+    assert rig.imports.by_id[import_id].status is ImportStatus.READY
+    assert rig.events.published == []
+    assert rig.storage.deleted == []
+    assert rig.transactions.committed is False
+
+
+async def test_a_count_of_zero_still_needs_the_permission() -> None:
+    rig = _rig()
+    import_id = await _store(rig, _counting(rig, count=0))
+
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=False)
+
+    assert error_code(result) == "CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED"
+
+
+async def test_one_count_among_many_rows_of_an_existing_perfume_needs_the_permission() -> None:
+    rig = _rig()
+    stored, presentation_id = _stored(rig)
+    plain = _new(rig, 7, "Eros", first_row=2)
+    counted = _existing(
+        rig,
+        stored,
+        presentation_id,
+        first_row=3,
+        presentations=(
+            _presentation(100, 199_900, presentation_id=presentation_id, row=3),
+            _presentation(50, 99_900, row=4, stock_count=2),
+        ),
+    )
+    import_id = await _store(rig, plain, counted)
+
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=False)
+
+    assert error_code(result) == "CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED"
+    assert rig.events.published == []
+
+
+async def test_without_the_permission_a_file_without_counts_is_confirmed() -> None:
+    rig = _rig()
+    import_id = await _store(rig, _counting(rig, count=None))
+
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=False))
+
+    assert rig.imports.by_id[import_id].status is ImportStatus.APPLIED
+    [event] = _applied_events(rig)
+    assert event.stock_counts == {}
+
+
+async def test_with_the_permission_a_file_with_counts_is_confirmed_and_publishes_them() -> None:
+    rig = _rig()
+    import_id = await _store(rig, _counting(rig))
+
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
+
+    [event] = _applied_events(rig)
+    assert list(event.stock_counts.values()) == [5]
+
+
+async def test_the_answer_order_is_404_first_even_without_the_permission() -> None:
+    rig = _rig()
+
+    result = await rig.confirm.execute(UUID(int=404), ACTOR, may_record_stock=False)
+
+    assert error_code(result) == "CATALOG_IMPORT_NOT_FOUND"
+
+
+async def test_the_answer_order_is_not_ready_before_the_permission() -> None:
+    rig = _rig()
+    item = _with_status(_ready(ImportPlan((_counting(rig),))), ImportStatus.DISCARDED)
+    await rig.imports.add(item)
+
+    result = await rig.confirm.execute(item.id, ACTOR, may_record_stock=False)
+
+    assert error_code(result) == "CATALOG_IMPORT_NOT_READY"
+
+
+async def test_an_expired_ready_import_with_counts_is_not_ready_before_the_permission() -> None:
+    rig = _rig()
+    import_id = await _store(rig, _counting(rig), expires_at=NOW)
+
+    result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=False)
+
+    assert error_code(result) == "CATALOG_IMPORT_NOT_READY"
+
+
+async def test_the_answer_order_is_the_permission_before_the_stale_issues() -> None:
+    rig = _rig()
+    stored, presentation_id = _stored(rig)
+    stored.archive()
+    rig.world.seed(stored)
+    stale = _existing(
+        rig,
+        stored,
+        presentation_id,
+        presentations=(_presentation(100, 1, presentation_id=presentation_id, stock_count=3),),
+    )
+    import_id = await _store(rig, stale)
+
+    refused = await rig.confirm.execute(import_id, ACTOR, may_record_stock=False)
+    stale_result = await rig.confirm.execute(import_id, ACTOR, may_record_stock=True)
+
+    assert error_code(refused) == "CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED"
+    assert error_code(stale_result) == "CATALOG_IMPORT_STALE"
+
+
 # --- confirm: every stale cause ---------------------------------------------------------------
 
 
