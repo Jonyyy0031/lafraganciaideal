@@ -28,8 +28,8 @@ class InMemoryStock:
         item = self.items.get(presentation_id)
         return deepcopy(item) if item is not None else None
 
-    async def list_all(self) -> list[StockItem]:
-        return [deepcopy(item) for item in self.items.values()]
+    async def list_all_for_update(self) -> list[StockItem]:
+        return [deepcopy(self.items[key]) for key in sorted(self.items)]
 
     async def save(self, item: StockItem) -> None:
         self.movements_log.extend(item.new_movements)
@@ -86,6 +86,12 @@ class InMemorySettings:
         self._stock = stock
 
     async def get(self) -> InventorySettings:
+        return self._stock.settings
+
+    async def get_for_update(self) -> InventorySettings:
+        return self._stock.settings
+
+    async def get_for_share(self) -> InventorySettings:
         return self._stock.settings
 
     async def save(self, settings: InventorySettings) -> None:

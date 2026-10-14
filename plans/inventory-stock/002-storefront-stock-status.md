@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: inventory
 min_implementer: mid
 depends_on: ["001"]
@@ -307,6 +307,26 @@ recorded as a deviation.
 
 Product code is the inventory commands, repositories, SQL adapters and in-memory fakes. The
 L3 guard is the only test-file change for the implementer.
+
+**Done (2026-10-14, implementer).**
+1. `SettingsRepository.get_for_update()` and `get_for_share()` added (SQL: insert the default row
+   `ON CONFLICT DO NOTHING`, then `SELECT … FOR UPDATE` / `FOR SHARE`, so there is always a row
+   to lock even before the first settings change; in-memory: plain read).
+   `UpdateInventorySettings` calls `get_for_update()` first. `RecordMovement` and `SetThreshold`
+   read the global threshold with `get_for_share()` after the presentation lookup and before the
+   stock lock (previously read after the save).
+2. `StockRepository.list_all()` renamed `list_all_for_update()` (`FOR UPDATE ORDER BY
+   presentation_id`; in-memory sorted by id). `UpdateInventorySettings` calls it after saving
+   under the settings lock and takes `now` only afterwards.
+3. The lock order is a comment in the three commands.
+4. L3: `tests/integration/catalog/test_migration_0013_backfill.py` skips when
+   `PYTEST_XDIST_WORKER` is set.
+
+Test changes: no existing test broke on the rename or the new methods; the only test edit is the
+L3 guard. Extra deviation (cosmetic): the SQL settings adapter writes the default settings row
+(threshold 3) on the first locked read, which stores the same value `get()` already returned
+for a missing row. `just check` (2100 passed, 3 skipped) and `just test-integration` (551 passed,
+5 skipped) are green.
 
 Then set the status to `testing`. The tester adds these regressions:
 - a settings change and a movement running concurrently end with the catalog copy equal to

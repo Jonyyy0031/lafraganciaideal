@@ -6,6 +6,7 @@ in parallel with others (the suite is serial). Whatever happens, the `finally` b
 database back to `head`."""
 
 import asyncio
+import os
 import sys
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -22,7 +23,13 @@ from fragancia_api.shared.infrastructure.database import SqlTransactionRunner
 from fragancia_api.shared.kernel import Ok
 from tests.integration.catalog.presentation_rows import CatalogRows
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        "PYTEST_XDIST_WORKER" in os.environ,
+        reason="downgrades and upgrades the shared test database: cannot run under pytest-xdist",
+    ),
+]
 
 API_ROOT = Path(__file__).resolve().parents[3]
 COUNTED_AT = datetime(2026, 9, 1, 10, 0, tzinfo=UTC)

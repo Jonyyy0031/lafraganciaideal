@@ -56,8 +56,9 @@ class SqlStockRepository:
             updated_at=row["updated_at"],
         )
 
-    async def list_all(self) -> list[StockItem]:
-        rows = (await self._database.session.execute(select(stock_items))).mappings().all()
+    async def list_all_for_update(self) -> list[StockItem]:
+        statement = select(stock_items).order_by(stock_items.c.presentation_id).with_for_update()
+        rows = (await self._database.session.execute(statement)).mappings().all()
         return [
             StockItem(
                 presentation_id=row["presentation_id"],
