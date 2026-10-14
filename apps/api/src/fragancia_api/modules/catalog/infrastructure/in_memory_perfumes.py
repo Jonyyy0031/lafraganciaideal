@@ -126,6 +126,9 @@ class InMemoryPerfumes:
         copy.photos.sort(key=lambda photo: photo.position)
         return copy
 
+    async def lock_presentations(self, perfume_ids: Sequence[UUID]) -> None:
+        return None
+
     async def save(
         self, perfume: Perfume
     ) -> Result[None, PerfumeAlreadyExists | PresentationAlreadyExists]:

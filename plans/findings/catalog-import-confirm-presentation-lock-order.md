@@ -1,5 +1,6 @@
 ---
-status: open # open → deferred | planned | resolved | discarded (the user decides)
+status: resolved # open → deferred | planned | resolved | discarded (the user decides)
+plan: inventory-stock/003
 module: catalog
 found: 2026-10-14
 ---
@@ -57,3 +58,7 @@ The user decides:
   (perfume row, then its presentations) keeps the same order.
 - **Accept:** PostgreSQL resolves it by aborting one transaction; correct the two comments so
   they do not promise more than the single-perfume save gives.
+
+## Resolution
+
+Fixed in inventory-stock/003 repair round 2: `ConfirmCatalogImport` locks the existing perfume rows by identity, then every existing presentation by id (`PerfumeRepository.lock_presentations`), before writing. Race and unit tests are added by the tester.

@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: inventory
 min_implementer: high
 depends_on: ["001", "002"]
@@ -529,6 +529,10 @@ locks every existing presentation row it will write, in one global id order, bef
 **Scope.** The product code is the three catalog files and the two comments. The implementer
 changes no tests, except call sites that a fake must satisfy (none expected: the new port
 method has a fake).
+
+**Round 2 done (implementer).** No deviations from the spec. `uv run just check` and
+`uv run just test-integration` (654 passed, 5 skipped) green. No tests changed; the in-memory
+fake got a no-op `lock_presentations`.
 
 ## Test coverage
 

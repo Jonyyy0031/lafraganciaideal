@@ -419,10 +419,18 @@ class ConfirmCatalogImport:
             issues: list[ImportIssue] = []
             old_keys: list[str] = []
             counts: dict[UUID, int] = {}
-            # One global lock order, so two confirms cannot deadlock: by identity (brand, name
-            # slug, concentration), which two imports share even for a perfume both create
-            # (each pre-assigns it a different id).
-            for planned in sorted(plan.perfumes, key=_identity_order):
+            # One global lock order, so no wait cycle forms: the import row, the perfume rows by
+            # identity (brand, name slug, concentration, which two imports share even for a
+            # perfume both create, each pre-assigning a different id), then every existing
+            # presentation by id. That keeps an admin perfume save (perfume row, then its
+            # presentations by id), two confirms and a reserve (presentations by id, share)
+            # free of wait cycles.
+            ordered = sorted(plan.perfumes, key=_identity_order)
+            existing_ids = [planned.perfume_id for planned in ordered if not planned.is_new]
+            for perfume_id in existing_ids:
+                await self._perfumes.get_for_update(perfume_id)
+            await self._perfumes.lock_presentations(existing_ids)
+            for planned in ordered:
                 match await self._apply(planned, now):
                     case Err(issue):
                         issues.append(issue)

@@ -4,8 +4,10 @@ Lock order (every command keeps it, so no wait cycle forms):
 
 - `ReserveStock`: the catalog presentations (share), the settings row (share), then the stock
   items, all in `presentation_id` order. The new reservation row is invisible to others until
-  the transaction commits. The catalog's perfume save also writes its presentations in
-  `presentation_id` order, so it cannot form a wait cycle with a multi-line reserve.
+  the transaction commits. The catalog's writers keep the same order: the single perfume save
+  writes its presentations in `presentation_id` order, and the import confirm locks every
+  presentation it will write by id first (`PerfumeRepository.lock_presentations`). Neither
+  forms a wait cycle with a multi-line reserve.
 - The other commands (extend, commit, release, expire): the reservation row(s) first, then the
   settings row (share), then the stock items in `presentation_id` order.
 - Only reservation operations lock reservation rows, and every operation takes stock items in

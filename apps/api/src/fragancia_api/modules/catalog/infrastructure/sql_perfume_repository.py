@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -240,6 +241,16 @@ class SqlPerfumeRepository:
         )
         return _to_perfume(row, presentation_rows, photo_rows)
 
+    async def lock_presentations(self, perfume_ids: Sequence[UUID]) -> None:
+        if not perfume_ids:
+            return
+        await self._database.session.execute(
+            select(presentations.c.id)
+            .where(presentations.c.perfume_id.in_(perfume_ids))
+            .order_by(presentations.c.id)
+            .with_for_update()
+        )
+
     async def save(
         self, perfume: Perfume
     ) -> Result[None, PerfumeAlreadyExists | PresentationAlreadyExists]:
@@ -252,8 +263,9 @@ class SqlPerfumeRepository:
                 await session.execute(
                     update(perfumes).where(perfumes.c.id == perfume.id).values(values)
                 )
-                # Other modules (inventory reservations) lock presentation rows in id order,
-                # so every writer of several presentation rows must use the same order.
+                # Other modules (inventory reservations) lock presentation rows in id order.
+                # Within one perfume this writes in id order; a transaction that saves several
+                # perfumes takes `lock_presentations` first.
                 for presentation in sorted(perfume.presentations, key=lambda p: p.id):
                     row = _presentation_row(perfume.id, presentation)
                     statement = postgresql.insert(presentations).values(row)
