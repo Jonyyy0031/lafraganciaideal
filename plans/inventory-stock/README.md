@@ -153,6 +153,14 @@ changed.
 29. (2026-10-14) **The panel shows units on hand, reserved and available, plus the active
     reservations of each presentation**: reference, units and expiry. The low-stock list and
     flag use available.
+30. (2026-10-14) **Plan 003 repair round.** The review found M1:
+    - a two-size reserve could deadlock with an admin's perfume save, because the catalog
+      wrote presentations in `ml` order while reservations lock them in id order;
+    - following the standing choice to fix review findings, the catalog's perfume save now
+      writes presentations in id order, inside plan 003.
+
+    L1 (a race test pinning the item lock order) and L2 (the comment on a refused reserve
+    inside a caller's transaction) are fixed too.
 
 ## Delivered
 

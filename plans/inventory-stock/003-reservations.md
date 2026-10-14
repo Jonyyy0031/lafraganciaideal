@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: inventory
 min_implementer: high
 depends_on: ["001", "002"]
@@ -415,6 +415,53 @@ Commands run: `uv run just typecheck` ✔, `uv run just arch` ✔ (7 kept), `uv 
 the plan). Not run: the worker process itself (`cron:inventory_expire_reservations` is
 registered through `AppModule.jobs` but was not seen running), and the acceptance criteria
 against the running app (verify phase).
+
+### Repair round 1 (2026-10-14, main session: review → implementing)
+
+**Why.** Review finding M1 (`plans/findings/catalog-perfume-save-presentation-lock-order.md`):
+- `ReserveStock` share-locks catalog presentations in `presentation_id` order.
+- The catalog's perfume save upserts them in `ml` order: the aggregate loads them ordered by
+  `ml` (`modules/catalog/infrastructure/sql_perfume_repository.py:219-224`), and `save`
+  iterates them as loaded (`:254-262`).
+- So a two-size checkout racing an admin save of that perfume can deadlock, and PostgreSQL
+  aborts one side with a 500.
+
+The user chose to fix M1, L1 and L2 in this plan (README decision 30). M1 reaches outside the
+plan's declared files, into the catalog's SQL perfume repository, and is recorded here as a
+deviation.
+
+**Repair spec.**
+1. **M1: the catalog writes presentations in id order.**
+   - Files: `apps/api/src/fragancia_api/modules/catalog/infrastructure/sql_perfume_repository.py`,
+     `plans/findings/catalog-perfume-save-presentation-lock-order.md`.
+   - In `SqlPerfumeRepository.save`, iterate `sorted(perfume.presentations, key=lambda p:
+     p.id)` for the presentation upserts.
+     - Add a comment: other modules (inventory reservations) lock presentation rows in id
+       order, and every writer of several presentation rows must use the same order.
+     - Only the write order changes. The aggregate's `ml` ordering (reads and responses) stays.
+   - `add` inserts rows nobody else can see yet, so it does not need the order. Leave it as is.
+   - No other catalog writer locks or updates several presentation rows:
+     - `sql_stock_copy.py:21` updates one row;
+     - `sql_presentation_directory.py:70` share-locks one row.
+   - Extend the lock-order comment at the top of
+     `modules/inventory/application/commands/reservations.py:3-13`: the catalog presentations
+     are also written in id order by the catalog's perfume save.
+   - The finding gets `status: resolved`, `plan: inventory-stock/003`, and a resolution line.
+2. **L2: the refusal comment.**
+   - Files: `apps/api/src/fragancia_api/modules/inventory/application/commands/reservations.py`.
+   - Rewrite the comment at the `short` refusal (around `:111`): "A standalone call rolls back
+     everything. Inside a caller's transaction, the empty stock rows the locks inserted
+     remain. They read exactly like a presentation never counted (0 on hand), so they are
+     harmless."
+   - Keep the behaviour. The tester adjusts the test that claims no rows are left, so it states
+     the standalone case.
+3. **L1:** test-only, for the tester. A race test pins that a two-line reserve locks the lower
+   `presentation_id` before waiting on the higher one. A catalog race test shows that a
+   two-size reserve and a perfume save of those sizes both finish, with no deadlock, when
+   the presentations were created in reverse `ml` order.
+
+**Scope.** The product code is `sql_perfume_repository.py` (`save` only) and comments in
+`reservations.py`. The implementer changes no tests.
 
 ## Test coverage
 
