@@ -302,6 +302,8 @@ stock item, changed under the item's row lock.
 
 6. **Wiring, job and docs**
    - Files: `apps/api/src/fragancia_api/modules/inventory/module.py` (modify),
+     `apps/api/src/fragancia_api/modules/catalog/infrastructure/sql_perfume_repository.py` (modify, repair round 1),
+     `apps/api/tests/unit/catalog/` (modify, repair round 1),
      `docs/architecture.md` (modify),
      `apps/api/tests/unit/inventory/` (modify), `apps/api/tests/integration/inventory/` (modify),
      `apps/api/tests/integration/catalog/` (modify)
