@@ -82,6 +82,20 @@ changed.
     - **Locked catalog check:** the catalog check happens inside the movement's transaction,
       with the presentation row locked `FOR SHARE`.
     - **Recipe:** the new-module recipe documents the full facade wiring.
+13. (2026-10-14) **A perfume whose presentations are all sold out stays in the public list**,
+    marked "Agotado". This applies when it has nothing made to order.
+14. (2026-10-14) **The "from" price and the price filters and sort count only what can be
+    bought:**
+    - presentations with available units, or made to order;
+    - when a perfume has nothing buyable, its lowest price overall.
+15. (2026-10-14) **The storefront learns the stock through an event plus a copy in the
+    catalog:**
+    - every stock change publishes `inventory.stock.changed` through the outbox;
+    - the catalog keeps a copy on each presentation (available units and effective
+      threshold), so filters and sorting stay in SQL;
+    - the copy lags the panel by the outbox relay, about 2 s.
+16. (2026-10-14) **The public list gains an optional "Solo disponibles" filter**
+    (`in_stock=true`), which hides perfumes with nothing to buy.
 
 ## Delivered
 
