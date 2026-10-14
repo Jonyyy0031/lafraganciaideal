@@ -105,6 +105,27 @@ changed.
 
     L3, the parallel-run guard on the migration test, is also added. L1 (wall-clock ordering)
     and L2 (the default 3 copied into the catalog) are accepted as is.
+18. (2026-10-14) **A number in "Existencias" always sets the stock**, whether or not the
+    presentation was counted before:
+    - it records a physical-count movement;
+    - an empty cell leaves the stock untouched;
+    - the validation summary says how many counts the confirm will record.
+19. (2026-10-14) **"Existencias" on a "Sobre pedido" row is a validation error** on that cell.
+    Made-to-order presentations carry no units (decision 1).
+20. (2026-10-14) **A count equal to the current stock is still recorded**, as a movement with
+    no change. A count from the panel behaves the same way, and the history shows that the
+    stock was verified.
+21. (2026-10-14) **Confirming a file with counts also requires `inventory:manage`.**
+    - Without it the confirm answers 403, and a file without counts needs only
+      `catalog:manage`.
+    - This keeps decision 11: the two permissions can be split later without code changes.
+22. (2026-10-14) **The counts reach inventory through a `catalog.import.applied` event**
+    (architecture, plan 005):
+    - the confirm publishes it through the outbox, in its own transaction;
+    - inventory subscribes and records the count movements;
+    - the counts apply about 2 s after the confirm.
+
+    A direct call would make the catalog and inventory depend on each other.
 
 ## Delivered
 
