@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: inventory
 min_implementer: mid
 depends_on: ["001"]
@@ -270,6 +270,49 @@ This plan exposes the stock status on the storefront. It applies README decision
 - **Cosmetic, step 5:** `PublicPerfumeFilters.in_stock` defaults to `False`, so existing
   constructors keep working. The status rule is computed in Python only (detail); the list uses
   the SQL `_buyable` expression, so there is no SQL copy of the status itself.
+
+### Repair round 1 (2026-10-14, main session: review → implementing)
+
+**Why.** Review finding M1: `UpdateInventorySettings` reads the stock items without a lock and
+stamps `now` before reading them (`application/commands/stock.py:168-169`,
+`infrastructure/sql_stock_repository.py:59`). An uncommitted sale can therefore lose to a
+later-stamped event that carries the old count, and the catalog copy then stays wrong. The
+threshold reads in `RecordMovement` and `SetThreshold` race the same way. Fixed per README
+decision 17. This changes the plan's "read without locking" for the settings path, which is
+recorded as a deviation.
+
+**Repair spec.**
+1. **Settings lock.**
+   - `SettingsRepository` gains `get_for_update()`, which locks the single settings row
+     `FOR UPDATE`, and `get_for_share()`, which locks it `FOR SHARE`. Add both to the SQL
+     adapter and the in-memory fake.
+   - `UpdateInventorySettings` takes `get_for_update()` first, then saves.
+   - `RecordMovement` and `SetThreshold` read the global threshold with `get_for_share()`,
+     after the catalog presentation lookup and before locking the stock item.
+2. **Stock items locked in order.**
+   - `StockRepository.list_all()` becomes `list_all_for_update()`: `SELECT … FOR UPDATE
+     ORDER BY presentation_id`.
+   - `UpdateInventorySettings` calls it after locking the settings row, and only then takes
+     `now = clock.now()` for the events.
+3. **Lock order** (written as a comment in the commands):
+   - movements and threshold changes take the catalog presentation (share), then the settings
+     row (share), then the stock item;
+   - a settings change takes the settings row (update), then every stock item, in
+     `presentation_id` order.
+
+   A settings change waits for any movement holding the settings share lock. A movement
+   waits for a settings change in progress. No wait cycle can form.
+4. **L3.** `test_migration_0013_backfill.py` skips with a clear reason when it runs under
+   pytest-xdist (the `PYTEST_XDIST_WORKER` environment variable is set).
+
+Product code is the inventory commands, repositories, SQL adapters and in-memory fakes. The
+L3 guard is the only test-file change for the implementer.
+
+Then set the status to `testing`. The tester adds these regressions:
+- a settings change and a movement running concurrently end with the catalog copy equal to
+  inventory after the relay, deterministic with a gate;
+- the settings change sees the committed movement's count;
+- the unit tests for the new repository calls.
 
 ## Test coverage
 

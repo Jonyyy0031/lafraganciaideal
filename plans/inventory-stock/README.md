@@ -96,6 +96,15 @@ changed.
     - the copy lags the panel by the outbox relay, about 2 s.
 16. (2026-10-14) **The public list gains an optional "Solo disponibles" filter**
     (`in_stock=true`), which hides perfumes with nothing to buy.
+17. (2026-10-14) **Plan 002 repair round.** The review found M1: a global threshold change
+    racing a movement could leave the storefront copy stale. Following the standing choice to
+    fix review findings, the settings change and the movements now serialize:
+    - the settings row is locked `FOR UPDATE` by a settings change and `FOR SHARE` by
+      movements and threshold changes;
+    - stock items are locked in `presentation_id` order before their events are stamped.
+
+    L3, the parallel-run guard on the migration test, is also added. L1 (wall-clock ordering)
+    and L2 (the default 3 copied into the catalog) are accepted as is.
 
 ## Delivered
 
