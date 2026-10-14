@@ -24,6 +24,7 @@ from fragancia_api.modules.catalog.application.commands.catalog_imports import (
 )
 from fragancia_api.modules.catalog.domain.catalog_import import (
     CatalogImport,
+    CatalogImportApplied,
     ImportPlan,
     ImportStatus,
     ImportSummary,
@@ -104,6 +105,7 @@ class Rig:
     clock: FixedClock
     confirm: ConfirmCatalogImport
     discard: DiscardCatalogImport
+    events: RecordingEventPublisher
 
 
 def _rig(*, fail_deletes: bool = False, world: World | None = None) -> Rig:
@@ -117,6 +119,7 @@ def _rig(*, fail_deletes: bool = False, world: World | None = None) -> Rig:
         imports=imports.by_id,
     )
     clock = FixedClock(NOW)
+    events = RecordingEventPublisher()
     confirm = ConfirmCatalogImport(
         imports=imports,
         perfumes=world.perfumes,
@@ -126,22 +129,27 @@ def _rig(*, fail_deletes: bool = False, world: World | None = None) -> Rig:
         storage=storage,
         transactions=transactions,
         clock=clock,
-        events=RecordingEventPublisher(),
+        events=events,
     )
     discard = DiscardCatalogImport(
         imports=imports, storage=storage, transactions=transactions, clock=clock
     )
-    return Rig(world, imports, storage, transactions, clock, confirm, discard)
+    return Rig(world, imports, storage, transactions, clock, confirm, discard, events)
 
 
 # --- plan builders ----------------------------------------------------------------------------
 
 
 def _presentation(
-    ml: int = 100, price: int = 250_000, *, presentation_id: UUID | None = None, row: int = 2
+    ml: int = 100,
+    price: int = 250_000,
+    *,
+    presentation_id: UUID | None = None,
+    row: int = 2,
+    stock_count: int | None = None,
 ) -> PlannedPresentation:
     return PlannedPresentation(
-        presentation_id, ml, price, None, None, None, "in_stock", None, None, row
+        presentation_id, ml, price, None, None, None, "in_stock", None, None, row, stock_count
     )
 
 
@@ -510,6 +518,123 @@ async def test_a_ready_import_one_second_before_expires_at_is_confirmed() -> Non
     import_id = await _store(rig, _new(rig, 7, "Eros"), expires_at=NOW + timedelta(seconds=1))
 
     unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+
+
+# --- confirm: the stock counts event (plan 005) -----------------------------------------------
+
+
+def _applied_events(rig: Rig) -> list[CatalogImportApplied]:
+    events = [e for e in rig.events.published if isinstance(e, CatalogImportApplied)]
+    assert len(events) == len(rig.events.published)
+    return events
+
+
+def _presentation_of(rig: Rig, perfume_id: UUID, ml: int) -> UUID:
+    [found] = [p.id for p in rig.world.perfumes.by_id[perfume_id].presentations if p.ml.value == ml]
+    return found
+
+
+async def test_confirming_publishes_one_event_with_the_final_ids_of_new_and_updated_counts() -> (
+    None
+):
+    rig = _rig()
+    stored, stored_presentation = _stored(rig)
+    new = _new(
+        rig,
+        7,
+        "Eros",
+        presentations=(
+            _presentation(100, 250_000, stock_count=12),
+            _presentation(50, 150_000, row=3, stock_count=0),
+            _presentation(30, 90_000, row=4),  # no count: absent from the event
+        ),
+    )
+    update = _existing(
+        rig,
+        stored,
+        stored_presentation,
+        presentations=(
+            _presentation(100, 199_900, presentation_id=stored_presentation, stock_count=4),
+            _presentation(75, 120_000, row=6, stock_count=9),  # a new size of a stored perfume
+        ),
+        first_row=5,
+    )
+    import_id = await _store(rig, new, update)
+
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+
+    [event] = _applied_events(rig)
+    assert (event.import_id, event.actor_id) == (import_id, ACTOR)
+    assert event.stock_counts == {
+        _presentation_of(rig, UUID(int=7), 100): 12,
+        _presentation_of(rig, UUID(int=7), 50): 0,
+        stored_presentation: 4,
+        _presentation_of(rig, stored.id, 75): 9,
+    }
+
+
+async def test_the_ids_in_the_event_are_the_ids_the_presentations_were_saved_with() -> None:
+    rig = _rig()
+    import_id = await _store(
+        rig, _new(rig, 7, "Eros", presentations=(_presentation(100, 250_000, stock_count=5),))
+    )
+
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+
+    [event] = _applied_events(rig)
+    [(presentation_id, count)] = event.stock_counts.items()
+    saved = [p.id for p in rig.world.perfumes.by_id[UUID(int=7)].presentations]
+    assert (saved, count) == ([presentation_id], 5)
+
+
+async def test_an_import_without_counts_publishes_the_event_with_an_empty_map() -> None:
+    rig = _rig()
+    import_id = await _store(rig, _new(rig, 7, "Eros"))
+
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR))
+
+    [event] = _applied_events(rig)
+    assert event.stock_counts == {}
+
+
+async def test_a_stale_confirm_publishes_nothing() -> None:
+    rig = _rig()
+    stored, presentation_id = _stored(rig)
+    stored.archive()
+    rig.world.seed(stored)
+    planned = _existing(
+        rig,
+        stored,
+        presentation_id,
+        presentations=(_presentation(100, 1, presentation_id=presentation_id, stock_count=3),),
+    )
+    import_id = await _store(rig, planned, _new(rig, 7, "Eros"))
+
+    result = await rig.confirm.execute(import_id, ACTOR)
+
+    assert error_code(result) == "CATALOG_IMPORT_STALE"
+    assert rig.events.published == []
+
+
+async def test_confirming_an_import_that_is_not_ready_publishes_nothing() -> None:
+    rig = _rig()
+    import_id = await _store(
+        rig, _new(rig, 7, "Eros", presentations=(_presentation(stock_count=3),)), expires_at=NOW
+    )
+
+    result = await rig.confirm.execute(import_id, ACTOR)
+
+    assert error_code(result) == "CATALOG_IMPORT_NOT_READY"
+    assert rig.events.published == []
+
+
+async def test_confirming_an_unknown_import_publishes_nothing() -> None:
+    rig = _rig()
+
+    result = await rig.confirm.execute(UUID(int=404), ACTOR)
+
+    assert error_code(result) == "CATALOG_IMPORT_NOT_FOUND"
+    assert rig.events.published == []
 
 
 # --- confirm: every stale cause ---------------------------------------------------------------

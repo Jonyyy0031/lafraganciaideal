@@ -7,7 +7,7 @@ import pytest
 
 from fragancia_api.modules.catalog.domain import import_cells as cells
 from fragancia_api.shared.kernel import Err, Ok
-from tests.unit.catalog.perfume_support import error_code, unwrap_ok
+from tests.unit.catalog.perfume_support import error_code, error_details, unwrap_ok
 
 INVALID = "CATALOG_IMPORT_VALUE_INVALID"
 
@@ -114,6 +114,37 @@ def test_text_accepts_4000_characters_and_rejects_4001() -> None:
 
 def test_text_measures_the_limit_after_stripping() -> None:
     assert unwrap_ok(cells.text("  " + "x" * 4000 + "  ")) == "x" * 4000
+
+
+# --- stock_count (plan 005) -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cell", "expected"),
+    [(5, 5), (5.0, 5), ("5", 5), (0, 0), (cells.STOCK_COUNT_MAX, cells.STOCK_COUNT_MAX)],
+)
+def test_stock_count_accepts_whole_numbers_from_zero_to_the_maximum(
+    cell: cells.Cell, expected: int
+) -> None:
+    assert unwrap_ok(cells.stock_count(cell)) == expected
+
+
+@pytest.mark.parametrize("cell", [-1, cells.STOCK_COUNT_MAX + 1, "100001"])
+def test_stock_count_out_of_range_is_a_value_error_carrying_the_bounds(cell: cells.Cell) -> None:
+    result = cells.stock_count(cell)
+
+    assert error_code(result) == INVALID
+    assert error_details(result) == {"min": 0, "max": cells.STOCK_COUNT_MAX}
+
+
+@pytest.mark.parametrize("cell", [2.5, "cinco", True, False, None, "", float("nan")])
+def test_stock_count_rejects_non_integral_text_and_booleans(cell: cells.Cell) -> None:
+    assert error_code(cells.stock_count(cell)) == INVALID
+
+
+def test_existencias_is_a_template_column_right_after_the_max_lead_time_and_not_required() -> None:
+    assert cells.COLUMNS[cells.COLUMNS.index("Entrega máx. (días)") + 1] == "Existencias"
+    assert "Existencias" not in cells.REQUIRED_COLUMNS
 
 
 # --- whole_number -----------------------------------------------------------------------------

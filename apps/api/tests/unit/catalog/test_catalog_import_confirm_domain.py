@@ -9,6 +9,7 @@ import pytest
 
 from fragancia_api.modules.catalog.domain.catalog_import import (
     CatalogImport,
+    CatalogImportApplied,
     ImportIssue,
     ImportStatus,
     ImportSummary,
@@ -16,6 +17,7 @@ from fragancia_api.modules.catalog.domain.catalog_import import (
 from fragancia_api.modules.catalog.domain.errors import (
     ImportNotReady,
     ImportStale,
+    ImportStockMadeToOrder,
     PerfumeArchived,
     PhotoNotFound,
 )
@@ -29,7 +31,7 @@ from fragancia_api.modules.catalog.domain.perfume import (
     Photo,
     photo_keys,
 )
-from fragancia_api.shared.kernel import ConflictError, Result, new_id
+from fragancia_api.shared.kernel import ConflictError, InvalidValueError, Result, new_id
 from tests.unit.catalog.import_support import PLAN
 from tests.unit.catalog.perfume_support import (
     LATER,
@@ -95,6 +97,63 @@ def test_apply_marks_a_ready_import_applied_with_who_and_when_and_drops_the_plan
 def test_apply_raises_from_any_status_but_ready(item: CatalogImport) -> None:
     with pytest.raises(ValueError):
         item.apply(T0, "admin-1", {})
+
+
+def test_apply_records_one_import_applied_event_with_the_counts_and_the_actor() -> None:
+    item = _ready()
+    counts = {UUID(int=1): 10, UUID(int=2): 0}
+
+    item.apply(T0, "admin-7", counts)
+
+    [event] = item.pull_events()
+    assert isinstance(event, CatalogImportApplied)
+    assert (event.import_id, event.actor_id, event.stock_counts) == (item.id, "admin-7", counts)
+    assert item.pull_events() == []
+
+
+def test_the_event_copies_the_counts_so_a_later_change_of_the_mapping_does_not_leak() -> None:
+    item = _ready()
+    counts = {UUID(int=1): 10}
+
+    item.apply(T0, "admin-7", counts)
+    counts[UUID(int=2)] = 99
+
+    [event] = item.pull_events()
+    assert isinstance(event, CatalogImportApplied)
+    assert event.stock_counts == {UUID(int=1): 10}
+
+
+def test_the_event_name_is_a_string_for_inventory_and_its_payload_has_string_keys() -> None:
+    item = _ready()
+    item.apply(T0, "admin-7", {UUID(int=1): 10, UUID(int=2): 0})
+
+    [event] = item.pull_events()
+
+    assert CatalogImportApplied.name == "catalog.import.applied"
+    assert event.payload() == {
+        "import_id": str(item.id),
+        "actor_id": "admin-7",
+        "stock_counts": {str(UUID(int=1)): 10, str(UUID(int=2)): 0},
+    }
+
+
+def test_an_import_without_counts_still_records_the_event_with_an_empty_map() -> None:
+    item = _ready()
+
+    item.apply(T0, "admin-7", {})
+
+    [event] = item.pull_events()
+    assert event.payload()["stock_counts"] == {}
+
+
+@pytest.mark.parametrize("item", _not_ready_imports(), ids=lambda i: i.status.value)
+def test_apply_from_a_status_but_ready_records_no_event(item: CatalogImport) -> None:
+    item.pull_events()
+
+    with pytest.raises(ValueError):
+        item.apply(T0, "admin-1", {UUID(int=1): 1})
+
+    assert item.pull_events() == []
 
 
 # --- CatalogImport.discard --------------------------------------------------------------------
@@ -164,6 +223,13 @@ def test_not_ready_and_stale_are_conflicts_with_their_codes() -> None:
     assert not_ready.code == "CATALOG_IMPORT_NOT_READY"
     assert stale.code == "CATALOG_IMPORT_STALE"
     assert stale.details == {"issues": []}
+
+
+def test_a_count_on_a_made_to_order_row_is_an_invalid_value_with_its_own_code() -> None:
+    error = ImportStockMadeToOrder()
+
+    assert isinstance(error, InvalidValueError)
+    assert error.code == "CATALOG_IMPORT_STOCK_MADE_TO_ORDER"
 
 
 # --- Perfume.create with an id ----------------------------------------------------------------

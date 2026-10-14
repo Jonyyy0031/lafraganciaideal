@@ -3,6 +3,7 @@ round trip, claiming with SKIP LOCKED, the expiry selects), the read side, the S
 the validator uses (including `source_url`) and the migration's schema."""
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -544,6 +545,148 @@ async def test_the_expiry_selects_skip_rows_another_transaction_has_locked(store
     await task
 
     assert found == [free.id]
+
+
+# --- plan 005: the stock counts in the stored summary and plan --------------------------------
+
+
+def _ready_with_counts(created_at: datetime, expires_at: datetime) -> CatalogImport:
+    item = _validating(created_at, created_at)
+    base = _plan()
+    first, second = base.perfumes
+    counted = replace(
+        first,
+        presentations=(
+            replace(first.presentations[0], stock_count=12),
+            replace(first.presentations[1], stock_count=0),  # zero is a count, not "empty"
+        ),
+    )
+    item.finish_ready(
+        expires_at - timedelta(hours=1),
+        timedelta(hours=1),
+        3,
+        ImportSummary(1, 2, 3, 4, 5, stock_counts=2),
+        ImportPlan(perfumes=(counted, second)),
+    )
+    return item
+
+
+async def test_the_stock_counts_round_trip_in_the_summary_and_every_planned_presentation(
+    store: Store,
+) -> None:
+    item = _ready_with_counts(T0, T0 + timedelta(hours=1))
+    await store.add(item)
+
+    loaded = await store.load(item.id)
+
+    assert loaded.summary == ImportSummary(1, 2, 3, 4, 5, stock_counts=2)
+    assert loaded.plan == item.plan
+    assert loaded.plan is not None
+    assert [p.stock_count for p in loaded.plan.perfumes[0].presentations] == [12, 0]
+
+
+async def test_the_counts_are_stored_as_plain_json_and_an_empty_cell_as_null(
+    store: Store, container: Container
+) -> None:
+    item = _ready(T0, T0 + timedelta(hours=1))  # no counts
+    counted = _ready_with_counts(T0, T0 + timedelta(hours=1))
+    await store.add(item, counted)
+
+    async with container.database.reader() as session:
+        rows = {
+            row.id: row
+            for row in (
+                await session.execute(
+                    select(imports.c.id, imports.c.summary, imports.c.plan).where(
+                        imports.c.id.in_([item.id, counted.id])
+                    )
+                )
+            ).all()
+        }
+
+    assert rows[counted.id].summary["stock_counts"] == 2
+    assert [p["stock_count"] for p in rows[counted.id].plan["perfumes"][0]["presentations"]] == [
+        12,
+        0,
+    ]
+    assert rows[item.id].summary["stock_counts"] == 0
+    assert [p["stock_count"] for p in rows[item.id].plan["perfumes"][0]["presentations"]] == [
+        None,
+        None,
+    ]
+
+
+async def _store_as_before_plan_005(store: Store, container: Container) -> UUID:
+    """A ready import whose stored JSON has none of the keys plan 005 added."""
+    item = _ready(T0, T0 + timedelta(hours=1))
+    await store.add(item)
+    async with container.database.engine.begin() as connection:
+        count = (
+            await connection.execute(
+                text("SELECT count(*) FROM catalog.imports WHERE id = :id"), {"id": item.id}
+            )
+        ).scalar_one()
+        assert count == 1  # proves the WHERE before the UPDATE
+        await connection.execute(
+            text(
+                "UPDATE catalog.imports SET "
+                "summary = summary - 'stock_counts', "
+                "plan = jsonb_set(plan, '{perfumes}', ("
+                "SELECT jsonb_agg(jsonb_set(perfume, '{presentations}', ("
+                "SELECT coalesce(jsonb_agg(presentation - 'stock_count'), '[]'::jsonb) "
+                "FROM jsonb_array_elements(perfume -> 'presentations') AS presentation))) "
+                "FROM jsonb_array_elements(plan -> 'perfumes') AS perfume)) "
+                "WHERE id = :id"
+            ),
+            {"id": item.id},
+        )
+        stored = (
+            await connection.execute(
+                text("SELECT summary, plan FROM catalog.imports WHERE id = :id"), {"id": item.id}
+            )
+        ).one()
+    assert "stock_counts" not in stored.summary
+    presentations = [p for pf in stored.plan["perfumes"] for p in pf["presentations"]]
+    assert presentations
+    assert all("stock_count" not in p for p in presentations)
+    return item.id
+
+
+async def test_an_import_stored_before_plan_005_reads_with_no_counts(
+    store: Store, container: Container
+) -> None:
+    import_id = await _store_as_before_plan_005(store, container)
+
+    loaded = await store.load(import_id)
+
+    assert loaded.summary == ImportSummary(1, 2, 3, 4, 5, stock_counts=0)
+    assert loaded.plan is not None
+    presentations = [p for pf in loaded.plan.perfumes for p in pf.presentations]
+    assert presentations
+    assert [p.stock_count for p in presentations] == [None] * len(presentations)
+
+
+async def test_the_query_reads_an_import_stored_before_plan_005_with_stock_counts_zero(
+    store: Store, container: Container
+) -> None:
+    import_id = await _store_as_before_plan_005(store, container)
+
+    response = await store.queries.get(import_id)
+
+    assert response is not None
+    assert response.summary is not None
+    assert response.summary.stock_counts == 0
+
+
+async def test_the_query_reports_stock_counts(store: Store) -> None:
+    item = _ready_with_counts(T0, T0 + timedelta(hours=1))
+    await store.add(item)
+
+    response = await store.queries.get(item.id)
+
+    assert response is not None
+    assert response.summary is not None
+    assert response.summary.stock_counts == 2
 
 
 # --- read side --------------------------------------------------------------------------------

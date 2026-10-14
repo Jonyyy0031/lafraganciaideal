@@ -88,6 +88,36 @@ async def test_the_template_has_the_catalogo_sheet_with_the_21_headers_in_order(
     assert all(sheet.column_dimensions[letter].width >= 14 for letter in "ABCDEFGHIJKLMNOPQRSTU")
 
 
+async def test_the_template_has_existencias_after_the_max_lead_time_with_no_dropdown() -> None:
+    workbook = await _template()
+
+    sheet = workbook["Catálogo"]
+    headers = [cell.value for cell in sheet[1]]
+    index = headers.index("Entrega máx. (días)")
+    assert headers[index + 1] == "Existencias"
+    assert sheet.cell(row=1, column=index + 2).font.bold
+    letter = chr(ord("A") + index + 1)
+    assert sheet.column_dimensions[letter].width >= 14
+    assert all(
+        letter not in str(validation.sqref)[0]
+        for validation in sheet.data_validations.dataValidation
+    )
+
+
+async def test_a_count_written_under_existencias_is_read_back_by_the_reader() -> None:
+    data = await OpenpyxlTemplateWriter().build(FAMILIES, CONCENTRATIONS)
+    workbook = load_workbook(BytesIO(data))
+    values_by_header = {"Marca": "Versace", "Nombre": "Eros", "Existencias": 12}
+    workbook["Catálogo"].append([values_by_header.get(column) for column in COLUMNS])
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    sheet = unwrap_ok(await _read(buffer.getvalue()))
+
+    [(_, values)] = sheet.rows
+    assert values[header_key("Existencias")] == 12
+
+
 async def test_the_template_has_a_hidden_lists_sheet_with_every_dropdown_value() -> None:
     workbook = await _template()
 

@@ -16,6 +16,7 @@ from fragancia_api.modules.catalog.application.commands.catalog_imports import (
     DiscardCatalogImport,
 )
 from fragancia_api.modules.catalog.application.queries.catalog_imports import GetCatalogImport
+from fragancia_api.modules.catalog.contracts import CatalogImportResponse
 from fragancia_api.modules.catalog.domain.catalog_import import (
     CatalogImport,
     ImportPlan,
@@ -47,13 +48,36 @@ TTL = timedelta(minutes=60)
 UNKNOWN_ID = UUID(int=404)
 NO_PERMISSION_SESSION = "admin-without-catalog-manage"
 NO_PERMISSION_HEADERS = {"Cookie": f"{SESSION_COOKIE}={NO_PERMISSION_SESSION}"}
+INVENTORY_SESSION = "admin-with-inventory-manage"
+INVENTORY_HEADERS = {"Cookie": f"{SESSION_COOKIE}={INVENTORY_SESSION}"}
 
 
 class _Resolver:
     async def resolve(self, token: str) -> Actor | None:
         if token == NO_PERMISSION_SESSION:
             return Actor(id="no-perm", is_admin=True, session_id=UUID(int=2))
-        return await TestActorResolver().resolve(token)
+        if token == INVENTORY_SESSION:
+            return Actor(
+                id="stock-admin",
+                is_admin=True,
+                session_id=UUID(int=3),
+                permissions=frozenset({"catalog:manage", "inventory:manage"}),
+            )
+        return await TestActorResolver().resolve(token)  # `catalog:manage` only
+
+
+class _StoreReportingCounts(InMemoryCatalogImports):
+    """The in-memory query side drops `summary.stock_counts` (see the GAP test below), so this
+    store fills it in from the stored import, as the SQL query does, and the confirm route's
+    permission check can be exercised."""
+
+    async def get(self, import_id: UUID) -> CatalogImportResponse | None:
+        response = await super().get(import_id)
+        item = self.by_id.get(import_id)
+        if response is None or response.summary is None or item is None or item.summary is None:
+            return response
+        summary = response.summary.model_copy(update={"stock_counts": item.summary.stock_counts})
+        return response.model_copy(update={"summary": summary})
 
 
 @dataclass
@@ -62,15 +86,17 @@ class Rig:
     world: World
     store: InMemoryCatalogImports
     storage: InMemoryMediaStorage
+    events: RecordingEventPublisher
 
 
 @pytest.fixture
 async def rig() -> AsyncIterator[Rig]:
     world = World()
-    store = InMemoryCatalogImports()
+    store = _StoreReportingCounts()
     storage = InMemoryMediaStorage()
     clock = FixedClock(NOW)
     transactions = InMemoryTransactionRunner()
+    events = RecordingEventPublisher()
     services = ServiceRegistry()
     services.add(ActorResolver, _Resolver())  # type: ignore[type-abstract]
     services.add(HealthChecks, HealthChecks())
@@ -86,7 +112,7 @@ async def rig() -> AsyncIterator[Rig]:
             storage=storage,
             transactions=transactions,
             clock=clock,
-            events=RecordingEventPublisher(),
+            events=events,
         ),
     )
     services.add(
@@ -98,10 +124,12 @@ async def rig() -> AsyncIterator[Rig]:
     app = build_app(services, import_routers)
     assert_admin_routes_are_protected(app)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-        yield Rig(client, world, store, storage)
+        yield Rig(client, world, store, storage, events)
 
 
-def _plan(world: World, *, archived_existing: bool = False) -> tuple[ImportPlan, UUID]:
+def _plan(
+    world: World, *, archived_existing: bool = False, stock_count: int | None = None
+) -> tuple[ImportPlan, UUID]:
     new_id_ = UUID(int=7)
     card, detail = photo_keys(new_id_, UUID(int=70))
     new = PlannedPerfume(
@@ -119,7 +147,9 @@ def _plan(world: World, *, archived_existing: bool = False) -> tuple[ImportPlan,
         publish=True,
         first_row=2,
         presentations=(
-            PlannedPresentation(None, 100, 250_000, None, None, None, "in_stock", None, None, 2),
+            PlannedPresentation(
+                None, 100, 250_000, None, None, None, "in_stock", None, None, 2, stock_count
+            ),
         ),
         photos=(
             PlannedPhoto(1, UUID(int=70), "https://img.test/a.jpg", card, detail, 1200, 900, None),
@@ -154,11 +184,16 @@ def _plan(world: World, *, archived_existing: bool = False) -> tuple[ImportPlan,
     return ImportPlan((new, existing)), stored.id
 
 
-async def _ready(rig: Rig, *, archived_existing: bool = False) -> CatalogImport:
-    plan, _ = _plan(rig.world, archived_existing=archived_existing)
+async def _ready(
+    rig: Rig, *, archived_existing: bool = False, stock_count: int | None = None
+) -> CatalogImport:
+    plan, _ = _plan(rig.world, archived_existing=archived_existing, stock_count=stock_count)
+    counts = 0 if stock_count is None else 1
     item = CatalogImport.create(b"PK\x03\x04data", "admin-1", NOW - timedelta(minutes=10))
     item.start(NOW - timedelta(minutes=9))
-    item.finish_ready(NOW - timedelta(minutes=5), TTL, 2, ImportSummary(1, 1, 1, 1, 1), plan)
+    item.finish_ready(
+        NOW - timedelta(minutes=5), TTL, 2, ImportSummary(1, 1, 1, 1, 1, counts), plan
+    )
     await rig.store.add(item)
     return item
 
@@ -302,6 +337,130 @@ async def test_a_stale_confirm_is_409_with_the_issues_of_each_affected_row(rig: 
         ]
     }
     assert rig.store.by_id[item.id].status is ImportStatus.READY
+
+
+# --- confirm: stock counts need inventory:manage (plan 005, decision 21) ----------------------
+
+
+async def test_confirming_a_file_with_counts_is_403_without_inventory_manage_and_applies_nothing(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (403, "FORBIDDEN")
+    assert rig.store.by_id[item.id].status is ImportStatus.READY
+    assert rig.world.perfumes.by_id.get(UUID(int=7)) is None
+    assert rig.events.published == []
+
+
+async def test_confirming_a_file_without_counts_is_200_without_inventory_manage(rig: Rig) -> None:
+    item = await _ready(rig)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200, response.text
+    assert rig.store.by_id[item.id].status is ImportStatus.APPLIED
+    [event] = rig.events.published
+    assert event.payload()["stock_counts"] == {}
+
+
+async def test_confirming_a_file_with_counts_is_200_with_inventory_manage_and_publishes_them(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=INVENTORY_HEADERS)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "applied"
+    [event] = rig.events.published
+    [(presentation_id, count)] = event.payload()["stock_counts"].items()  # type: ignore[attr-defined]
+    saved = rig.world.perfumes.by_id[UUID(int=7)].presentations
+    assert ([str(p.id) for p in saved], count) == ([presentation_id], 5)
+    assert event.payload()["actor_id"] == "stock-admin"
+
+
+async def test_the_permission_check_for_an_unknown_import_is_still_404(rig: Rig) -> None:
+    response = await rig.client.post(f"{BASE}/{UNKNOWN_ID}/confirm", headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (404, "CATALOG_IMPORT_NOT_FOUND")
+
+
+async def test_a_file_with_counts_that_is_not_ready_still_answers_403_before_the_409(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5)
+    rig.store.by_id[item.id].status = ImportStatus.DISCARDED
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (403, "FORBIDDEN")
+
+
+async def test_discarding_a_file_with_counts_needs_no_inventory_manage(rig: Rig) -> None:
+    item = await _ready(rig, stock_count=5)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/discard", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 204
+
+
+async def test_the_import_status_reports_how_many_counts_the_confirm_will_record(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5)
+
+    response = await rig.client.get(f"{BASE}/{item.id}", headers=ADMIN_HEADERS)
+
+    assert response.json()["summary"] == {
+        "perfumes_new": 1,
+        "perfumes_updated": 1,
+        "presentations_new": 1,
+        "presentations_updated": 1,
+        "photos_new": 1,
+        "stock_counts": 1,
+    }
+
+
+async def test_the_openapi_documents_the_403_of_the_confirm_and_the_summary_field(
+    rig: Rig,
+) -> None:
+    app = rig.client._transport.app  # type: ignore[attr-defined]
+    document = app.openapi()
+
+    responses = document["paths"][f"{BASE}/{{import_id}}/confirm"]["post"]["responses"]
+    summary = document["components"]["schemas"]["CatalogImportSummary"]
+
+    assert {"200", "403", "404", "409"} <= set(responses)
+    assert summary["properties"]["stock_counts"]["type"] == "integer"
+    assert "stock_counts" not in summary.get("required", [])
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "GAP: plan 005 step 2 - the in-memory CatalogImportQueries "
+        "(infrastructure/in_memory_imports.py:146-153) builds CatalogImportSummary without "
+        "stock_counts, so it always reports 0; the SQL query validates the stored JSON and is "
+        "right (integration test_the_query_reports_stock_counts)"
+    ),
+)
+async def test_the_in_memory_query_reports_the_stock_counts_of_the_summary() -> None:
+    store = InMemoryCatalogImports()
+    world = World()
+    plan, _ = _plan(world, stock_count=5)
+    item = CatalogImport.create(b"PK\x03\x04data", "admin-1", NOW - timedelta(minutes=10))
+    item.start(NOW - timedelta(minutes=9))
+    item.finish_ready(NOW, TTL, 2, ImportSummary(1, 1, 1, 1, 1, 1), plan)
+    await store.add(item)
+
+    response = await store.get(item.id)
+
+    assert response is not None
+    assert response.summary is not None
+    assert response.summary.stock_counts == 1
 
 
 # --- discard ----------------------------------------------------------------------------------
