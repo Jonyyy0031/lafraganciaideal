@@ -690,4 +690,102 @@ No High findings. Status stays `review`:
 - If the user accepts M1 as the separate finding and accepts or defers L1 and L2, the main
   session can move this plan to `verify`.
 
+### Re-review, repair round 1 (2026-10-14; repair 5895a4d, tests 764a98f)
+
+Reviewed `main...HEAD` with the tree clean. The first review above stands as history; this
+section covers the repair only.
+
+**Checklist: 14/15 pass, 1 not applicable.**
+
+- [x] `plans-scope`: 25 declared, 37 changed, every change inside the plan. No hot file was
+  touched.
+- [x] `uv run just check` is green: 2358 unit passed, 3 skipped; 685 harness; plans and
+  adapters OK.
+- [x] `uv run just test-integration` is green: 654 passed, 5 skipped.
+- [x] Layers, CQRS-lite, contracts, errors, ids and time: the repair changes no contract and
+  no rule. It changes only the write order in `save` and two comments.
+- [x] No migration in the repair. No route change. Wiring unchanged.
+- [x] No secrets or personal data.
+- [x] Deviations are honest. Spot-check: the repair touches only `save`, and `add` keeps the
+  aggregate order (`sql_perfume_repository.py:199`). The claim "no other catalog writer locks or
+  updates several presentation rows" is wrong; see M2.
+- [x] Docs: README decision 30 and the M1 finding (`status: resolved`) are updated.
+- [ ] (n/a) PR body: no PR is open for `feat/inventory-reservations` yet.
+
+**M1, L1, L2 from the first review.**
+
+- **M1, fixed for a single perfume save.** `save` upserts `sorted(perfume.presentations,
+  key=lambda p: p.id)` (`sql_perfume_repository.py:255-257`). Python orders `UUID` by its
+  integer value, which is the byte order PostgreSQL uses for `uuid`, so both sides agree.
+  Mutant: `save` iterating `perfume.presentations` (the old `ml` order) is killed by
+  `test_reservation_lock_order.py::test_a_two_size_reserve_and_a_perfume_save_of_those_sizes_do_not_deadlock`
+  (`DeadlockDetected`).
+- **L1, fixed.** Mutant: `get_many_for_update` locking `ORDER BY presentation_id DESC` and then
+  re-sorting the returned dict ascending in Python (the variant the first review said would pass
+  every test). It is killed by
+  `::test_a_two_line_reserve_locks_the_lower_id_before_waiting_on_the_higher`. The rest of
+  `test_sql_reservations.py` and `test_reservation_races.py` still pass under it, as expected.
+- **L2, fixed.** The comment at `reservations.py:112-114` states the standalone and in-caller
+  cases. The test is renamed and documented as the standalone case. Behaviour is unchanged.
+
+Both mutants were edited in place and restored by hand from a scratchpad copy; `git status` was
+clean after each.
+
+**Bug hunt (the repair, and every catalog path that writes several presentation rows).**
+
+The only writers of `catalog.presentations` are `SqlPerfumeRepository.add` and `save` and
+`SqlStockCopy.apply`.
+- `add` inserts rows nobody else can see.
+- `apply` updates one row per outbox event, one event per transaction.
+- `save` is called once per transaction by the admin commands (`perfumes.py`,
+  `presentations.py`, `photos.py`). Those are covered by the M1 fix.
+- `ConfirmCatalogImport` calls `save` for many perfumes in ONE transaction. That one is not
+  covered.
+
+### Medium
+
+- **M2. A catalog import confirm still writes presentations of several perfumes out of id
+  order, so it can deadlock with a multi-perfume reserve.** Recorded as
+  `plans/findings/catalog-import-confirm-presentation-lock-order.md`. **Reproduced** with a
+  scratch test (in the session scratchpad, not committed).
+  - How the locks cross:
+    - The confirm applies perfumes in identity order (`catalog_imports.py:422-430`). Each
+      `_update` calls `save` (`:601`), which upserts all that perfume's presentations.
+    - So id order holds within one perfume, but not across perfumes.
+    - `ReserveStock` share-locks every line's presentation in global `presentation_id` order
+      (`reservations.py:89-95`).
+  - Failure scenario: perfumes P1 and P2 have presentations `a` and `b` with `b < a`, and P1
+    comes first in identity order. A checkout reserves `a` and `b` while an admin confirms an
+    import that updates both perfumes:
+    1. The reserve share-locks `b`.
+    2. The confirm upserts `a`, then waits on `b`.
+    3. The reserve waits on `a`.
+
+    PostgreSQL aborts one of them, so the checkout or the confirm answers 500. The scratch test
+    saved the two perfumes through `SqlPerfumeRepository` in one transaction against a paused
+    two-line reserve. It raised `psycopg.errors.DeadlockDetected`. With the saves in the other
+    order, both finished.
+  - What is wrong in this plan:
+    - The new comments overclaim: `reservations.py:7-8` ("cannot form a wait cycle with a
+      multi-line reserve") and `sql_perfume_repository.py:255-256` ("every writer of several
+      presentation rows must use the same order", which the confirm breaks).
+    - The repair spec's claim that no other catalog writer updates several presentation rows is
+      wrong.
+  - The fix is in `catalog_imports.py` (outside the plan's files), so the user decides. Same
+    options as M1: fix it here with a deviation, fix it separately, or accept it and correct
+    the two comments. It is rare: it needs a confirm at the same moment as a checkout of
+    perfumes in that import.
+
+No High or Low findings. Status stays `review`: M2 needs a user decision, and either way the
+comments at `reservations.py:7-8` and `sql_perfume_repository.py:255-256` need a code change.
+
+`fragancia_test` afterwards: 0 rows in `inventory.stock_items`, `reservations`,
+`reservation_lines`, `stock_movements`, `catalog.presentations`, `catalog.perfumes` and
+`platform.outbox`. The full integration run left one `catalog.brands` row ("Chanel", created
+2026-01-01). It comes from
+`tests/integration/catalog/test_sql_brands.py::test_unique_violation_is_an_err_and_keeps_the_transaction_usable`,
+a pre-existing catalog test. That file empties `catalog.brands` before each test but not after,
+so the last test's row stays. The reviewer counted it
+(1 row) and deleted it by slug and `created_at`, so `catalog.brands` is empty.
+
 ## Verification
