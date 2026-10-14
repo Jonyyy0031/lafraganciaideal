@@ -252,7 +252,9 @@ class SqlPerfumeRepository:
                 await session.execute(
                     update(perfumes).where(perfumes.c.id == perfume.id).values(values)
                 )
-                for presentation in perfume.presentations:
+                # Other modules (inventory reservations) lock presentation rows in id order,
+                # so every writer of several presentation rows must use the same order.
+                for presentation in sorted(perfume.presentations, key=lambda p: p.id):
                     row = _presentation_row(perfume.id, presentation)
                     statement = postgresql.insert(presentations).values(row)
                     await session.execute(

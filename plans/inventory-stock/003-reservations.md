@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: inventory
 min_implementer: high
 depends_on: ["001", "002"]

@@ -4,7 +4,8 @@ Lock order (every command keeps it, so no wait cycle forms):
 
 - `ReserveStock`: the catalog presentations (share), the settings row (share), then the stock
   items, all in `presentation_id` order. The new reservation row is invisible to others until
-  the transaction commits.
+  the transaction commits. The catalog's perfume save also writes its presentations in
+  `presentation_id` order, so it cannot form a wait cycle with a multi-line reserve.
 - The other commands (extend, commit, release, expire): the reservation row(s) first, then the
   settings row (share), then the stock items in `presentation_id` order.
 - Only reservation operations lock reservation rows, and every operation takes stock items in
@@ -108,7 +109,9 @@ class ReserveStock:
                     case Ok(_):
                         pass
             if short:
-                # Nothing was saved: the runner rolls back whatever the locks inserted.
+                # A standalone call rolls back everything. Inside a caller's transaction, the
+                # empty stock rows the locks inserted remain. They read exactly like a
+                # presentation never counted (0 on hand), so they are harmless.
                 return Err(StockUnavailable(details={"lines": short}))
             if not await self._reservations.add(reservation):
                 return Err(ReservationReferenceTaken())

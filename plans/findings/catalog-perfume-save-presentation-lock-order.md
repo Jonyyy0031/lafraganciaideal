@@ -1,5 +1,6 @@
 ---
-status: open # open → deferred | planned | resolved | discarded (the user decides)
+status: resolved # open → deferred | planned | resolved | discarded (the user decides)
+plan: inventory-stock/003
 module: catalog
 found: 2026-10-14
 ---
@@ -50,3 +51,7 @@ Options (the user decides):
   order of `get_for_update` can stay by `ml`), plus a race test of a perfume save against a
   two-line reserve.
 - **Accept:** PostgreSQL resolves it by aborting one transaction.
+
+## Resolution
+
+Fixed in inventory-stock/003 repair round 1: `SqlPerfumeRepository.save` upserts presentations in `id` order. Race tests are added by the tester.
