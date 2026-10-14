@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: mid
 depends_on: ["001"]
@@ -384,6 +384,33 @@ Notes:
 - **Not covered here.** e2e (no infrastructure; plan layer "no"). The container wiring of the
   new subscription is exercised by the integration flow (`build_container` registers the catalog
   handler) and `tests/unit/test_container.py` stays green.
+
+### Repair round 1 (review M1: settings change versus movement)
+
+Re-run after the repair: `just check` green (2107 passed, 3 skipped; harness 685) and
+`just test-integration` green (564 passed, 5 skipped). New: 7 unit and 13 integration tests, all
+CONFIRMED. The race tests are deterministic: a gated publisher pauses one transaction after it
+wrote its event (uncommitted, locks held) while the other starts; the test asserts the second is
+still blocked after 0.5 s, opens the gate and checks the end state.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| Sale of the last unit while a global threshold change starts: the change waits, and after the relay the copy is `stock_available` 0, threshold 12, `sold_out`; the settings event carries 0 | `inventory/application/commands/stock.py:165-176` (`get_for_update`, `list_all_for_update`, `now` after the locks) | integration | `integration/inventory/test_stock_settings_race.py::test_a_settings_change_waits_for_a_movement_and_the_copy_ends_up_sold_out` | CONFIRMED |
+| The reverse: a movement waits for a settings change in progress and carries the new threshold (4 <= 12: `last_units`) | `inventory/application/commands/stock.py:74-76` (`get_for_share`) | integration | `::test_a_movement_waits_for_a_settings_change_and_carries_the_new_threshold` | CONFIRMED |
+| Two movements on different items do not block each other on the settings row (share vs share) | `inventory/infrastructure/sql_settings_repository.py` (`get_for_share`) | integration | `::test_two_movements_do_not_block_each_other_on_the_settings_row` | CONFIRMED |
+| The settings change sees the committed movement's count (events 2/3 then 2/12, later `as_of`; copy 2, `last_units`) | `inventory/application/commands/stock.py:165-176` | integration | `::test_the_settings_change_publishes_the_count_a_committed_movement_left` | CONFIRMED |
+| `get_for_update` / `get_for_share` insert the default row (threshold 3) when it is missing, and never overwrite a stored value | `inventory/infrastructure/sql_settings_repository.py` (`_locked`) | integration | `::test_a_locked_read_inserts_the_default_settings_row_when_it_is_missing`, `::test_a_locked_read_returns_the_stored_value_and_does_not_overwrite_it` | CONFIRMED |
+| Lock modes conflict as documented (update/update, update/share, share/update block; share/share does not) | same | integration | `::test_the_settings_row_lock_modes_conflict_as_documented` | CONFIRMED |
+| `list_all_for_update` is ordered by `presentation_id` and locks every item (a movement on one waits) | `inventory/infrastructure/sql_stock_repository.py:59` | integration | `::test_list_all_for_update_is_ordered_by_presentation_id_and_locks_every_item` | CONFIRMED |
+| In-memory fakes: both settings locks return the current value (default 3, then the saved one); `list_all_for_update` is sorted and returns copies | `inventory/infrastructure/in_memory.py` | application | `unit/inventory/test_settings_locking.py::test_the_settings_locks_return_the_current_value`, `::test_list_all_for_update_is_ordered_by_presentation_id_and_returns_copies`, `::test_list_all_for_update_of_an_empty_store_is_empty` | CONFIRMED |
+| Lock order the commands use: movement and `SetThreshold` take the settings share lock before the stock lock; a settings change takes the settings row, then every item; a refused movement takes no inventory lock | `inventory/application/commands/stock.py` | application | `::test_a_movement_takes_the_settings_share_lock_before_the_stock_lock`, `::test_set_threshold_takes_the_settings_share_lock_before_the_stock_lock`, `::test_a_settings_change_locks_the_settings_row_then_every_stock_item`, `::test_a_refused_movement_takes_no_inventory_lock` | CONFIRMED |
+
+"Would it have failed before?" Not demonstrated by running the old code (the repair is already
+committed and product code is not mine to revert). By the pre-repair code (`list_all()` unlocked,
+`now` stamped before reading, a plain settings read), the first race test ends with the copy at
+`stock_available` 1: the settings change would not wait, would read count 1 and stamp a later
+event than the sale. Also, the pre-repair repositories had no `get_for_update`, `get_for_share` or
+`list_all_for_update`, so the unit tests and the lock-mode tests could not have passed.
 
 ## Review findings
 
