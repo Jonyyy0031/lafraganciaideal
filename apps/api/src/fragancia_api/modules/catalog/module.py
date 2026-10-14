@@ -321,6 +321,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
             storage=media,
             transactions=platform.transactions,
             clock=platform.clock,
+            events=platform.events,
         ),
     )
     services.add(

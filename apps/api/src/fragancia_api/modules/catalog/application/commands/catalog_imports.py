@@ -41,6 +41,7 @@ from fragancia_api.modules.catalog.domain.errors import (
     ImportNotReady,
     ImportPresentationArchived,
     ImportStale,
+    ImportStockPermissionRequired,
     PerfumeBrandUnavailable,
     PerfumeConcentrationUnavailable,
     PerfumeFamilyUnavailable,
@@ -67,6 +68,7 @@ from fragancia_api.modules.catalog.domain.repositories import (
     PerfumeRepository,
 )
 from fragancia_api.shared.application.clock import Clock
+from fragancia_api.shared.application.events import EventPublisher
 from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 
@@ -352,6 +354,13 @@ def _issues_details(issues: list[ImportIssue]) -> dict[str, object]:
     }
 
 
+type _Counts = list[tuple[UUID, int]]
+"""(presentation id, physical count) of the planned presentations that carry a count."""
+
+type _Applied = tuple[list[str], _Counts]
+"""What applying one perfume leaves: the keys of the replaced photos and its counts."""
+
+
 class ConfirmCatalogImport:
     """Command: apply a ready import, all or nothing, in one transaction.
 
@@ -361,6 +370,9 @@ class ConfirmCatalogImport:
     refusal is collected as an issue (one per perfume, at its row) and the loop goes on, so
     the admin sees every stale row; with any issue the transaction rolls back and the result
     is `ImportStale`. The objects of replaced photos are deleted after the commit.
+
+    Confirming publishes `catalog.import.applied` through the outbox, in the same transaction;
+    inventory turns its stock counts into count movements.
     """
 
     def __init__(
@@ -374,6 +386,7 @@ class ConfirmCatalogImport:
         storage: MediaStorage,
         transactions: TransactionRunner,
         clock: Clock,
+        events: EventPublisher,
     ) -> None:
         self._imports = imports
         self._perfumes = perfumes
@@ -383,8 +396,11 @@ class ConfirmCatalogImport:
         self._storage = storage
         self._transactions = transactions
         self._clock = clock
+        self._events = events
 
-    async def execute(self, import_id: UUID, actor_id: str) -> Result[None, DomainError]:
+    async def execute(
+        self, import_id: UUID, actor_id: str, *, may_record_stock: bool
+    ) -> Result[None, DomainError]:
         async def work() -> Result[list[str], DomainError]:
             now = self._clock.now()
             catalog_import = await self._imports.get_for_update(import_id)
@@ -393,8 +409,16 @@ class ConfirmCatalogImport:
             plan = catalog_import.plan
             if not catalog_import.is_confirmable(now) or plan is None:
                 return Err(ImportNotReady())
+            # Decision 21, checked under the import lock: the plan cannot change after this.
+            if not may_record_stock and any(
+                presentation.stock_count is not None
+                for perfume in plan.perfumes
+                for presentation in perfume.presentations
+            ):
+                return Err(ImportStockPermissionRequired())
             issues: list[ImportIssue] = []
             old_keys: list[str] = []
+            counts: dict[UUID, int] = {}
             # One global lock order, so two confirms cannot deadlock: by identity (brand, name
             # slug, concentration), which two imports share even for a perfume both create
             # (each pre-assigns it a different id).
@@ -402,13 +426,15 @@ class ConfirmCatalogImport:
                 match await self._apply(planned, now):
                     case Err(issue):
                         issues.append(issue)
-                    case Ok(keys):
+                    case Ok((keys, applied_counts)):
                         old_keys.extend(keys)
+                        counts.update(applied_counts)
             if issues:  # the runner rolls back every write of the loop
                 issues.sort(key=lambda i: (i.row if i.row is not None else 0, i.column or ""))
                 return Err(ImportStale(details=_issues_details(issues)))
-            catalog_import.apply(now, actor_id)
+            catalog_import.apply(now, actor_id, counts)
             await self._imports.save(catalog_import)
+            await self._events.publish(catalog_import.pull_events())
             return Ok(old_keys)
 
         match await self._transactions.run(work):
@@ -418,10 +444,9 @@ class ConfirmCatalogImport:
                 await _delete_quietly(self._storage, keys)
                 return Ok(None)
 
-    async def _apply(
-        self, planned: PlannedPerfume, now: datetime
-    ) -> Result[list[str], ImportIssue]:
-        """Write one planned perfume; returns the object keys of the photos it replaced."""
+    async def _apply(self, planned: PlannedPerfume, now: datetime) -> Result[_Applied, ImportIssue]:
+        """Write one planned perfume; returns the object keys of the photos it replaced and
+        the counts of its presentations."""
         match _perfume_values(planned):
             case Err(invalid):
                 return Err(_issue(invalid, planned.first_row))
@@ -433,7 +458,7 @@ class ConfirmCatalogImport:
 
     async def _create(
         self, planned: PlannedPerfume, values: _PerfumeValues, now: datetime
-    ) -> Result[list[str], ImportIssue]:
+    ) -> Result[_Applied, ImportIssue]:
         row = planned.first_row
         brand = await self._brands.get(planned.brand_id)
         if brand is None or not brand.is_active:
@@ -456,6 +481,7 @@ class ConfirmCatalogImport:
             notes=values.notes,
             now=now,
         )
+        counts: _Counts = []
         for planned_presentation in planned.presentations:
             match _presentation_values(planned_presentation):
                 case Err(invalid):
@@ -471,6 +497,9 @@ class ConfirmCatalogImport:
             ):
                 case Err(refused):
                     return Err(_issue(refused, planned_presentation.row))
+                case Ok(presentation_id):
+                    if planned_presentation.stock_count is not None:
+                        counts.append((presentation_id, planned_presentation.stock_count))
         for photo in planned.photos:
             match perfume.add_photo(
                 photo.photo_id,
@@ -490,11 +519,11 @@ class ConfirmCatalogImport:
         match await self._perfumes.add(perfume):  # identity or slug taken meanwhile
             case Err(conflict):
                 return Err(_issue(conflict, row))
-        return Ok([])
+        return Ok(([], counts))
 
     async def _update(
         self, planned: PlannedPerfume, values: _PerfumeValues, now: datetime
-    ) -> Result[list[str], ImportIssue]:
+    ) -> Result[_Applied, ImportIssue]:
         row = planned.first_row
         perfume = await self._perfumes.get_for_update(planned.perfume_id)
         if perfume is None:
@@ -526,10 +555,14 @@ class ConfirmCatalogImport:
         ):
             case Err(archived):
                 return Err(_issue(archived, row))
+        counts: _Counts = []
         for planned_presentation in planned.presentations:
             match await self._upsert_presentation(perfume, planned_presentation, now):
                 case Err(issue):
                     return Err(issue)
+                case Ok(presentation_id):
+                    if planned_presentation.stock_count is not None:
+                        counts.append((presentation_id, planned_presentation.stock_count))
         old_keys: list[str] = []
         for photo in planned.photos:
             if photo.replaces_photo_id is not None:
@@ -568,12 +601,13 @@ class ConfirmCatalogImport:
         match await self._perfumes.save(perfume):  # identity, slug or ml taken meanwhile
             case Err(conflict):
                 return Err(_issue(conflict, row))
-        return Ok(old_keys)
+        return Ok((old_keys, counts))
 
     @staticmethod
     async def _upsert_presentation(
         perfume: Perfume, planned: PlannedPresentation, now: datetime
-    ) -> Result[None, ImportIssue]:
+    ) -> Result[UUID, ImportIssue]:
+        """Add or update one presentation; returns its id."""
         match _presentation_values(planned):
             case Err(invalid):
                 return Err(_issue(invalid, planned.row))
@@ -585,7 +619,8 @@ class ConfirmCatalogImport:
             ):
                 case Err(refused):
                     return Err(_issue(refused, planned.row))
-            return Ok(None)
+                case Ok(new_presentation_id):
+                    return Ok(new_presentation_id)
         stored = next((p for p in perfume.presentations if p.id == planned.presentation_id), None)
         if stored is None:
             return Err(_issue(PresentationNotFound(), planned.row))
@@ -601,7 +636,7 @@ class ConfirmCatalogImport:
         ):
             case Err(refused_update):
                 return Err(_issue(refused_update, planned.row))
-        return Ok(None)
+        return Ok(planned.presentation_id)
 
 
 class DiscardCatalogImport:

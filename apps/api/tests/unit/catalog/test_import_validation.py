@@ -520,6 +520,143 @@ async def test_in_stock_needs_both_lead_times_empty(lead: dict[str, cells.Cell])
     assert _report(issues) == [(2, "Disponibilidad", "CATALOG_PRESENTATION_AVAILABILITY_INVALID")]
 
 
+# --- stock counts: the Existencias column (plan 005) ------------------------------------------
+
+
+async def test_counts_land_in_the_plan_and_the_summary_counts_the_rows_with_one() -> None:
+    rig = make_rig()
+
+    issues, summary, plan, _ = await _validate(
+        rig, sheet(row(ML=100, Existencias=10), row(ML=50, Existencias=0), row(ML=30))
+    )
+
+    assert issues == []
+    assert summary is not None
+    assert summary.stock_counts == 2  # 10 and 0 count; the empty cell does not
+    assert plan is not None
+    assert [(p.ml, p.stock_count) for p in plan.perfumes[0].presentations] == [
+        (100, 10),
+        (50, 0),
+        (30, None),
+    ]
+
+
+async def test_a_count_may_be_text_or_an_integral_float_like_any_whole_number_cell() -> None:
+    rig = make_rig()
+
+    issues, _, plan, _ = await _validate(
+        rig, sheet(row(ML=100, Existencias="7"), row(ML=50, Existencias=4.0))
+    )
+
+    assert issues == []
+    assert plan is not None
+    assert [p.stock_count for p in plan.perfumes[0].presentations] == [7, 4]
+
+
+async def test_a_file_without_the_column_validates_as_before_with_no_counts() -> None:
+    rig = make_rig()
+
+    issues, summary, plan, _ = await _validate(rig, sheet(row(), drop=("Existencias",)))
+
+    assert issues == []
+    assert summary is not None
+    assert summary.stock_counts == 0
+    assert plan is not None
+    assert [p.stock_count for p in plan.perfumes[0].presentations] == [None]
+
+
+async def test_an_empty_count_cell_means_no_count_not_zero() -> None:
+    rig = make_rig()
+
+    _, summary, plan, _ = await _validate(rig, sheet(row(Existencias=None)))
+
+    assert summary is not None
+    assert summary.stock_counts == 0
+    assert plan is not None
+    assert plan.perfumes[0].presentations[0].stock_count is None
+
+
+@pytest.mark.parametrize("bad", [-1, 100_001, 2.5, "abc"])
+async def test_an_invalid_count_is_a_value_error_on_the_existencias_column(
+    bad: cells.Cell,
+) -> None:
+    rig = make_rig()
+
+    issues, summary, plan, _ = await _validate(rig, sheet(row(Existencias=bad)))
+
+    assert _report(issues) == [(2, "Existencias", "CATALOG_IMPORT_VALUE_INVALID")]
+    assert (summary, plan) == (None, None)
+
+
+async def test_the_maximum_count_is_accepted() -> None:
+    rig = make_rig()
+
+    issues, summary, _, _ = await _validate(rig, sheet(row(Existencias=cells.STOCK_COUNT_MAX)))
+
+    assert issues == []
+    assert summary is not None
+    assert summary.stock_counts == 1
+
+
+async def test_a_count_on_a_made_to_order_row_is_its_own_issue_on_existencias() -> None:
+    rig = make_rig()
+
+    issues, _, _, _ = await _validate(
+        rig,
+        sheet(
+            row(
+                Disponibilidad="Sobre pedido", Entrega_min_dias=3, Entrega_max_dias=5, Existencias=5
+            )
+        ),
+    )
+
+    assert _report(issues) == [(2, "Existencias", "CATALOG_IMPORT_STOCK_MADE_TO_ORDER")]
+
+
+async def test_a_count_of_zero_on_a_made_to_order_row_is_still_refused() -> None:
+    rig = make_rig()
+
+    issues, _, _, _ = await _validate(
+        rig,
+        sheet(
+            row(
+                Disponibilidad="Sobre pedido", Entrega_min_dias=3, Entrega_max_dias=5, Existencias=0
+            )
+        ),
+    )
+
+    assert _report(issues) == [(2, "Existencias", "CATALOG_IMPORT_STOCK_MADE_TO_ORDER")]
+
+
+async def test_a_made_to_order_row_with_an_empty_count_is_valid_and_counts_nothing() -> None:
+    rig = make_rig()
+
+    issues, summary, plan, _ = await _validate(
+        rig, sheet(row(Disponibilidad="Sobre pedido", Entrega_min_dias=3, Entrega_max_dias=5))
+    )
+
+    assert issues == []
+    assert summary is not None
+    assert summary.stock_counts == 0
+    assert plan is not None
+    assert plan.perfumes[0].presentations[0].stock_count is None
+
+
+async def test_the_count_of_an_existing_presentation_is_planned_with_its_stored_id() -> None:
+    rig = make_rig(
+        perfumes={identity(): existing(presentations={100: (ACTIVE_PRESENTATION, True)})}
+    )
+
+    issues, summary, plan, _ = await _validate(rig, sheet(row(ML=100, Existencias=4)))
+
+    assert issues == []
+    assert summary is not None
+    assert summary.stock_counts == 1
+    assert plan is not None
+    [presentation] = plan.perfumes[0].presentations
+    assert (presentation.presentation_id, presentation.stock_count) == (ACTIVE_PRESENTATION, 4)
+
+
 # --- archived references (decision 23) --------------------------------------------------------
 
 

@@ -33,6 +33,7 @@ COLUMNS: tuple[str, ...] = (
     "Disponibilidad",
     "Entrega mín. (días)",
     "Entrega máx. (días)",
+    "Existencias",
     "Publicado",
     "Notas de salida",
     "Notas de corazón",
@@ -56,6 +57,8 @@ REQUIRED_COLUMNS: tuple[str, ...] = (
 
 IMAGE_COLUMNS: tuple[str, ...] = ("Imagen 1", "Imagen 2", "Imagen 3")
 
+# Mirrors inventory's `QUANTITY_MAX` (a test pins the two).
+STOCK_COUNT_MAX = 100_000
 TEXT_MAX_LENGTH = 4000
 IMAGE_URL_MAX_LENGTH = 2000
 SALE_TIMEZONE = ZoneInfo("America/Cancun")
@@ -110,6 +113,17 @@ def whole_number(cell: Cell) -> Result[int, ImportValueInvalid]:
             return Ok(int(cell.strip()))
         case _:
             return Err(ImportValueInvalid())
+
+
+def stock_count(cell: Cell) -> Result[int, ImportValueInvalid]:
+    """A physical count: a whole number from 0 to `STOCK_COUNT_MAX`."""
+    match whole_number(cell):
+        case Ok(value) if 0 <= value <= STOCK_COUNT_MAX:
+            return Ok(value)
+        case Ok():
+            return Err(ImportValueInvalid(details={"min": 0, "max": STOCK_COUNT_MAX}))
+        case error:
+            return error
 
 
 def pesos_to_cents(cell: Cell) -> Result[int, ImportValueInvalid]:

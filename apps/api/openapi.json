@@ -3928,7 +3928,7 @@
           "catalog · import"
         ],
         "summary": "Confirm Catalog Import",
-        "description": "Apply a ready import, all or nothing, in one transaction; answers the import, now\n`applied`. 404 `CATALOG_IMPORT_NOT_FOUND`; 409 `CATALOG_IMPORT_NOT_READY` (not ready, or\npast `expires_at`) or `CATALOG_IMPORT_STALE` when the catalog changed since the validation:\nnothing is written, the import stays `ready` and `details.issues` lists each affected row\n(`row`, `column`, `code`, `message`); upload the file again.",
+        "description": "Apply a ready import, all or nothing, in one transaction; answers the import, now\n`applied`. 403 `FORBIDDEN` when the file has Existencias and the actor lacks\n`inventory:manage`; 404 `CATALOG_IMPORT_NOT_FOUND`; 409 `CATALOG_IMPORT_NOT_READY` (not\nready, or past `expires_at`) or `CATALOG_IMPORT_STALE` when the catalog changed since the\nvalidation: nothing is written, the import stays `ready` and `details.issues` lists each\naffected row (`row`, `column`, `code`, `message`); upload the file again.",
         "operationId": "confirm_catalog_import",
         "security": [
           {
@@ -3969,7 +3969,7 @@
             }
           },
           "403": {
-            "description": "The actor is not an admin or lacks the permission",
+            "description": "The actor is not an admin or lacks the permission (inventory:manage too when the file has Existencias)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5650,6 +5650,11 @@
           "photos_new": {
             "type": "integer",
             "title": "Photos New"
+          },
+          "stock_counts": {
+            "type": "integer",
+            "title": "Stock Counts",
+            "default": 0
           }
         },
         "type": "object",
@@ -5661,7 +5666,7 @@
           "photos_new"
         ],
         "title": "CatalogImportSummary",
-        "description": "What confirming a ready import would do."
+        "description": "What confirming a ready import would do. `stock_counts` presentations will get a physical\ncount (the default 0 keeps summaries stored before plan 005 valid)."
       },
       "ChangePasswordRequest": {
         "properties": {

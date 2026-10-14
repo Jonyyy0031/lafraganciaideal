@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from fragancia_api.modules.inventory.application.commands.stock import (
+    RecordImportedCounts,
     RecordMovement,
     SetThreshold,
     UpdateInventorySettings,
@@ -65,6 +66,14 @@ class Inventory:
             clock=self.clock,
         )
         self.set_threshold = SetThreshold(
+            stock=self.store,
+            settings=settings,
+            catalog=self.catalog,
+            transactions=transactions,
+            events=self.events,
+            clock=self.clock,
+        )
+        self.record_counts = RecordImportedCounts(
             stock=self.store,
             settings=settings,
             catalog=self.catalog,

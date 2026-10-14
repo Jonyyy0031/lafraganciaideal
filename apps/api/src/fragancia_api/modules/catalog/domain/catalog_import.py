@@ -11,7 +11,7 @@ Lifecycle (any other transition is a programming error and raises `ValueError`):
 - `fail` (pending or validating) → `failed`, with one file-level issue.
 - `expire` (ready) → `expired`; returns the staged object keys and drops the plan.
 - `apply` (ready) → `applied`, with `applied_at` and `applied_by`; drops the plan, whose staged
-  objects are now live photos.
+  objects are now live photos, and records `CatalogImportApplied` (the stock counts).
 - `discard` (ready) → `discarded`, with `discarded_at`; returns the staged object keys and drops
   the plan.
 
@@ -23,16 +23,27 @@ Validation stages the photos at their final keys, so the plan carries the final 
 perfumes and photos, and `staged_keys` lists every object an unconfirmed import leaves behind.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Self
+from typing import ClassVar, Self
 from uuid import UUID
 
 from fragancia_api.modules.catalog.domain.perfume import Gender
-from fragancia_api.shared.kernel import AggregateRoot, DomainError, new_id
+from fragancia_api.shared.kernel import AggregateRoot, DomainError, DomainEvent, new_id
 
 ISSUES_MAX = 1000
+
+
+@dataclass(frozen=True, kw_only=True)
+class CatalogImportApplied(DomainEvent):
+    """An import was confirmed. `stock_counts` maps presentation id → physical count."""
+
+    name: ClassVar[str] = "catalog.import.applied"
+    import_id: UUID
+    actor_id: str
+    stock_counts: dict[UUID, int]
 
 
 class ImportStatus(StrEnum):
@@ -68,6 +79,7 @@ class ImportSummary:
     presentations_new: int
     presentations_updated: int
     photos_new: int
+    stock_counts: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +96,7 @@ class PlannedPresentation:
     lead_time_min_days: int | None
     lead_time_max_days: int | None
     row: int
+    stock_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,13 +255,21 @@ class CatalogImport(AggregateRoot):
             and now < self.expires_at
         )
 
-    def apply(self, now: datetime, actor_id: str) -> None:
-        """Mark a ready import applied; its staged objects are now live photos."""
+    def apply(self, now: datetime, actor_id: str, stock_counts: Mapping[UUID, int]) -> None:
+        """Mark a ready import applied; its staged objects are now live photos.
+
+        Records `CatalogImportApplied` with the physical counts (presentation id → count) that
+        inventory turns into count movements."""
         self._require(ImportStatus.READY)
         self.status = ImportStatus.APPLIED
         self.applied_at = now
         self.applied_by = actor_id
         self.plan = None
+        self.record(
+            CatalogImportApplied(
+                import_id=self.id, actor_id=actor_id, stock_counts=dict(stock_counts)
+            )
+        )
 
     def discard(self, now: datetime) -> list[str]:
         """Discard a ready import; returns the keys of its staged objects to delete."""

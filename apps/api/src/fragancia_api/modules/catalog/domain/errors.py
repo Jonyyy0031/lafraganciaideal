@@ -299,6 +299,18 @@ class ImportValueInvalid(InvalidValueError):
 
 
 @dataclass(frozen=True)
+class ImportStockMadeToOrder(InvalidValueError):
+    code: str = "CATALOG_IMPORT_STOCK_MADE_TO_ORDER"
+    message: str = "Made-to-order presentations carry no stock; leave Existencias empty"
+
+
+@dataclass(frozen=True)
+class ImportStockPermissionRequired(DomainError):
+    code: str = "CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED"
+    message: str = "Confirming a file with Existencias requires inventory:manage"
+
+
+@dataclass(frozen=True)
 class ImportBrandUnknown(InvalidValueError):
     code: str = "CATALOG_IMPORT_BRAND_UNKNOWN"
     message: str = "No brand has this name"

@@ -376,6 +376,7 @@ async def test_a_ready_import_shows_the_summary_and_no_file_or_plan(rig: Rig) ->
         "presentations_new": 3,
         "presentations_updated": 4,
         "photos_new": 5,
+        "stock_counts": 0,
     }
     assert (body["row_count"], body["error_count"], body["errors"]) == (7, 0, [])
     assert body["finished_at"] == "2026-10-11T12:01:00Z"

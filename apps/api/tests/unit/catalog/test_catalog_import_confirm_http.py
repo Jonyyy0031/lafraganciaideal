@@ -2,6 +2,7 @@
 error codes with `details.issues`, access, the response fields)."""
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -16,6 +17,7 @@ from fragancia_api.modules.catalog.application.commands.catalog_imports import (
     DiscardCatalogImport,
 )
 from fragancia_api.modules.catalog.application.queries.catalog_imports import GetCatalogImport
+from fragancia_api.modules.catalog.contracts import CatalogImportResponse
 from fragancia_api.modules.catalog.domain.catalog_import import (
     CatalogImport,
     ImportPlan,
@@ -33,7 +35,11 @@ from fragancia_api.shared.application.actor import Actor, ActorResolver
 from fragancia_api.shared.http import SESSION_COOKIE
 from fragancia_api.shared.http.health import HealthChecks
 from fragancia_api.shared.http.services import ServiceRegistry
-from fragancia_api.shared.infrastructure.in_memory import FixedClock, InMemoryTransactionRunner
+from fragancia_api.shared.infrastructure.in_memory import (
+    FixedClock,
+    InMemoryTransactionRunner,
+    RecordingEventPublisher,
+)
 from tests.support import ADMIN_HEADERS, TestActorResolver, assert_admin_routes_are_protected
 from tests.unit.catalog.perfume_support import World, add_presentation, make_perfume
 
@@ -43,13 +49,43 @@ TTL = timedelta(minutes=60)
 UNKNOWN_ID = UUID(int=404)
 NO_PERMISSION_SESSION = "admin-without-catalog-manage"
 NO_PERMISSION_HEADERS = {"Cookie": f"{SESSION_COOKIE}={NO_PERMISSION_SESSION}"}
+INVENTORY_SESSION = "admin-with-inventory-manage"
+INVENTORY_HEADERS = {"Cookie": f"{SESSION_COOKIE}={INVENTORY_SESSION}"}
 
 
 class _Resolver:
     async def resolve(self, token: str) -> Actor | None:
         if token == NO_PERMISSION_SESSION:
             return Actor(id="no-perm", is_admin=True, session_id=UUID(int=2))
-        return await TestActorResolver().resolve(token)
+        if token == INVENTORY_SESSION:
+            return Actor(
+                id="stock-admin",
+                is_admin=True,
+                session_id=UUID(int=3),
+                permissions=frozenset({"catalog:manage", "inventory:manage"}),
+            )
+        return await TestActorResolver().resolve(token)  # `catalog:manage` only
+
+
+class _ValidationFinishesBeforeTheLock(InMemoryCatalogImports):
+    """The race of the review finding M1: a reader that looks before the confirm locks the
+    import sees it `validating` with no summary, and the validation job commits `ready` with
+    its counts just before the confirm takes the row lock (`get_for_update`)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ready_with_counts: CatalogImport | None = None
+
+    async def get(self, import_id: UUID) -> CatalogImportResponse | None:
+        response = await super().get(import_id)
+        if response is None or self.ready_with_counts is None:
+            return response
+        return response.model_copy(update={"status": "validating", "summary": None})
+
+    async def get_for_update(self, import_id: UUID) -> CatalogImport | None:
+        if self.ready_with_counts is not None:
+            self.by_id[import_id] = self.ready_with_counts
+        return await super().get_for_update(import_id)
 
 
 @dataclass
@@ -58,15 +94,28 @@ class Rig:
     world: World
     store: InMemoryCatalogImports
     storage: InMemoryMediaStorage
+    events: RecordingEventPublisher
 
 
 @pytest.fixture
 async def rig() -> AsyncIterator[Rig]:
+    async with _built(InMemoryCatalogImports()) as built:
+        yield built
+
+
+@pytest.fixture
+async def racing_rig() -> AsyncIterator[Rig]:
+    async with _built(_ValidationFinishesBeforeTheLock()) as built:
+        yield built
+
+
+@asynccontextmanager
+async def _built(store: InMemoryCatalogImports) -> AsyncIterator[Rig]:
     world = World()
-    store = InMemoryCatalogImports()
     storage = InMemoryMediaStorage()
     clock = FixedClock(NOW)
     transactions = InMemoryTransactionRunner()
+    events = RecordingEventPublisher()
     services = ServiceRegistry()
     services.add(ActorResolver, _Resolver())  # type: ignore[type-abstract]
     services.add(HealthChecks, HealthChecks())
@@ -82,6 +131,7 @@ async def rig() -> AsyncIterator[Rig]:
             storage=storage,
             transactions=transactions,
             clock=clock,
+            events=events,
         ),
     )
     services.add(
@@ -93,10 +143,12 @@ async def rig() -> AsyncIterator[Rig]:
     app = build_app(services, import_routers)
     assert_admin_routes_are_protected(app)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-        yield Rig(client, world, store, storage)
+        yield Rig(client, world, store, storage, events)
 
 
-def _plan(world: World, *, archived_existing: bool = False) -> tuple[ImportPlan, UUID]:
+def _plan(
+    world: World, *, archived_existing: bool = False, stock_count: int | None = None
+) -> tuple[ImportPlan, UUID]:
     new_id_ = UUID(int=7)
     card, detail = photo_keys(new_id_, UUID(int=70))
     new = PlannedPerfume(
@@ -114,7 +166,9 @@ def _plan(world: World, *, archived_existing: bool = False) -> tuple[ImportPlan,
         publish=True,
         first_row=2,
         presentations=(
-            PlannedPresentation(None, 100, 250_000, None, None, None, "in_stock", None, None, 2),
+            PlannedPresentation(
+                None, 100, 250_000, None, None, None, "in_stock", None, None, 2, stock_count
+            ),
         ),
         photos=(
             PlannedPhoto(1, UUID(int=70), "https://img.test/a.jpg", card, detail, 1200, 900, None),
@@ -149,11 +203,16 @@ def _plan(world: World, *, archived_existing: bool = False) -> tuple[ImportPlan,
     return ImportPlan((new, existing)), stored.id
 
 
-async def _ready(rig: Rig, *, archived_existing: bool = False) -> CatalogImport:
-    plan, _ = _plan(rig.world, archived_existing=archived_existing)
+async def _ready(
+    rig: Rig, *, archived_existing: bool = False, stock_count: int | None = None
+) -> CatalogImport:
+    plan, _ = _plan(rig.world, archived_existing=archived_existing, stock_count=stock_count)
+    counts = 0 if stock_count is None else 1
     item = CatalogImport.create(b"PK\x03\x04data", "admin-1", NOW - timedelta(minutes=10))
     item.start(NOW - timedelta(minutes=9))
-    item.finish_ready(NOW - timedelta(minutes=5), TTL, 2, ImportSummary(1, 1, 1, 1, 1), plan)
+    item.finish_ready(
+        NOW - timedelta(minutes=5), TTL, 2, ImportSummary(1, 1, 1, 1, 1, counts), plan
+    )
     await rig.store.add(item)
     return item
 
@@ -297,6 +356,179 @@ async def test_a_stale_confirm_is_409_with_the_issues_of_each_affected_row(rig: 
         ]
     }
     assert rig.store.by_id[item.id].status is ImportStatus.READY
+
+
+# --- confirm: stock counts need inventory:manage (plan 005, decision 21) ----------------------
+
+
+async def test_confirming_a_file_with_counts_is_403_without_inventory_manage_and_applies_nothing(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (403, "FORBIDDEN")
+    assert rig.store.by_id[item.id].status is ImportStatus.READY
+    assert rig.world.perfumes.by_id.get(UUID(int=7)) is None
+    assert rig.events.published == []
+
+
+async def test_confirming_a_file_without_counts_is_200_without_inventory_manage(rig: Rig) -> None:
+    item = await _ready(rig)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200, response.text
+    assert rig.store.by_id[item.id].status is ImportStatus.APPLIED
+    [event] = rig.events.published
+    assert event.payload()["stock_counts"] == {}
+
+
+async def test_confirming_a_file_with_counts_is_200_with_inventory_manage_and_publishes_them(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=INVENTORY_HEADERS)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "applied"
+    [event] = rig.events.published
+    [(presentation_id, count)] = event.payload()["stock_counts"].items()  # type: ignore[attr-defined]
+    saved = rig.world.perfumes.by_id[UUID(int=7)].presentations
+    assert ([str(p.id) for p in saved], count) == ([presentation_id], 5)
+    assert event.payload()["actor_id"] == "stock-admin"
+
+
+async def test_the_permission_check_for_an_unknown_import_is_still_404(rig: Rig) -> None:
+    response = await rig.client.post(f"{BASE}/{UNKNOWN_ID}/confirm", headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (404, "CATALOG_IMPORT_NOT_FOUND")
+
+
+async def test_a_file_with_counts_that_is_not_ready_answers_409_before_the_403(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5)
+    rig.store.by_id[item.id].status = ImportStatus.DISCARDED
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (409, "CATALOG_IMPORT_NOT_READY")
+
+
+async def test_counts_that_land_between_a_pre_read_and_the_lock_still_need_inventory_manage(
+    racing_rig: Rig,
+) -> None:
+    """Regression of review finding M1: the permission is decided under the import lock, not
+    from a read before it. An import that looks without a summary to a pre-read but is `ready`
+    with counts when the confirm locks it must be refused, and nothing is applied."""
+    rig = racing_rig
+    racing = rig.store
+    assert isinstance(racing, _ValidationFinishesBeforeTheLock)
+    item = await _ready(rig, stock_count=5)
+    racing.ready_with_counts = racing.by_id[item.id]
+
+    pre_read = await racing.get(item.id)
+    assert pre_read is not None and pre_read.summary is None  # what the old route saw
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (403, "FORBIDDEN")
+    assert racing.by_id[item.id].status is ImportStatus.READY
+    assert rig.world.perfumes.by_id.get(UUID(int=7)) is None
+    assert rig.events.published == []
+
+
+async def test_the_403_of_a_refused_count_never_exposes_the_internal_error_code(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert "CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED" not in response.text
+
+
+async def test_a_file_with_counts_is_409_stale_for_an_actor_with_inventory_manage(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5, archived_existing=True)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=INVENTORY_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (409, "CATALOG_IMPORT_STALE")
+
+
+async def test_a_stale_file_with_counts_answers_403_before_the_stale_409_without_permission(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5, archived_existing=True)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/confirm", headers=ADMIN_HEADERS)
+
+    assert (response.status_code, response.json()["code"]) == (403, "FORBIDDEN")
+    assert rig.store.by_id[item.id].status is ImportStatus.READY
+
+
+async def test_discarding_a_file_with_counts_needs_no_inventory_manage(rig: Rig) -> None:
+    item = await _ready(rig, stock_count=5)
+
+    response = await rig.client.post(f"{BASE}/{item.id}/discard", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 204
+
+
+async def test_the_import_status_reports_how_many_counts_the_confirm_will_record(
+    rig: Rig,
+) -> None:
+    item = await _ready(rig, stock_count=5)
+
+    response = await rig.client.get(f"{BASE}/{item.id}", headers=ADMIN_HEADERS)
+
+    assert response.json()["summary"] == {
+        "perfumes_new": 1,
+        "perfumes_updated": 1,
+        "presentations_new": 1,
+        "presentations_updated": 1,
+        "photos_new": 1,
+        "stock_counts": 1,
+    }
+
+
+async def test_the_openapi_documents_the_403_of_the_confirm_and_the_summary_field(
+    rig: Rig,
+) -> None:
+    app = rig.client._transport.app  # type: ignore[attr-defined]
+    document = app.openapi()
+
+    responses = document["paths"][f"{BASE}/{{import_id}}/confirm"]["post"]["responses"]
+    summary = document["components"]["schemas"]["CatalogImportSummary"]
+
+    assert {"200", "403", "404", "409"} <= set(responses)
+    assert responses["403"]["description"] == (
+        "The actor is not an admin or lacks the permission "
+        "(inventory:manage too when the file has Existencias)"
+    )
+    assert summary["properties"]["stock_counts"]["type"] == "integer"
+    assert "stock_counts" not in summary.get("required", [])
+
+
+async def test_the_in_memory_query_reports_the_stock_counts_of_the_summary() -> None:
+    store = InMemoryCatalogImports()
+    world = World()
+    plan, _ = _plan(world, stock_count=5)
+    item = CatalogImport.create(b"PK\x03\x04data", "admin-1", NOW - timedelta(minutes=10))
+    item.start(NOW - timedelta(minutes=9))
+    item.finish_ready(NOW, TTL, 2, ImportSummary(1, 1, 1, 1, 1, 1), plan)
+    await store.add(item)
+
+    response = await store.get(item.id)
+
+    assert response is not None
+    assert response.summary is not None
+    assert response.summary.stock_counts == 1
 
 
 # --- discard ----------------------------------------------------------------------------------

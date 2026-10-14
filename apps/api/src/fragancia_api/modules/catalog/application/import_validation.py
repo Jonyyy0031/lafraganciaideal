@@ -66,6 +66,7 @@ from fragancia_api.modules.catalog.domain.errors import (
     ImportPerfumeMismatch,
     ImportPresentationArchived,
     ImportRequired,
+    ImportStockMadeToOrder,
     ImportValueInvalid,
 )
 from fragancia_api.modules.catalog.domain.naming import slugify
@@ -108,6 +109,7 @@ _RAW_COLUMNS = frozenset(
         "Oferta hasta",
         "Entrega mín. (días)",
         "Entrega máx. (días)",
+        "Existencias",
     )
 )
 
@@ -131,6 +133,7 @@ class _Row:
     price: Price | None = None
     sale: Sale | None = None
     availability: Availability | None = None
+    stock_count: int | None = None
     publish: bool | None = None
     images: list[str | None] = field(default_factory=lambda: [None, None, None])
     comparable: dict[str, object] = field(default_factory=dict)
@@ -395,6 +398,12 @@ class ImportValidator:
                     kind = "made_to_order"
                 case Ok(_):
                     kind = "in_stock"
+        if kind == "made_to_order" and not _is_empty(raw["Existencias"]):
+            row.add(ImportStockMadeToOrder(), "Existencias")
+        elif (
+            count := _optional(raw["Existencias"], cells.stock_count, row, "Existencias")
+        ) is not None:
+            row.stock_count = count.value
         if kind is not None and min_days is not None and max_days is not None:
             row.availability = _ok_or_issue(
                 Availability.create(kind, min_days.value, max_days.value), row, "Disponibilidad"
@@ -588,6 +597,7 @@ class ImportValidator:
                         lead_time_min_days=availability.min_days,
                         lead_time_max_days=availability.max_days,
                         row=row.number,
+                        stock_count=row.stock_count,
                     )
                 )
             photos_new += len(group.photos)
@@ -616,6 +626,9 @@ class ImportValidator:
             presentations_new=presentations_new,
             presentations_updated=presentations_updated,
             photos_new=photos_new,
+            stock_counts=sum(
+                1 for group in groups for row in group.rows if row.stock_count is not None
+            ),
         )
         return summary, ImportPlan(perfumes=tuple(perfumes))
 
