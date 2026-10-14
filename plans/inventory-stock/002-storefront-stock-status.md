@@ -406,6 +406,15 @@ still blocked after 0.5 s, opens the gate and checks the end state.
 | In-memory fakes: both settings locks return the current value (default 3, then the saved one); `list_all_for_update` is sorted and returns copies | `inventory/infrastructure/in_memory.py` | application | `unit/inventory/test_settings_locking.py::test_the_settings_locks_return_the_current_value`, `::test_list_all_for_update_is_ordered_by_presentation_id_and_returns_copies`, `::test_list_all_for_update_of_an_empty_store_is_empty` | CONFIRMED |
 | Lock order the commands use: movement and `SetThreshold` take the settings share lock before the stock lock; a settings change takes the settings row, then every item; a refused movement takes no inventory lock | `inventory/application/commands/stock.py` | application | `::test_a_movement_takes_the_settings_share_lock_before_the_stock_lock`, `::test_set_threshold_takes_the_settings_share_lock_before_the_stock_lock`, `::test_a_settings_change_locks_the_settings_row_then_every_stock_item`, `::test_a_refused_movement_takes_no_inventory_lock` | CONFIRMED |
 
+Re-review R2 (test-only): the race tests no longer hang on a lock-order regression. A `Scenario`
+context manager in `test_stock_settings_race.py` owns every gate and task: leaving the block,
+pass or fail, opens all gates and then finishes or cancels all tasks. Every gate wait, every
+awaited task and every plain command call is bounded (`TIMEOUT` 5 s), and the "must be blocked"
+checks still use the same 0.5 s window, so the tests stay deterministic. Re-run: `just check`
+green (2107 passed, 3 skipped) and `just test-integration` green (564 passed, 5 skipped).
+Not run: a mutant of the product locks (the tester does not edit product code), so the fast
+failure was reasoned from the code, not observed.
+
 "Would it have failed before?" Not demonstrated by running the old code (the repair is already
 committed and product code is not mine to revert). By the pre-repair code (`list_all()` unlocked,
 `now` stamped before reading, a plain settings read), the first race test ends with the copy at
