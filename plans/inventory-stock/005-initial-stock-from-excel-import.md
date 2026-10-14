@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: inventory
 min_implementer: mid
 depends_on: ["001", "catalog-perfumes/008"]
@@ -329,6 +329,66 @@ load its counts in bulk before going live. This plan applies README decisions 1,
 ## Deviations
 
 None to the design. Cosmetic: existing tests that pin the old shapes were updated minimally to keep the suites green (`apply(..., {})` calls, the 22 headers, `stock_counts: 0` in two summary assertions in unit and integration tests, `events=RecordingEventPublisher()` as the plan listed). Step 3 needed no change to `xlsx_sheets.py` (confirmed by reading `_build`).
+
+### Repair round 1 (2026-10-14, main session: review → implementing)
+
+**Why.** Review finding M1: the route checks decision 21 by reading the import before the
+command locks it (`catalog/http/import_router.py:137-143`). While the import is `pending` or
+`validating` its summary is empty, so the check passes. If the validation job finishes `ready`
+with counts before the confirm takes its lock (`catalog_imports.py:403`), the counts are
+applied without `inventory:manage`. The user chose to fix M1 and both Lows (README decision 23).
+This moves step 5's check from the route into the command, which is recorded here as a
+deviation.
+
+**Repair spec.**
+1. **M1: the check under the import lock.**
+   - Files: `apps/api/src/fragancia_api/modules/catalog/domain/errors.py`,
+     `apps/api/src/fragancia_api/modules/catalog/application/commands/catalog_imports.py`,
+     `apps/api/src/fragancia_api/modules/catalog/http/import_router.py`.
+   - **The error.** `errors.py` gains `ImportStockPermissionRequired(DomainError)`, after
+     `ImportStockMadeToOrder`:
+     - code `CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED`;
+     - message "Confirming a file with Existencias requires inventory:manage".
+
+     The route turns it into `Forbidden`, so its code never reaches a client.
+   - **The command.** `ConfirmCatalogImport.execute(import_id, actor_id, *,
+     may_record_stock: bool)`.
+     - Run the check after the `is_confirmable` check, with the import locked `FOR UPDATE`:
+       if `not may_record_stock` and any planned presentation has `stock_count is not None`,
+       return `Err(ImportStockPermissionRequired())` before writing anything.
+     - The order of answers becomes: 404, then 409 `CATALOG_IMPORT_NOT_READY`, then the
+       permission, then the stale issues.
+   - **The route.**
+     - Drop the pre-read and its comment.
+     - Call `use_case.execute(import_id, actor_id, may_record_stock=INVENTORY_MANAGE in
+       request.state.actor.permissions)`.
+     - Match the result: `Err(ImportStockPermissionRequired())` raises `Forbidden`; any other
+       `Err` goes through `unwrap` as today.
+     - Every caller of `execute` (the three test files listed in step 7) passes
+       `may_record_stock=True` unless a test says otherwise.
+2. **L1: the 403 description.**
+   - Files: `apps/api/src/fragancia_api/modules/catalog/http/import_router.py`,
+     `apps/api/openapi.json`.
+   - The confirm route's 403 entry gets `"description": "The actor is not an admin or lacks the
+     permission (inventory:manage too when the file has Existencias)"`.
+   - Run `uv run just openapi`.
+3. **L2: the in-memory query.**
+   - Files: `apps/api/src/fragancia_api/modules/catalog/infrastructure/in_memory_imports.py`,
+     `apps/api/tests/unit/catalog/test_catalog_import_confirm_http.py`,
+     `plans/findings/catalog-in-memory-import-query-drops-stock-counts.md`.
+   - `InMemoryCatalogImports.get` passes `stock_counts=summary.stock_counts`
+     (`:146-153`).
+   - Remove the strict xfail marker of
+     `test_the_in_memory_query_reports_the_stock_counts_of_the_summary`, which would otherwise
+     fail as XPASS. The tester removes the `_StoreReportingCounts` workaround in the repair's
+     test phase.
+   - The finding gets `status: resolved`, plus a line naming this repair round.
+
+**Scope.**
+- The product code is the three catalog files plus the in-memory adapter.
+- The test-file changes for the implementer are only:
+  - the `may_record_stock=` argument at the existing `execute` call sites;
+  - the xfail marker.
 
 ## Test coverage
 

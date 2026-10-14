@@ -126,6 +126,12 @@ changed.
     - the counts apply about 2 s after the confirm.
 
     A direct call would make the catalog and inventory depend on each other.
+23. (2026-10-14) **Plan 005 repair round.** The review found M1: confirming during the
+    validation could skip the `inventory:manage` check of decision 21. Following the standing
+    choice to fix review findings:
+    - the check now runs inside the confirm's transaction, with the import locked;
+    - L1 (the 403's OpenAPI description) is fixed;
+    - L2 (the in-memory import query dropping `stock_counts`, the tester's finding) is fixed.
 
 ## Delivered
 
