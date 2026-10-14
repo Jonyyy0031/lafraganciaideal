@@ -407,7 +407,7 @@ async def test_the_permission_check_for_an_unknown_import_is_still_404(rig: Rig)
     assert (response.status_code, response.json()["code"]) == (404, "CATALOG_IMPORT_NOT_FOUND")
 
 
-async def test_a_file_with_counts_that_is_not_ready_still_answers_403_before_the_409(
+async def test_a_file_with_counts_that_is_not_ready_answers_409_before_the_403(
     rig: Rig,
 ) -> None:
     item = await _ready(rig, stock_count=5)

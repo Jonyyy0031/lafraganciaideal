@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: inventory
 min_implementer: mid
 depends_on: ["001", "catalog-perfumes/008"]
@@ -129,6 +129,7 @@ load its counts in bulk before going live. This plan applies README decisions 1,
    - Files: `apps/api/src/fragancia_api/modules/catalog/domain/catalog_import.py` (modify),
      `apps/api/src/fragancia_api/modules/catalog/application/import_validation.py` (modify),
      `apps/api/src/fragancia_api/modules/catalog/infrastructure/sql_catalog_import_repository.py` (modify),
+     `apps/api/src/fragancia_api/modules/catalog/infrastructure/in_memory_imports.py` (modify),
      `apps/api/src/fragancia_api/modules/catalog/contracts.py` (modify),
      `apps/api/openapi.json` (modify)
    - Do:
@@ -431,7 +432,7 @@ tests, 1 strict xfail (GAP). Paths are under `apps/api/tests/`; `unit/catalog/` 
 | Command `Err` path of the handler (`RuntimeError`) | `import_applied.py` | application | no test: the command returns `Err` only if `Reason.create` fails, and the constant is valid | NOT CONFIRMED (unreachable with the real constant; not tested) |
 | 403 `FORBIDDEN` confirming a file with counts without `inventory:manage`; nothing applied or published | `import_router.py:147-153` | http | `u/c/test_catalog_import_confirm_http.py::test_confirming_a_file_with_counts_is_403_without_inventory_manage_and_applies_nothing` | CONFIRMED (through the plain in-memory store, since repair 1) |
 | 200 without counts; 200 with counts and `inventory:manage` (event carries actor and ids) | `import_router.py:137-142` | http | `::test_confirming_a_file_without_counts_is_200_without_inventory_manage`, `::test_confirming_a_file_with_counts_is_200_with_inventory_manage_and_publishes_them` | CONFIRMED |
-| Unknown id still 404; a non-ready file with counts answers 409 before the 403 (order changed by repair 1; this row supersedes the earlier "403 before 409"); discard needs no inventory permission | `import_router.py:147-153`, `catalog_imports.py:409-418` | http | `::test_the_permission_check_for_an_unknown_import_is_still_404`, `::test_a_file_with_counts_that_is_not_ready_still_answers_409_before_the_403`, `::test_discarding_a_file_with_counts_needs_no_inventory_manage` | CONFIRMED |
+| Unknown id still 404; a non-ready file with counts answers 409 before the 403 (order changed by repair 1; this row supersedes the earlier "403 before 409"); discard needs no inventory permission | `import_router.py:147-153`, `catalog_imports.py:409-418` | http | `::test_the_permission_check_for_an_unknown_import_is_still_404`, `::test_a_file_with_counts_that_is_not_ready_answers_409_before_the_403`, `::test_discarding_a_file_with_counts_needs_no_inventory_manage` | CONFIRMED |
 | Summary field in the response; OpenAPI documents 403 and an optional `stock_counts` | `contracts.py`, `import_router.py` | http | `::test_the_import_status_reports_how_many_counts_the_confirm_will_record`, `::test_the_openapi_documents_the_403_of_the_confirm_and_the_summary_field` | CONFIRMED |
 | The in-memory query reports `summary.stock_counts` | `in_memory_imports.py:146-153` | http | `::test_the_in_memory_query_reports_the_stock_counts_of_the_summary` | CONFIRMED (was a strict-xfail GAP; repaired in round 1, marker removed by the implementer; finding `plans/findings/catalog-in-memory-import-query-drops-stock-counts.md` resolved) |
 | Template has `Existencias` after `Entrega máx. (días)`, bold, wide, no dropdown; dropdowns unmoved; a count reads back | `xlsx_sheets.py:149-189` | integration | `int/catalog/test_xlsx_sheets.py::test_the_template_has_existencias_after_the_max_lead_time_with_no_dropdown`, `::test_a_count_written_under_existencias_is_read_back_by_the_reader`, existing `::test_the_template_puts_a_list_dropdown_on_the_five_columns_for_rows_2_to_2001` | CONFIRMED |
@@ -576,5 +577,100 @@ rows).
   movement recorded in that window, or before a retried delivery after a transient failure, is
   overwritten by the absolute count. This is inherent to decision 22. Verify may want to state
   it plainly in the evidence.
+
+### Re-review after repair round 1 (2026-10-14)
+
+Reviewed `git diff main...HEAD` again, focused on ce1e221 (repair) and 343527f (its tests). No
+uncommitted changes and no PR yet. The findings above stay as the historical first review.
+
+**M1, L1 and L2 are fixed.**
+- **M1.** `ConfirmCatalogImport.execute(..., may_record_stock=)` decides on the plan of the row it
+  loaded with `get_for_update` (`catalog_imports.py:404-418`). Under READ COMMITTED, a confirm
+  that waits on a validation job's lock re-reads the committed `ready` row and its plan, so the
+  race window is gone. The route no longer pre-reads (`import_router.py:146-154`). It maps only
+  `ImportStockPermissionRequired` to `Forbidden`, so the internal code never reaches a client.
+  - **Regression shown to fail against the old route.** I temporarily rewrote the route body
+    in place to the pre-repair logic: a pre-read, a 403 only on `summary.stock_counts > 0`,
+    then `execute(..., may_record_stock=True)`, which is equivalent to the old command with no
+    check. Then I ran `tests/unit/catalog/test_catalog_import_confirm_http.py`.
+    `test_counts_that_land_between_a_pre_read_and_the_lock_still_need_inventory_manage` failed:
+    the confirm answered 200 with no `code`, so the counts were applied. I restored the file
+    from a scratchpad copy, confirmed the sha256 was identical, `git status` was clean and the
+    file passed again.
+- **L1.** The 403 description is in `import_router.py:123-129` and in `openapi.json`. The test
+  asserts the text.
+- **L2.** `in_memory_imports.py:153` passes `stock_counts`. The xfail and
+  `_StoreReportingCounts` are gone, and the finding is `resolved`.
+
+**Checklist: 12 pass, 2 failed, 1 not applicable.**
+
+- [ ] **`plans-scope` FAILS:** `✘ Out of scope: apps/api/src/fragancia_api/modules/catalog/infrastructure/in_memory_imports.py`.
+  The repair spec lists that file on `Files:` lines under `## Deviations`. `plans-scope` reads
+  `Files:` lines only inside `## Steps` (`scripts/plans/lib.py:217-221`). (Finding R2 below.)
+- [x] `uv run just check` green (2201 passed, 3 skipped; harness 685 passed).
+- [x] `uv run just test-integration` green (581 passed, 5 skipped).
+- [x] Business rules: the permission gate is an application-level check in the command, made on
+  the locked aggregate. The router only translates the error.
+- [x] CQRS-lite: the refusal returns `Err` inside `transactions.run` before any write, so the
+  runner does not commit (unit test asserts `committed is False`; the integration test shows the
+  row stays `ready` with an empty outbox).
+- [x] Contracts and OpenAPI regenerated (`check` includes the drift check).
+- [x] Errors: `CATALOG_IMPORT_STOCK_PERMISSION_REQUIRED` follows `<MODULE>_<THING>_<PROBLEM>`.
+  It is mapped to `FORBIDDEN` and never leaks, which is tested.
+- [x] Money, time and ids: unchanged by the repair.
+- [x] Schema: no change.
+- [x] Routes: unchanged access (`catalog:manage` router dependency, plus the gate).
+- [x] Wiring: `execute` has no other caller in `src/` (grep). Every test call site passes
+  `may_record_stock`.
+- [x] No secrets or personal data.
+- [ ] **Deviations honesty FAILS on one spot check.** `## Deviations` (line 393) says
+  `test_a_file_with_counts_that_is_not_ready_still_answers_403_before_the_409` "was renamed
+  `..._answers_409_before_the_403`". It was not renamed. (Finding R1 below.)
+- [x] Docs: there is no stale doc. Nothing outside the code described the pre-read.
+- [n/a] PR body: no PR yet.
+
+**Bug hunt on the repair.** I traced route → command → locked aggregate → error → `Forbidden`.
+The order 404 → 409 `NOT_READY` (including expired) → permission → stale matches the spec, and
+there are unit tests for each step. The check reads `plan.perfumes[*].presentations[*].stock_count`
+rather than the summary, so a count of 0 also needs the permission. That is the intent of
+decision 21, and it is tested. I found no new product defect.
+
+### Low (re-review)
+
+R1. **A test name contradicts its assertion, and the plan cites a test that does not exist.**
+  - Locations: `apps/api/tests/unit/catalog/test_catalog_import_confirm_http.py:410`, plan
+    lines 393 (`## Deviations`) and 434 (`## Test coverage`).
+  - **What fails:** the test is still named `..._still_answers_403_before_the_409`, but it
+    asserts 409 `CATALOG_IMPORT_NOT_READY` (`:418`). The plan says it was renamed
+    `..._answers_409_before_the_403`, and the coverage row lists that name, which does not
+    exist.
+  - **Scenario:** a reader of the plan or of a failure report is told the opposite of the
+    behavior. Anyone checking the coverage table finds no such test.
+  - **Fix:** rename the test (a test-only correction, which belongs to the tester), or correct
+    the two plan lines.
+
+R2. **`plans-scope` fails on the in-memory adapter.**
+  - Location: `apps/api/src/fragancia_api/modules/catalog/infrastructure/in_memory_imports.py`.
+    It is declared only in the repair spec under `## Deviations` (plan line 377).
+  - **What fails:** the Definition of done requires `plans-scope` to be clean. The change is
+    the approved L2 repair, so this is a declaration gap, not unplanned work.
+  - **Fix:** the main session adds the path to a `Files:` line inside `## Steps`, for example
+    step 2 (the summary field) or step 5. No code change is needed.
+
+**Test DB.** After my `test-integration` run, the suite left three rows from pre-existing tests
+(none from plan 005). Each suite truncates at test start, not at the end. The rows were a
+`tests.something.happened` outbox row, a `Chanel` brand and an `example.test` owner user. I
+deleted each one by its id, after `SELECT COUNT(*)` returned 1. `fragancia_test` now holds only
+migration seeds (families, concentrations, inventory settings).
+
+**Status stays `review`:** R1 needs a test rename or a plan correction, and R2 a plan edit.
+Neither needs a product-code change.
+
+**Closed by the main session (2026-10-14).**
+- **R1:** the test is renamed `test_a_file_with_counts_that_is_not_ready_answers_409_before_the_403`,
+  and the coverage row cites that name.
+- **R2:** `in_memory_imports.py` is added to step 2's `Files:` line.
+
+The review is closed, and the plan moves to `verify`.
 
 ## Verification
