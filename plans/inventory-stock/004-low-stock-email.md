@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: inventory
 min_implementer: mid
 depends_on: ["001", "002", "003", "005"]
@@ -345,6 +345,48 @@ The relay's unbounded retries stay as the platform finding `platform-outbox-rela
      against Mailpit if it can reject, otherwise at the adapter and handler level.
 
 **Scope.** The product code is the five files above, plus the docs. The implementer changes no
+tests.
+
+### Repair round 2 (2026-10-15, main session: review → implementing)
+
+**Why.** The re-review found two defects in the SMTP adapter of round 1. Both contradict
+decision 36 ("temporary failures are still retried"):
+- **R-M1:** every `SMTPRecipientsRefused` became `EmailRejected`, but `smtplib` also raises it
+  for 4xx refusals such as greylisting.
+- **R-M2:** the 5xx `SMTPResponseException` branch never sees a recipient refusal. It only
+  catches failures of the sender (`MAIL FROM`), helo or `DATA`, so a misconfigured sender would
+  consume every low-stock event with no retry.
+
+R-L1 is a stale "Next:" line in the architecture docs. The main session applied decision 36's
+intent without a new user decision:
+- only a permanent (5xx) refusal of the recipients counts as rejected;
+- everything else is retried.
+
+R-L2 is accepted as is: a relay-level "554" at `RCPT` skips every owner, which is logged. For a
+shop with one owner, retrying forever would be worse.
+
+**Repair spec.**
+1. **R-M1 and R-M2: `smtp_email_sender.py`.**
+   - Files: `apps/api/src/fragancia_api/shared/infrastructure/smtp_email_sender.py`.
+   - Catch only `smtplib.SMTPRecipientsRefused`.
+     - Raise `EmailRejected` when **every** entry of `error.recipients`
+       (`{address: (code, message)}`) has a code `>= 500`.
+     - Otherwise, re-raise the original error.
+   - Remove the `SMTPResponseException` branch. Sender, helo and `DATA` failures propagate, so
+     the event is retried.
+   - Add a one-line comment for each rule.
+2. **R-L1: `docs/architecture.md:63`.**
+   - Files: `docs/architecture.md`.
+   - Replace the stale "Next: reserve on checkout…" with the current state: reservations (plan
+     003) and the low-stock email (plan 004) are done.
+3. **Tests, for the tester.**
+   - Repin the 421 integration test: a 4xx refusal now propagates, so the event is retried.
+   - Repin `test_a_5xx_smtp_reply_becomes_email_rejected`: a 5xx sender or `DATA` failure now
+     propagates.
+   - Add a case with mixed 4xx and 5xx refusals, which propagates.
+   - Add an all-5xx case, which is rejected.
+
+**Scope.** The product code is `smtp_email_sender.py`, plus the docs. The implementer changes no
 tests.
 
 ## Test coverage

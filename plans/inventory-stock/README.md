@@ -188,6 +188,9 @@ changed.
     - The event is not retried for it, so the others don't get repeats.
     - Temporary failures are still retried.
     - Capping the outbox's retries in general stays a platform finding.
+    - Plan 004 repair round 2 made this precise:
+      - only a 5xx refusal of the recipients counts as permanent;
+      - 4xx refusals, and sender or message failures, are retried.
 
 ## Delivered
 
