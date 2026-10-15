@@ -14,6 +14,7 @@ checks, Docker image, CI) and prove it end to end with a first business slice â€
 | 001  | API platform                             | â€”          | Skeleton, kernel, DB, errors, access, outbox, worker, CI, image |
 | 002  | Catalog brands as the reference module   | 001        | First full slice through every layer; recipes for new modules  |
 | 003  | Request body size limit                  | 001        | ASGI middleware: 413 above 1 MiB for JSON/form/text, above the largest upload for binary bodies (finding `platform-unbounded-request-body`) |
+| 004  | Failed outbox events                     | 001        | Stop retrying after about 24 h (295 attempts) and mark the event failed; owners list failed events and retry one (finding `platform-outbox-relay-retries-forever`) |
 
 ## Dependency notes
 
@@ -45,6 +46,12 @@ mapping that 001 delivers.
      today `max(photo_max_bytes, catalog_import_max_bytes)`, which is 10 MiB.
    - Above the limit, the API answers 413 `REQUEST_TOO_LARGE`.
    - The upload routes keep their own smaller limits, which are checked after the session.
+8. (2026-10-15) **A failing outbox event is retried for about 24 hours, then marked failed**
+   (finding `platform-outbox-relay-retries-forever`).
+   - The event is kept with its error and logged.
+   - Owners list the failed events in the panel and can retry one by hand, which restarts its
+     window.
+   - There is no email alert.
 
 ## Delivered
 
