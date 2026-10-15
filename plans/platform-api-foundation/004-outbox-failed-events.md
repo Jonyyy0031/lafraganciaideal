@@ -348,3 +348,54 @@ then confirmed with `git status`. All were killed:
     file was written.
 
 ## Verification
+
+Verified by the main session on 2026-10-15, against `feat/platform-outbox-failed-events` at
+`46efa2b`.
+- **Environment:** the API (`just api`, port 8100) and the worker (`just worker`) ran on the
+  development database, migrated to `0016`.
+- **Driver:** the session-scratchpad script `qa_inv/qa_outbox_failed.py`.
+  - It inserted one broken outbox row: `inventory.stock.went_low` with a payload without
+    `lines`, so the real low-stock handler raises `KeyError`.
+  - The row started at `attempts = 294`, due now, as the acceptance criteria suggest.
+- **Users:** the owner `verifier007@example.test`, and the QA staff user created in
+  inventory-stock/004's QA.
+
+**Suites:** the review closed with `just check` green (2470 unit, 685 harness),
+`just test-integration` green (716 passed, 5 skipped), `openapi --check` up to date and
+`plans-scope` clean. No code changed since.
+
+**Flows driven against the acceptance criteria**
+- [x] **Cap.**
+  - Within a second, the real worker made attempt 295, which set `failed_at` and stored
+    `last_error = KeyError('lines')`.
+  - The worker logged `outbox.delivery_failed_permanently attempts=295` at error level.
+  - Five seconds later the row was untouched (still 295, still failed), so the relay no longer
+    picks it.
+- [x] **List.**
+  - The owner's `GET /api/v1/admin/outbox/failed` returned `total 1`, listing the event with
+    its name, `occurred_at`, `failed_at`, `attempts 295` and `last_error`.
+  - Staff got 403 `FORBIDDEN`, and an anonymous call got 401.
+- [x] **Retry.**
+  - Staff's retry got 403.
+  - The owner's `POST …/{id}/retry` answered 204. Right after, the row had `failed_at` null and
+    `attempts` 0, with `last_error` kept.
+  - The worker relayed it again. It was still broken, so it got a normal backoff
+    (`outbox.delivery_failed attempts=1`, warning), not a permanent failure.
+  - After the payload was fixed to `{"lines": []}`, the worker published it (`published_at`
+    set).
+  - Retrying an unknown id answered 404 `OUTBOX_EVENT_NOT_FOUND`. Retrying the now-published
+    id answered 404 too.
+- [x] **No regression.** The retried event's transient failure backed off and then succeeded,
+  through the same relay path normal events take.
+- [x] **Migration.** `db-migrate` was at `0016`, and no pending row has `failed_at` after the run.
+  The round trip and the index predicate are covered by
+  `test_migration_0016_outbox_failed_at.py` on a scratch database.
+
+**NOT VERIFIED live** (covered by tests only):
+- **Reaching 295 by real retries over about 24 h.** The row was seeded at 294. The full count
+  from 0, and the overflow regression behind it, are covered by
+  `test_an_always_failing_subscriber_fails_the_event_after_exactly_max_attempts`.
+
+**Data left in the development database:** the one QA outbox row, now published.
+
+**Verdict: verified.** The plan is ready for the user to mark it `done`.
