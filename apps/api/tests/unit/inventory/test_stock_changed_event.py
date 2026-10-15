@@ -27,9 +27,7 @@ def restock(quantity: int) -> MovementRequest:
 
 
 def stock_events(inv: Inventory) -> list[StockChanged]:
-    events = [e for e in inv.events.published if isinstance(e, StockChanged)]
-    assert len(events) == len(inv.events.published)
-    return events
+    return [e for e in inv.events.published if isinstance(e, StockChanged)]
 
 
 # --- domain ------------------------------------------------------------------------------------

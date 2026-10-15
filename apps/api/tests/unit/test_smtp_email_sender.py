@@ -7,7 +7,7 @@ from types import TracebackType
 
 import pytest
 
-from fragancia_api.shared.application.email import EmailMessage
+from fragancia_api.shared.application.email import EmailMessage, EmailRejected
 from fragancia_api.shared.infrastructure.smtp_email_sender import SmtpEmailSender
 
 MESSAGE = EmailMessage(to="staff@example.test", subject="Hola ñandú", body="Contraseña: ¡ya!\n")
@@ -18,6 +18,7 @@ class FakeSmtp:
 
     instances: list[FakeSmtp] = []
     fail_on_send = False
+    raise_on_send: Exception | None = None
 
     def __init__(self, host: str, port: int, timeout: float) -> None:
         self.host, self.port, self.timeout = host, port, timeout
@@ -44,6 +45,8 @@ class FakeSmtp:
         self.calls.append(f"login:{username}:{password}")
 
     def send_message(self, message: MimeMessage) -> None:
+        if FakeSmtp.raise_on_send is not None:
+            raise FakeSmtp.raise_on_send
         if FakeSmtp.fail_on_send:
             raise ConnectionRefusedError("smtp refused")
         self.calls.append("send")
@@ -54,6 +57,7 @@ class FakeSmtp:
 def fake_smtp(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeSmtp.instances = []
     FakeSmtp.fail_on_send = False
+    FakeSmtp.raise_on_send = None
     monkeypatch.setattr(smtplib, "SMTP", FakeSmtp)
 
 
@@ -114,3 +118,102 @@ async def test_a_failure_is_not_swallowed_so_the_relay_retries() -> None:
         await _sender().send(MESSAGE)
 
     assert FakeSmtp.instances[0].closed
+
+
+# --- permanent recipient rejection (plan 004, repair round 1, decision 36) -------------------
+
+
+async def test_a_refused_recipient_becomes_email_rejected() -> None:
+    FakeSmtp.raise_on_send = smtplib.SMTPRecipientsRefused(
+        {"staff@example.test": (550, b"5.1.1 mailbox unavailable")}
+    )
+
+    with pytest.raises(EmailRejected, match="mailbox unavailable") as raised:
+        await _sender().send(MESSAGE)
+
+    assert isinstance(raised.value.__cause__, smtplib.SMTPRecipientsRefused)
+    assert FakeSmtp.instances[0].closed
+
+
+# --- repair round 2: only an all-5xx recipient refusal is a rejection ---------------------------
+
+
+@pytest.mark.parametrize("code", [500, 550, 554])
+async def test_a_5xx_failure_that_is_not_a_recipient_refusal_propagates_so_it_is_retried(
+    code: int,
+) -> None:
+    """Sender (`MAIL FROM`), helo and `DATA` failures are configuration problems, not a bad
+    recipient: they must not consume the event."""
+    errors: list[smtplib.SMTPResponseException] = [
+        smtplib.SMTPResponseException(code, b"permanent failure"),
+        smtplib.SMTPSenderRefused(code, b"sender refused", "no-reply@lafraganciaideal.test"),
+        smtplib.SMTPHeloError(code, b"helo refused"),
+        smtplib.SMTPDataError(code, b"data refused"),
+    ]
+    for error in errors:
+        FakeSmtp.raise_on_send = error
+
+        with pytest.raises(smtplib.SMTPResponseException) as raised:
+            await _sender().send(MESSAGE)
+
+        assert raised.value is error
+        assert not isinstance(raised.value, EmailRejected)
+
+
+async def test_a_4xx_recipient_refusal_propagates_so_it_is_retried() -> None:
+    error = smtplib.SMTPRecipientsRefused({"staff@example.test": (451, b"4.7.1 greylisted")})
+    FakeSmtp.raise_on_send = error
+
+    with pytest.raises(smtplib.SMTPRecipientsRefused) as raised:
+        await _sender().send(MESSAGE)
+
+    assert raised.value is error
+    assert not isinstance(raised.value, EmailRejected)
+
+
+async def test_a_mix_of_4xx_and_5xx_recipient_refusals_propagates_so_it_is_retried() -> None:
+    error = smtplib.SMTPRecipientsRefused(
+        {
+            "staff@example.test": (550, b"5.1.1 mailbox unavailable"),
+            "other@example.test": (451, b"4.7.1 greylisted"),
+        }
+    )
+    FakeSmtp.raise_on_send = error
+
+    with pytest.raises(smtplib.SMTPRecipientsRefused) as raised:
+        await _sender().send(MESSAGE)
+
+    assert raised.value is error
+
+
+async def test_every_recipient_refused_with_a_5xx_becomes_email_rejected() -> None:
+    FakeSmtp.raise_on_send = smtplib.SMTPRecipientsRefused(
+        {
+            "staff@example.test": (550, b"5.1.1 mailbox unavailable"),
+            "other@example.test": (554, b"5.7.1 relay denied"),
+        }
+    )
+
+    with pytest.raises(EmailRejected) as raised:
+        await _sender().send(MESSAGE)
+
+    assert isinstance(raised.value.__cause__, smtplib.SMTPRecipientsRefused)
+
+
+@pytest.mark.parametrize("code", [421, 450, 451, 499])
+async def test_a_4xx_smtp_reply_propagates_unchanged_so_it_is_retried(code: int) -> None:
+    error = smtplib.SMTPResponseException(code, b"try again later")
+    FakeSmtp.raise_on_send = error
+
+    with pytest.raises(smtplib.SMTPResponseException) as raised:
+        await _sender().send(MESSAGE)
+
+    assert raised.value is error
+    assert not isinstance(raised.value, EmailRejected)
+
+
+async def test_a_dropped_connection_propagates_unchanged_so_it_is_retried() -> None:
+    FakeSmtp.raise_on_send = smtplib.SMTPServerDisconnected("connection unexpectedly closed")
+
+    with pytest.raises(smtplib.SMTPServerDisconnected):
+        await _sender().send(MESSAGE)

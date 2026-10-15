@@ -167,8 +167,69 @@ changed.
     - **The fix:** the confirm now locks the perfume rows by identity, then every existing
       presentation in id order, before it writes.
     - This follows the standing choice to fix review findings.
+32. (2026-10-15) **The low-stock email is decided by units on hand, not by available.**
+    - A sale, a loss or a count can trigger it; reserving, releasing and expiring cannot.
+    - The panel and "¡Últimas piezas!" keep using available (decision 29).
+    - This way an abandoned checkout never repeats the email.
+33. (2026-10-15) **One low-stock email per operation.** An operation that leaves several
+    presentations low sends one email listing them all, for example an Excel import, a global
+    threshold change or a multi-perfume sale.
+34. (2026-10-15) **A threshold change can trigger the email.**
+    - Raising a threshold so that a presentation becomes low emails once, like any other drop.
+    - Lowering it re-arms the alert.
+    - On deploy, presentations that are already low count as already alerted, so there is no
+      burst of emails.
+35. (2026-10-15) **A presentation never counted before starts as already alerted** (plan 004
+    review M1).
+    - Loading it, or a first small restock, sends no email.
+    - The alert arms once its units on hand go above the threshold, and fires on the next drop.
+36. (2026-10-15) **If the mail server permanently rejects one owner's address**, that owner is
+    logged and skipped, and the others still get the email.
+    - The event is not retried for it, so the others don't get repeats.
+    - Temporary failures are still retried.
+    - Capping the outbox's retries in general stays a platform finding.
+    - Plan 004 repair round 2 made this precise:
+      - only a 5xx refusal of the recipients counts as permanent;
+      - 4xx refusals, and sender or message failures, are retried.
 
 ## Delivered
+
+The series closed on 2026-10-15, when all five plans were `done`. What shipped is in the
+`inventory` module (`apps/api/src/fragancia_api/modules/inventory/`), plus a small catalog
+part:
+- the storefront copy;
+- the Excel column;
+- the presentation lock order.
+
+The contract is in `apps/api/openapi.json`.
+
+- **Stock ledger (001):**
+  - stock per in-stock presentation, changed only by movements (restock, adjustment, loss,
+    return, count), with history;
+  - global and per-presentation low-stock thresholds, and the low-stock list;
+  - the `inventory:manage` permission, and the catalog `PresentationDirectory` facade.
+- **Storefront status (002):** `inventory.stock.changed` feeds a stock copy in the catalog.
+  - Presentations show `available`, `last_units` ("¡Últimas piezas!") or `sold_out`
+    ("Agotado").
+  - The "from" price, the price filters and the sort count only buyable sizes.
+  - `in_stock=true` hides perfumes with nothing to buy.
+- **Initial stock from Excel (005):** an optional "Existencias" column. Confirming publishes
+  `catalog.import.applied`, and inventory records count movements. Counts need
+  `inventory:manage`, checked under the import lock.
+- **Reservations (003):** the `StockReservations` facade for the orders module.
+  - It reserves all or nothing, and extends, commits (a `sale` movement) and releases.
+  - An expiry job runs every minute.
+  - Available is `on hand − reserved`.
+  - Every writer of presentation and stock rows takes them in one global lock order.
+  - The panel lists the active reservations.
+- **Low-stock email (004):** one email per operation to every active owner, when units on hand
+  drop to the threshold. It re-arms when they go back above.
+  - Owners are read through identity's `OwnerDirectory`, its first public facade.
+  - A recipient the server rejects with a 5xx is skipped; other failures are retried.
+
+**Open for later:** the platform findings `platform-outbox-relay-retries-forever` and
+`platform-outbox-test-leaves-a-row`. The orders module will be the first real caller of
+`StockReservations`.
 
 ## Considered and discarded
 

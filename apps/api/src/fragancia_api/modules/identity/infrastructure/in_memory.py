@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from fragancia_api.modules.identity.application.queries.owner_directory import OwnerContact
 from fragancia_api.modules.identity.contracts import (
     AdminInvitation,
     AdminMe,
@@ -13,7 +14,7 @@ from fragancia_api.modules.identity.domain.errors import EmailTaken
 from fragancia_api.modules.identity.domain.invitation import Invitation
 from fragancia_api.modules.identity.domain.password_reset import PasswordReset
 from fragancia_api.modules.identity.domain.session import Session
-from fragancia_api.modules.identity.domain.user import Email, User
+from fragancia_api.modules.identity.domain.user import Email, Role, User
 from fragancia_api.shared.kernel import Err, Ok, Result
 
 
@@ -40,6 +41,14 @@ class InMemoryUsers:
 
     async def save(self, user: User) -> None:
         self.by_id[user.id] = user
+
+    async def active_owners(self) -> list[OwnerContact]:
+        """The `OwnerDirectoryQueries` over the same store."""
+        owners = sorted(
+            (u for u in self.by_id.values() if u.role is Role.OWNER and u.is_active),
+            key=lambda u: u.name.value,
+        )
+        return [OwnerContact(name=u.name.value, email=u.email.value) for u in owners]
 
 
 class InMemorySessions:

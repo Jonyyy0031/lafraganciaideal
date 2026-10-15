@@ -1,6 +1,7 @@
 """Wiring of the inventory module for the composition root."""
 
 from fragancia_api.modules.catalog import PresentationDirectory
+from fragancia_api.modules.identity import OwnerDirectory
 from fragancia_api.modules.inventory.application.commands.reservations import (
     CommitReservation,
     ExpireReservations,
@@ -18,6 +19,9 @@ from fragancia_api.modules.inventory.application.handlers.import_applied import 
     IMPORT_APPLIED_EVENT,
     ApplyImportedCounts,
 )
+from fragancia_api.modules.inventory.application.handlers.low_stock_email import (
+    SendLowStockEmail,
+)
 from fragancia_api.modules.inventory.application.queries.stock import (
     GetInventorySettings,
     GetStock,
@@ -26,10 +30,12 @@ from fragancia_api.modules.inventory.application.queries.stock import (
     ListStock,
 )
 from fragancia_api.modules.inventory.application.stock_reservations import StockReservations
+from fragancia_api.modules.inventory.domain.stock import StockWentLow
 from fragancia_api.modules.inventory.http.router import routers
 from fragancia_api.modules.inventory.infrastructure.catalog_presentations import (
     CatalogPresentations,
 )
+from fragancia_api.modules.inventory.infrastructure.identity_owners import IdentityOwners
 from fragancia_api.modules.inventory.infrastructure.sql_reservation_repository import (
     SqlReservationRepository,
 )
@@ -50,6 +56,12 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     queries = SqlStockQueries(platform.database)
     # The catalog registers before inventory (MODULES order), so its facade is available.
     catalog = CatalogPresentations(services.get(PresentationDirectory))
+    # Identity registers before inventory too, so its facade is available.
+    owners = IdentityOwners(services.get(OwnerDirectory))
+    platform.subscriptions.subscribe(
+        StockWentLow.name,
+        SendLowStockEmail(catalog=catalog, owners=owners, email=platform.email),
+    )
 
     services.add(
         RecordMovement,

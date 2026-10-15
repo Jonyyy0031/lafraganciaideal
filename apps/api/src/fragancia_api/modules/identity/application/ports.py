@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
+from fragancia_api.modules.identity.application.queries.owner_directory import OwnerContact
 from fragancia_api.modules.identity.contracts import (
     AdminInvitation,
     AdminMe,
@@ -68,4 +69,12 @@ class AccountQueries(Protocol):
 
     async def pending_invitations(self, now: datetime) -> list[AdminInvitation]:
         """Invitations that are not accepted, not revoked and not expired, newest first."""
+        ...
+
+
+class OwnerDirectoryQueries(Protocol):
+    """Read side behind the `OwnerDirectory` facade other modules use."""
+
+    async def active_owners(self) -> list[OwnerContact]:
+        """The active users with the owner role, ordered by name."""
         ...

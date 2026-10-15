@@ -1,4 +1,5 @@
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -24,6 +25,8 @@ stock_items = Table(
     # Units held by active reservations; changed under the item's row lock.
     Column("reserved", Integer, nullable=False, server_default=text("0")),
     Column("threshold_override", Integer, nullable=True),
+    # The low-stock email went out and the item has not recovered since (re-arms above).
+    Column("low_alerted", Boolean, nullable=False, server_default=text("false")),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     CheckConstraint("on_hand >= 0", name="on_hand_not_negative"),
     CheckConstraint("reserved >= 0", name="reserved_not_negative"),

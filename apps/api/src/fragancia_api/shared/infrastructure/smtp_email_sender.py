@@ -4,7 +4,7 @@ import asyncio
 import smtplib
 from email.message import EmailMessage as MimeMessage
 
-from fragancia_api.shared.application.email import EmailMessage
+from fragancia_api.shared.application.email import EmailMessage, EmailRejected
 
 
 class SmtpEmailSender:
@@ -30,7 +30,8 @@ class SmtpEmailSender:
         mime["To"] = message.to
         mime["Subject"] = message.subject
         mime.set_content(message.body)
-        # Errors are never caught: a failure must reach the relay so the event is retried.
+        # Only a permanent recipient refusal becomes `EmailRejected`; any other failure reaches
+        # the relay so the event is retried.
         await asyncio.to_thread(self._send_blocking, mime)
 
     def _send_blocking(self, mime: MimeMessage) -> None:
@@ -39,4 +40,13 @@ class SmtpEmailSender:
                 smtp.starttls()
             if self._username and self._password:
                 smtp.login(self._username, self._password)
-            smtp.send_message(mime)
+            try:
+                smtp.send_message(mime)
+            except smtplib.SMTPRecipientsRefused as error:
+                # Rejected only when every recipient got a permanent (5xx) refusal; a 4xx
+                # (greylisting, mailbox busy) is temporary, so the event is retried.
+                if all(code >= 500 for code, _ in error.recipients.values()):
+                    raise EmailRejected(str(error)) from error
+                raise
+            # Sender, helo and DATA failures are not caught here: they propagate and the
+            # event is retried.

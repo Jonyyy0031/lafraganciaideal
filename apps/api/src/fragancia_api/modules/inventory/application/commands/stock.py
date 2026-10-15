@@ -19,6 +19,7 @@ from fragancia_api.modules.inventory.domain.stock import (
     Reason,
     StockItem,
     Threshold,
+    low_stock_event,
 )
 from fragancia_api.shared.application.clock import Clock
 from fragancia_api.shared.application.events import EventPublisher
@@ -39,6 +40,15 @@ async def _require_stocked(
     if not found.stocked:
         return PresentationNotStocked()
     return None
+
+
+async def _publish_went_low(
+    events: EventPublisher, went_low: list[StockItem], global_threshold: Threshold
+) -> None:
+    """One `inventory.stock.went_low` event for the items a command just took low, if any."""
+    event = low_stock_event(went_low, global_threshold)
+    if event is not None:
+        await events.publish([event])
 
 
 class RecordMovement:
@@ -90,8 +100,10 @@ class RecordMovement:
                     return Err(refused)
                 case Ok(movement):
                     pass
+            went_low = item.track_low(global_threshold)
             await self._stock.save(item)
             await self._events.publish([item.changed_event(global_threshold, now)])
+            await _publish_went_low(self._events, [item] if went_low else [], global_threshold)
             return Ok(MovementCreated(id=movement.id, on_hand=item.on_hand))
 
         return await self._transactions.run(work)
@@ -133,6 +145,7 @@ class RecordImportedCounts:
             # settings row (share), then the stock item. Items go in `presentation_id` order,
             # as a settings change takes them, so no wait cycle forms.
             recorded = 0
+            went_low: list[StockItem] = []
             global_threshold: Threshold | None = None
             for presentation_id in sorted(counts):
                 refusal = await _require_stocked(self._catalog, presentation_id)
@@ -162,9 +175,13 @@ class RecordImportedCounts:
                         continue
                     case Ok(_):
                         pass
+                if item.track_low(global_threshold):
+                    went_low.append(item)
                 await self._stock.save(item)
                 await self._events.publish([item.changed_event(global_threshold, now)])
                 recorded += 1
+            if global_threshold is not None:
+                await _publish_went_low(self._events, went_low, global_threshold)
             return Ok(recorded)
 
         return await self._transactions.run(work)
@@ -214,8 +231,10 @@ class SetThreshold:
             if item is None:
                 item = StockItem.empty(presentation_id, now)
             item.set_threshold(override)
+            went_low = item.track_low(global_threshold)
             await self._stock.save(item)
             await self._events.publish([item.changed_event(global_threshold, now)])
+            await _publish_went_low(self._events, [item] if went_low else [], global_threshold)
             return Ok(None)
 
         return await self._transactions.run(work)
@@ -257,6 +276,10 @@ class UpdateInventorySettings:
             now = self._clock.now()
             # The effective threshold of every item without an override changed.
             await self._events.publish([item.changed_event(threshold, now) for item in items])
+            went_low = [item for item in items if item.track_low(threshold)]
+            for item in items:
+                await self._stock.save(item)
+            await _publish_went_low(self._events, went_low, threshold)
             return Ok(None)
 
         return await self._transactions.run(work)

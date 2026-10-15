@@ -34,6 +34,22 @@ class PresentationCatalog(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class Recipient:
+    """Someone who gets the low-stock email."""
+
+    name: str
+    email: str
+
+
+class OwnerRecipients(Protocol):
+    """Inventory's view of the owners, in inventory's terms (implemented by an adapter)."""
+
+    async def active_owners(self) -> list[Recipient]:
+        """The active owners, ordered by name."""
+        ...
+
+
 class StockQueries(Protocol):
     """Read side: returns response models directly, no aggregates involved."""
 

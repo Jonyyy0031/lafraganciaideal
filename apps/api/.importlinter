@@ -102,3 +102,5 @@ modules =
 ignore_imports =
     fragancia_api.modules.inventory.infrastructure.catalog_presentations -> fragancia_api.modules.catalog
     fragancia_api.modules.inventory.module -> fragancia_api.modules.catalog
+    fragancia_api.modules.inventory.infrastructure.identity_owners -> fragancia_api.modules.identity
+    fragancia_api.modules.inventory.module -> fragancia_api.modules.identity
