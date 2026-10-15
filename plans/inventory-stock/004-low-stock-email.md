@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: inventory
 min_implementer: mid
 depends_on: ["001", "002", "003", "005"]
@@ -262,6 +262,22 @@ owner.
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+- **Existing tests touched (cosmetic).** Eight existing assertions assumed every published or
+  outbox event is `inventory.stock.changed`, which the new `went_low` event breaks. Filtered to
+  `StockChanged` / `name == "inventory.stock.changed"` in `tests/unit/inventory/`
+  (`test_imported_counts.py`, `test_reservation_commands.py`, `test_stock_changed_event.py`) and
+  `tests/integration/inventory/` (`test_stock_status_flow.py`, `test_stock_settings_race.py`).
+  No new tests written; the tester owns that.
+- **`UpdateInventorySettings` now saves every stock item** (it only published events before), so a
+  re-arm or a new `low_alerted` is persisted. Implied by step 3, not spelled out.
+- **`inventory/infrastructure/in_memory.py` unchanged**: its deep copies already keep
+  `low_alerted`.
+- **Observation:** `SetThreshold` on a never-stocked presentation creates an empty item
+  (on hand 0), which is low, so it alerts. Literal to the plan; the reviewer may want to confirm.
+- **`plans-scope` reports `apps/api/tests/integration/catalog/test_sql_brands.py` as out of scope**:
+  not modified in this worktree (git status clean for it); it comes from the diff against local
+  `main` being behind. Not touched.
 
 ## Test coverage
 

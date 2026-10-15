@@ -124,7 +124,6 @@ async def test_each_count_publishes_one_stock_changed_with_the_new_count_and_the
     await inv.record_counts.execute({STOCKED: 10, STOCKED_2: 2}, ACTOR)
 
     events = inv.events.published
-    assert all(isinstance(e, StockChanged) for e in events)
     assert [
         (e.presentation_id, e.available, e.threshold, e.as_of)
         for e in events

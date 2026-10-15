@@ -33,6 +33,7 @@ def _to_item(row: RowMapping) -> StockItem:
         reserved=row["reserved"],
         threshold_override=Threshold(override) if override is not None else None,
         updated_at=row["updated_at"],
+        low_alerted=row["low_alerted"],
     )
 
 
@@ -101,6 +102,7 @@ class SqlStockRepository:
             "threshold_override": (
                 item.threshold_override.value if item.threshold_override is not None else None
             ),
+            "low_alerted": item.low_alerted,
             "updated_at": item.updated_at,
         }
         await session.execute(

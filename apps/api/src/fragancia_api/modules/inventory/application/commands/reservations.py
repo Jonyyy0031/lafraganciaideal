@@ -44,7 +44,11 @@ from fragancia_api.modules.inventory.domain.reservation import (
     Reservation,
     ReservationStatus,
 )
-from fragancia_api.modules.inventory.domain.stock import Reason, StockItem
+from fragancia_api.modules.inventory.domain.stock import (
+    Reason,
+    StockItem,
+    low_stock_event,
+)
 from fragancia_api.shared.application.clock import Clock
 from fragancia_api.shared.application.events import EventPublisher
 from fragancia_api.shared.application.transactions import TransactionRunner
@@ -236,11 +240,17 @@ class CommitReservation:
                 return Err(refusal)
             reservation.commit(now)
             await self._reservations.save(reservation)
+            went_low: list[StockItem] = []
             for item in items.values():
+                if item.track_low(global_threshold):
+                    went_low.append(item)
                 await self._stock.save(item)
             await self._events.publish(
                 [item.changed_event(global_threshold, now) for item in items.values()]
             )
+            low_event = low_stock_event(went_low, global_threshold)
+            if low_event is not None:
+                await self._events.publish([low_event])
             return Ok(None)
 
         return await self._transactions.run(work)

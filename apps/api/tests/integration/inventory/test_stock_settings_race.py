@@ -201,7 +201,11 @@ async def test_a_settings_change_waits_for_a_movement_and_the_copy_ends_up_sold_
     assert (available, threshold) == (0, 12)
     assert await statuses(container, perfume_id) == {100: "sold_out"}
     # The settings event was stamped after the sale committed and carries its count.
-    rows = [r["payload"] for r in await outbox_rows(container) if r["payload"]["threshold"] == 12]
+    rows = [
+        r["payload"]
+        for r in await outbox_rows(container)
+        if r["name"] == "inventory.stock.changed" and r["payload"]["threshold"] == 12
+    ]
     assert [(p["available"]) for p in rows] == [0]
 
 
@@ -274,7 +278,11 @@ async def test_the_settings_change_publishes_the_count_a_committed_movement_left
     )
 
     assert isinstance(result, Ok)
-    pending = [r for r in await outbox_rows(container) if r["published_at"] is None]
+    pending = [
+        r
+        for r in await outbox_rows(container)
+        if r["published_at"] is None and r["name"] == "inventory.stock.changed"
+    ]
     movement_event, settings_event = (r["payload"] for r in pending)
     assert (movement_event["available"], movement_event["threshold"]) == (2, 3)
     assert (settings_event["available"], settings_event["threshold"]) == (2, 12)

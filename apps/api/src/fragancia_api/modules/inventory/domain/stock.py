@@ -21,6 +21,7 @@ A presentation is low when `available <= effective threshold`: its own override,
 global one.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -52,7 +53,9 @@ __all__ = [
     "Reason",
     "StockChanged",
     "StockItem",
+    "StockWentLow",
     "Threshold",
+    "low_stock_event",
 ]
 
 QUANTITY_MAX = 100_000
@@ -151,6 +154,15 @@ class StockChanged(DomainEvent):
     as_of: datetime
 
 
+@dataclass(frozen=True, kw_only=True)
+class StockWentLow(DomainEvent):
+    """One or more presentations just dropped to or below their low-stock threshold, counted in
+    units on hand. Each line is `{"presentation_id": str, "on_hand": int, "threshold": int}`."""
+
+    name: ClassVar[str] = "inventory.stock.went_low"
+    lines: tuple[dict[str, object], ...]
+
+
 class StockItem(AggregateRoot):
     def __init__(
         self,
@@ -160,12 +172,14 @@ class StockItem(AggregateRoot):
         threshold_override: Threshold | None,
         updated_at: datetime,
         reserved: int = 0,
+        low_alerted: bool = False,
     ) -> None:
         super().__init__()
         self.presentation_id = presentation_id
         self.on_hand = on_hand
         self.reserved = reserved
         self.threshold_override = threshold_override
+        self.low_alerted = low_alerted
         self.updated_at = updated_at
         self.new_movements: list[Movement] = []
 
@@ -283,6 +297,20 @@ class StockItem(AggregateRoot):
             self.available, override.value if override is not None else None, global_threshold.value
         )
 
+    def track_low(self, global_threshold: Threshold) -> bool:
+        """Update the low-stock alert state; True when the item has just gone low.
+
+        Uses `on_hand`, not `available` (decision 32): a reservation holds units but they are
+        still in the warehouse, so reserving and releasing can never flap the alert. While the
+        item stays low it is not alerted again; going above its threshold re-arms it."""
+        low = self.on_hand <= self.effective_threshold(global_threshold)
+        if low and not self.low_alerted:
+            self.low_alerted = True
+            return True
+        if not low:
+            self.low_alerted = False
+        return False
+
     def changed_event(self, global_threshold: Threshold, as_of: datetime) -> StockChanged:
         return StockChanged(
             presentation_id=self.presentation_id,
@@ -290,3 +318,16 @@ class StockItem(AggregateRoot):
             threshold=self.effective_threshold(global_threshold),
             as_of=as_of,
         )
+
+
+def low_stock_event(items: Iterable[StockItem], global_threshold: Threshold) -> StockWentLow | None:
+    """The one event for the items that just went low, or None when there are none."""
+    lines = tuple(
+        {
+            "presentation_id": str(item.presentation_id),
+            "on_hand": item.on_hand,
+            "threshold": item.effective_threshold(global_threshold),
+        }
+        for item in items
+    )
+    return StockWentLow(lines=lines) if lines else None

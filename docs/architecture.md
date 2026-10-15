@@ -172,6 +172,14 @@ POST /api/v1/admin/brands
   `catalog` and `inventory` depend on each other (inventory already depends on the catalog
   facade). The counts therefore lag the confirm by one relay cycle (about 2 s); delivery cannot
   be lost, and it commits with the handler's writes, so a committed delivery is not repeated.
+- **Low-stock email to the owners** (an event feeding an email): every command that changes
+  `on_hand` or a threshold calls `StockItem.track_low`, which sets the item's `low_alerted`
+  flag when it drops to or below its threshold in units on hand (reservations cannot flap it)
+  and re-arms it when it goes back above. The command publishes one
+  `inventory.stock.went_low` event (`lines`: presentation id, `on_hand`, `threshold`) listing
+  the items that just went low. An `inventory` subscriber sends one email per active owner,
+  reading them through identity's `OwnerDirectory` facade and the labels through the catalog.
+  Delivery is at-least-once, so a retry can repeat the email.
 - **Stock reservations** (a counter under the item's row lock): each `inventory.stock_items`
   row keeps a `reserved` counter beside `on_hand`, changed under the same row lock, so a
   reserve and a movement on one presentation serialize. Available is

@@ -56,9 +56,7 @@ def refusal(result: object) -> DomainError:
 
 
 def events(inv: Inventory) -> list[StockChanged]:
-    found = [e for e in inv.events.published if isinstance(e, StockChanged)]
-    assert len(found) == len(inv.events.published)
-    return found
+    return [e for e in inv.events.published if isinstance(e, StockChanged)]
 
 
 def unit_state(inv: Inventory, presentation_id: UUID) -> tuple[int, int]:

@@ -9,6 +9,12 @@ Events (published through the outbox; other modules subscribe by name, never by 
   reserved, never below 0), `threshold` (int; the effective one) and `as_of` (ISO datetime of
   the change; consumers keep the newest).
 
+- `inventory.stock.went_low`: once per command that takes presentations to or below their
+  low-stock threshold, counted in units on hand (a presentation is alerted once, until it goes
+  back above its threshold). Payload: `lines`, a list of objects with `presentation_id` (UUID
+  string), `on_hand` (int) and `threshold` (int; the effective one). Inventory itself consumes
+  it to email the active owners.
+
 Inventory subscribes to `catalog.import.applied` (by name) and records one `count` movement per
 entry of its `stock_counts`, about one relay cycle after the import is confirmed.
 

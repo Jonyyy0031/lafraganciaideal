@@ -35,6 +35,7 @@ from fragancia_api.modules.identity.application.queries.my_account import (
     GetMyAccount,
     ListMySessions,
 )
+from fragancia_api.modules.identity.application.queries.owner_directory import OwnerDirectory
 from fragancia_api.modules.identity.application.queries.team import (
     ListPendingInvitations,
     ListUsers,
@@ -53,6 +54,7 @@ from fragancia_api.modules.identity.infrastructure.sql_invitation_repository imp
     SqlInvitationRepository,
 )
 from fragancia_api.modules.identity.infrastructure.sql_login_throttle import SqlLoginThrottle
+from fragancia_api.modules.identity.infrastructure.sql_owner_directory import SqlOwnerDirectory
 from fragancia_api.modules.identity.infrastructure.sql_password_reset_repository import (
     SqlPasswordResetRepository,
 )
@@ -214,6 +216,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
             links=links,
         ),
     )
+    services.add(OwnerDirectory, OwnerDirectory(SqlOwnerDirectory(platform.database)))
     services.add(GetMyAccount, GetMyAccount(queries))
     services.add(ListMySessions, ListMySessions(queries, clock=clock, policy=policy))
     services.add(

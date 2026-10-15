@@ -142,7 +142,7 @@ async def test_each_command_appends_its_own_event_in_order(
     await lose(container, presentation_id, 2)
     await container.services.get(SetThreshold).execute(presentation_id, 8)
 
-    rows = await outbox_rows(container)
+    rows = [r for r in await outbox_rows(container) if r["name"] == EVENT]
 
     assert [(r["payload"]["available"], r["payload"]["threshold"]) for r in rows] == [
         (5, 3),
@@ -241,7 +241,9 @@ async def test_a_global_threshold_change_republishes_one_event_per_stock_item(
     assert await outbox_rows(container) != []
 
     result = await container.services.get(UpdateInventorySettings).execute(12)
-    new_rows = [r for r in await outbox_rows(container) if r["published_at"] is None]
+    new_rows = [
+        r for r in await outbox_rows(container) if r["published_at"] is None and r["name"] == EVENT
+    ]
 
     assert isinstance(result, Ok)
     thresholds = {UUID(r["payload"]["presentation_id"]): r["payload"] for r in new_rows}
