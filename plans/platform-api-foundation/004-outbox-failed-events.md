@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -201,6 +201,31 @@ This plan applies README decision 8 (2026-10-15):
   their expected values only; no new tests (the tester writes those).
 - Cosmetic: the generated migration was hand-edited to also re-create the partial index, as the
   plan specifies.
+
+### Repair round 1 (2026-10-15, main session: review → implementing)
+
+**Why.** The tester's GAP (finding `platform-outbox-backoff-overflows-before-the-cap`):
+- `_record_failure` builds `timedelta(seconds=2**attempts)` before applying `MAX_BACKOFF`
+  (`shared/infrastructure/outbox.py:159`).
+- From about attempt 47 that raises `OverflowError`. The failure is never recorded, and the
+  relay raises on every cycle.
+- So an always-failing event never reaches the 295-attempt cap, which defeats decision 8.
+- This is an implementation defect, not a business rule, so no user decision is needed.
+
+**Repair spec.**
+- Files: `apps/api/src/fragancia_api/shared/infrastructure/outbox.py`,
+  `plans/findings/platform-outbox-backoff-overflows-before-the-cap.md`.
+- **Cap the exponent before building the delta.** Write
+  `delay = min(timedelta(seconds=2 ** min(attempts, _BACKOFF_EXPONENT_CAP)), MAX_BACKOFF)`,
+  with `_BACKOFF_EXPONENT_CAP = 9`, the first exponent whose value (512 s) exceeds
+  `MAX_BACKOFF`. Add a one-line comment.
+- The waits are unchanged for every attempt: 2, 4 … 256 s, then 300 s.
+- The finding gets `status: resolved`, `plan: platform-api-foundation/004`, and a resolution
+  line.
+- **Tests, for the tester.** The two strict-xfail tests become XPASS failures. Remove their
+  markers and keep them as normal tests.
+
+**Scope.** The product code is that single expression. The implementer changes no tests.
 
 ## Test coverage
 
