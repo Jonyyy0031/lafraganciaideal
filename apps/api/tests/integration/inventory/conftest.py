@@ -21,6 +21,15 @@ async def clean_inventory(container: Container) -> AsyncIterator[None]:
             )
             # Plan 003 tests leave outbox rows: the shared fixture only empties it before.
             await connection.execute(text("TRUNCATE platform.outbox"))
+            # Plan 004: relaying a `went_low` row emails every active owner through the real SMTP
+            # sender. These tests must not depend on what an identity test left behind, so no
+            # user exists unless the test itself creates one.
+            await connection.execute(
+                text(
+                    "TRUNCATE identity.sessions, identity.invitations, "
+                    "identity.password_resets, identity.users, identity.login_throttle"
+                )
+            )
             await connection.execute(
                 text("UPDATE inventory.settings SET low_stock_threshold = 3 WHERE id = 1")
             )

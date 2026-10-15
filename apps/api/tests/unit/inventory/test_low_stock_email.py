@@ -17,6 +17,7 @@ from fragancia_api.modules.inventory.application.handlers.low_stock_email import
 from fragancia_api.modules.inventory.application.ports import Recipient
 from fragancia_api.modules.inventory.domain.stock import StockWentLow
 from fragancia_api.modules.inventory.infrastructure.identity_owners import IdentityOwners
+from fragancia_api.shared.application.email import EmailMessage, EmailRejected
 from fragancia_api.shared.application.events import EventMessage
 from fragancia_api.shared.infrastructure.in_memory import FixedClock, RecordingEmailSender
 from tests.unit.inventory.support import STOCKED, STOCKED_2, UNKNOWN, make_catalog
@@ -133,6 +134,67 @@ async def test_a_failure_on_a_later_owner_raises_after_the_earlier_ones_were_sen
         await handler(Owners(ANA, LUIS), email)(message((STOCKED, 3, 3)))
 
     assert [m.to for m in email.sent] == ["ana@example.test"]
+
+
+class RejectsAddresses(RecordingEmailSender):
+    """Permanently refuses the listed addresses, as an SMTP 5xx reply would."""
+
+    def __init__(self, *rejected: str, down: set[str] | None = None) -> None:
+        super().__init__()
+        self.rejected = set(rejected)
+        self.down = down or set()
+        self.attempted: list[str] = []
+
+    async def send(self, message_: EmailMessage) -> None:
+        self.attempted.append(message_.to)
+        if message_.to in self.rejected:
+            raise EmailRejected("550 mailbox unavailable")
+        if message_.to in self.down:
+            raise ConnectionError("smtp down")
+        await super().send(message_)
+
+
+async def test_a_rejected_owner_is_skipped_and_logged_and_the_others_still_get_it() -> None:
+    email = RejectsAddresses("luis@example.test")
+    zoe = Recipient(name="Zoe", email="zoe@example.test")
+
+    with structlog.testing.capture_logs() as logs:
+        await handler(Owners(ANA, LUIS, zoe), email)(message((STOCKED, 3, 3)))
+
+    assert email.attempted == ["ana@example.test", "luis@example.test", "zoe@example.test"]
+    assert [m.to for m in email.sent] == ["ana@example.test", "zoe@example.test"]
+    [log] = [entry for entry in logs if entry["event"] == "inventory.low_stock_email_rejected"]
+    assert log["address"] == "luis@example.test"
+
+
+async def test_a_rejected_first_owner_does_not_stop_the_next() -> None:
+    email = RejectsAddresses("ana@example.test")
+
+    await handler(Owners(ANA, LUIS), email)(message((STOCKED, 3, 3)))
+
+    assert [m.to for m in email.sent] == ["luis@example.test"]
+
+
+async def test_when_every_owner_is_rejected_the_handler_still_returns_without_raising() -> None:
+    email = RejectsAddresses("ana@example.test", "luis@example.test")
+
+    with structlog.testing.capture_logs() as logs:
+        await handler(Owners(ANA, LUIS), email)(message((STOCKED, 3, 3)))
+
+    assert email.sent == []
+    rejected = [entry for entry in logs if entry["event"] == "inventory.low_stock_email_rejected"]
+    assert [entry["address"] for entry in rejected] == ["ana@example.test", "luis@example.test"]
+
+
+async def test_a_non_rejection_error_still_raises_after_a_rejected_owner_was_skipped() -> None:
+    zoe = Recipient(name="Zoe", email="zoe@example.test")
+    email = RejectsAddresses("ana@example.test", down={"luis@example.test"})
+
+    with pytest.raises(ConnectionError, match="smtp down"):
+        await handler(Owners(ANA, LUIS, zoe), email)(message((STOCKED, 3, 3)))
+
+    assert email.attempted == ["ana@example.test", "luis@example.test"]
+    assert email.sent == []
 
 
 async def test_an_event_without_lines_sends_nothing() -> None:

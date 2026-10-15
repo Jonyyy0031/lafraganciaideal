@@ -103,13 +103,36 @@ async def test_a_restock_above_the_threshold_re_arms_and_the_next_drop_alerts_ag
 
 async def test_a_restock_that_stays_at_or_below_the_threshold_does_not_re_arm() -> None:
     inv = Inventory()
-    await restock(inv, STOCKED, 2)  # the first movement creates the item, already low
-    assert len(went_low(inv)) == 1
+    await restock(inv, STOCKED, 2)  # the first movement creates the item, already alerted
+    assert went_low(inv) == []
 
     await restock(inv, STOCKED, 1)  # 3, still low
 
-    assert len(went_low(inv)) == 1
+    assert went_low(inv) == []
     assert alerted(inv, STOCKED) is True
+
+
+async def test_a_first_restock_at_or_below_the_threshold_sends_nothing() -> None:
+    """Decision 35: a presentation's first count is a load, not a drop."""
+    inv = Inventory()
+
+    await restock(inv, STOCKED, 3)
+    await restock(inv, STOCKED_2, 1)
+
+    assert went_low(inv) == []
+    assert alerted(inv, STOCKED) is True and alerted(inv, STOCKED_2) is True
+
+
+async def test_a_never_counted_item_alerts_after_going_above_the_threshold_and_dropping() -> None:
+    inv = Inventory()
+    await restock(inv, STOCKED, 2)  # first count, low: quiet and alerted
+
+    await restock(inv, STOCKED, 4)  # 6, above: re-armed
+    assert alerted(inv, STOCKED) is False
+    await lose(inv, STOCKED, 3)  # 3
+
+    [event] = went_low(inv)
+    assert event.lines == (line(STOCKED, 3),)
 
 
 async def test_a_movement_that_keeps_the_item_above_the_threshold_publishes_nothing() -> None:
@@ -203,15 +226,15 @@ async def test_a_threshold_that_leaves_the_item_above_it_publishes_nothing() -> 
     assert went_low(inv) == []
 
 
-async def test_a_threshold_on_a_never_stocked_presentation_alerts_for_its_empty_item() -> None:
-    """Literal to the plan (see its Deviations): the empty item has 0 on hand, which is low."""
+async def test_a_threshold_on_a_never_stocked_presentation_sends_nothing() -> None:
+    """Decision 35: the empty item it creates starts alerted, so there is no drop to report."""
     inv = Inventory()
 
     result = await inv.set_threshold.execute(STOCKED, 5)
 
     assert isinstance(result, Ok)
-    [event] = went_low(inv)
-    assert event.lines == (line(STOCKED, 0, threshold=5),)
+    assert went_low(inv) == []
+    assert alerted(inv, STOCKED) is True
 
 
 async def test_a_refused_threshold_publishes_nothing() -> None:
@@ -231,17 +254,31 @@ async def test_an_import_of_three_counts_at_zero_publishes_one_event_with_three_
     inv = Inventory()
     third = UUID(int=104)
     inv.catalog.presentations.append(presentation(third, "Versace Eros EDT 30 ml"))
+    await inv.record_counts.execute({STOCKED: 10, STOCKED_2: 10, third: 10}, "admin")
+    assert went_low(inv) == []
 
     result = await inv.record_counts.execute({STOCKED_2: 0, third: 0, STOCKED: 0}, "admin")
 
     assert isinstance(result, Ok)
     [event] = went_low(inv)
     assert event.lines == (line(STOCKED, 0), line(STOCKED_2, 0), line(third, 0))
-    assert len([e for e in inv.events.published if isinstance(e, StockChanged)]) == 3
+    assert len([e for e in inv.events.published if isinstance(e, StockChanged)]) == 6
+
+
+async def test_a_first_import_of_counts_at_or_below_the_threshold_sends_nothing() -> None:
+    """Decision 35: the initial stock load must not email every presentation loaded low."""
+    inv = Inventory()
+
+    result = await inv.record_counts.execute({STOCKED: 0, STOCKED_2: 3}, "admin")
+
+    assert isinstance(result, Ok)
+    assert went_low(inv) == []
+    assert alerted(inv, STOCKED) is True and alerted(inv, STOCKED_2) is True
 
 
 async def test_only_the_counts_that_reach_the_threshold_are_listed() -> None:
     inv = Inventory()
+    await inv.record_counts.execute({STOCKED: 10, STOCKED_2: 10}, "admin")
 
     await inv.record_counts.execute({STOCKED: 10, STOCKED_2: 3}, "admin")
 
@@ -251,7 +288,9 @@ async def test_only_the_counts_that_reach_the_threshold_are_listed() -> None:
 
 async def test_a_count_that_stays_low_does_not_alert_again() -> None:
     inv = Inventory()
+    await inv.record_counts.execute({STOCKED: 10}, "admin")
     await inv.record_counts.execute({STOCKED: 0}, "admin")
+    assert len(went_low(inv)) == 1
 
     await inv.record_counts.execute({STOCKED: 1}, "admin")
 
@@ -310,6 +349,7 @@ async def test_lowering_the_global_threshold_re_arms_silently_and_persists_it() 
     inv = Inventory()
     await restock(inv, STOCKED, 6)
     await inv.update_settings.execute(10)
+    assert alerted(inv, STOCKED) is True
     inv.events.published.clear()
 
     await inv.update_settings.execute(3)
@@ -425,7 +465,8 @@ async def test_reserving_and_letting_it_expire_sends_no_alert_and_keeps_the_flag
 
 async def test_releasing_a_reservation_does_not_alert_or_re_arm() -> None:
     inv = Inventory()
-    await restock(inv, STOCKED, 3)  # created low: alerted
+    await restock(inv, STOCKED, 5)
+    await lose(inv, STOCKED, 2)  # 3: alerted
     reservation_id = await reserve(inv, {STOCKED: 1})
     assert len(went_low(inv)) == 1
 

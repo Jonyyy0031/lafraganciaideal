@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: mid
 depends_on: ["001", "002", "003", "005"]
@@ -375,7 +375,7 @@ Test files (all new):
 | `StockWentLow` name, lines, JSON payload; `low_stock_event` is None for no items | `domain/stock.py` `StockWentLow`, `low_stock_event` | domain | `test_the_event_is_named_...`, `test_the_event_lists_each_item_...`, `test_the_payload_turns_the_lines_into_json_values`, `test_no_items_means_no_event` | CONFIRMED |
 | `RecordMovement`: one event on a loss to the threshold (after `StockChanged`), none while low, re-arm and alert again, first restock already low, override, refused movement | `commands/stock.py:94` | application | `test_low_stock_commands.py::test_a_loss_to_the_threshold_publishes_one_went_low_with_that_line` and the other `RecordMovement` tests | CONFIRMED |
 | `SetThreshold`: raise alerts once, lower and clear re-arm silently, repeat is quiet, refused publishes nothing | `commands/stock.py:218` | application | `test_raising_a_threshold_above_the_units_on_hand_alerts_once`, `test_lowering_the_threshold_back_re_arms_without_an_event`, `test_clearing_an_override_...`, `test_setting_the_same_threshold_again_...`, `test_a_refused_threshold_...` | CONFIRMED |
-| `SetThreshold` on a never-stocked presentation alerts for its empty item (the Deviations observation) | `commands/stock.py:218` | application | `test_a_threshold_on_a_never_stocked_presentation_alerts_for_its_empty_item` | CONFIRMED (literal; the reviewer decides whether it is wanted) |
+| `SetThreshold` on a never-stocked presentation alerts for its empty item (the Deviations observation) | `commands/stock.py:218` | application | `test_a_threshold_on_a_never_stocked_presentation_alerts_for_its_empty_item` | SUPERSEDED by repair round 1 (decision 35): now `test_a_threshold_on_a_never_stocked_presentation_sends_nothing` |
 | `RecordImportedCounts`: three counts at 0 give one event with three lines; only the low ones listed; no repeat; nothing recorded gives nothing | `commands/stock.py:166` | application | `test_an_import_of_three_counts_at_zero_publishes_one_event_with_three_lines` and four more | CONFIRMED |
 | `UpdateInventorySettings`: many items in one event, overrides untouched, lowering re-arms and persists it, already alerted not repeated, no items | `commands/stock.py:259` | application | `test_raising_the_global_threshold_alerts_every_item_it_now_covers_in_one_event` and four more | CONFIRMED |
 | `CommitReservation`: a sale to the threshold alerts, two items in one event, above stays quiet, already alerted does not repeat, double commit | `commands/reservations.py:242` | application | `test_a_sale_that_leaves_on_hand_at_the_threshold_alerts` and four more | CONFIRMED |
@@ -398,10 +398,37 @@ tests already use), runs the real Alembic CLI against it in a subprocess (`-x te
 `DATABASE_URL_TEST` overridden), and drops it in a `finally`. `fragancia_test` is never
 downgraded. Skipped as NOT CONFIRMED if the user cannot create a database.
 
+### Repair round 1 (tester, 2026-10-15)
+
+Baseline: `check` red with exactly the 7 unit tests the Deviations name (2428 passed, 7 failed);
+`test-integration` red with the 2 named (686 passed, 2 failed, 5 skipped). Closing: `check` green
+(`just test` 3137 passed incl. 685 harness, 3 skipped), `test-integration` green (696 passed, 5
+skipped, the same 5). Net: +17 unit, +8 integration, no GAP, nothing new skipped. After the runs:
+`fragancia_test` has 0 users, stock items, reservations and scratch databases (the one outbox row is
+the pre-existing `tests.something.happened`), and Mailpit holds the same 58 messages as before.
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| `StockItem.empty` starts alerted, a stored item defaults to not alerted; an empty item stays quiet until it goes above the threshold and drops | `domain/stock.py` `empty`, `track_low` | domain | `test_low_stock_domain.py::test_an_item_read_from_storage_defaults_to_not_alerted_but_an_empty_one_starts_alerted`, `test_an_empty_item_stays_quiet_until_it_goes_above_the_threshold_and_drops` | CONFIRMED (M1, decision 35) |
+| First restock / first import / first threshold at or below the threshold sends nothing and leaves the item alerted; going above then dropping alerts | `commands/stock.py:94,166,218` | application | `test_low_stock_commands.py::test_a_first_restock_at_or_below_the_threshold_sends_nothing`, `test_a_never_counted_item_alerts_after_going_above_the_threshold_and_dropping`, `test_a_first_import_of_counts_at_or_below_the_threshold_sends_nothing`, `test_a_threshold_on_a_never_stocked_presentation_sends_nothing` | CONFIRMED (M1) |
+| The six tests pinned to the old behaviour, rewritten to decision 35 (restock that stays low, import of three at 0 after loading above, only the counts reaching the threshold, a count that stays low, releasing, never-stocked threshold) | same | application | `test_low_stock_commands.py` (same names, new arrangements) | CONFIRMED |
+| L5: the global-lowering re-arm test asserts the item was alerted before lowering | `commands/stock.py:259` | application | `test_lowering_the_global_threshold_re_arms_silently_and_persists_it` (`assert alerted` after the raise) | CONFIRMED |
+| `SendLowStockEmail` skips an `EmailRejected` owner (first, middle), logs `inventory.low_stock_email_rejected` with the address, mails the rest, returns when all are rejected; a non-rejection error still raises and stops | `handlers/low_stock_email.py` | application | `test_low_stock_email.py::test_a_rejected_owner_is_skipped_and_logged_and_the_others_still_get_it` and three more | CONFIRMED (L3, decision 36) |
+| `SmtpEmailSender`: `SMTPRecipientsRefused` and 5xx `SMTPResponseException` become `EmailRejected` (cause kept); 4xx replies and a dropped connection propagate unchanged | `smtp_email_sender.py` | unit | `test_smtp_email_sender.py::test_a_refused_recipient_becomes_email_rejected`, `test_a_5xx_smtp_reply_becomes_email_rejected` (3), `test_a_4xx_smtp_reply_propagates_unchanged_so_it_is_retried` (4), `test_a_dropped_connection_propagates_unchanged_so_it_is_retried` | CONFIRMED |
+| The same against real `smtplib` replies from a loopback SMTP stub (Mailpit cannot refuse a recipient): a 550 gives `EmailRejected`, an accepted recipient is delivered, a refused connection stays `ConnectionRefusedError`; full flow: outbox, relay, handler, SMTP skips the refused owner, mails the other, logs it, and the event is published with `attempts == 0` | same + `container.py` wiring | integration | `test_low_stock_rejected_recipient.py` (5) | CONFIRMED (against the stub; NOT against Mailpit, which cannot be made to reject) |
+| M1 on PostgreSQL: a first import and a first restock at or below the threshold leave no row and a stored flag of true; `_insert_empty` rows start alerted and a global change over them reports nothing; the import of three at 0 and its email now load above first | `sql_stock_repository.py:44-63` | integration | `test_low_stock_alert.py::test_a_first_import_at_or_below_the_threshold_leaves_no_row_and_the_items_alerted`, `test_a_first_restock_at_or_below_the_threshold_leaves_no_row_until_a_real_drop`, `test_empty_rows_inserted_by_the_repository_start_alerted`; the two rewritten import tests in `test_low_stock_alert.py` and `test_low_stock_email_flow.py` | CONFIRMED |
+| L4: the inventory integration tests no longer depend on `identity.users` being empty: `clean_inventory` truncates the identity tables before and after every test | `tests/integration/inventory/conftest.py` | integration | the autouse `clean_inventory` fixture | CONFIRMED (by construction; no test can prove a leftover owner is removed without an order-dependent pair, so none was written) |
+
+Observation for the reviewer (not a GAP, the spec says so): `smtplib` raises
+`SMTPRecipientsRefused` when every recipient gets a non-2xx reply, a 4xx greylisting included
+(confirmed with the stub: `test_a_421_reply_before_the_recipient_is_accepted_is_also_refused_by_smtplib`),
+so the adapter treats a temporary refusal of the only recipient as permanent. Likewise a 5xx
+`SMTPSenderRefused` or `SMTPDataError` also becomes `EmailRejected` (the adapter catches any 5xx
+`SMTPResponseException`), which the handler would log as that owner's rejection. Not tested.
+
 Notes for the reviewer:
-- The existing flow tests that call `relay_all` now also deliver `went_low` rows through the real
-  SMTP handler; they pass because `identity.users` has no owner left behind. If another suite left
-  an owner in `identity.users` they would send real mail to Mailpit.
+- (Superseded by L4 above.) The existing flow tests that call `relay_all` deliver `went_low` rows
+  through the real SMTP handler; they used to depend on `identity.users` holding no owner.
 - CRLF: Mailpit returns the body with CRLF line ends (SMTP); the flow test normalizes them to LF
   before comparing the otherwise exact text.
 

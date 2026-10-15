@@ -197,10 +197,12 @@ async def test_an_import_of_three_counts_at_zero_sends_one_email_listing_all_thr
 ) -> None:
     ana = await owners.add("Ana")
     _, ids = await catalog_rows.perfume(sizes=({"ml": 50}, {"ml": 75}, {"ml": 100}))
+    counts = container.services.get(RecordImportedCounts)
+    await counts.execute({presentation_id: 10 for presentation_id in ids}, "admin-load")
+    await relay(container)
+    assert await owners.messages_to(ana) == []
 
-    result = await container.services.get(RecordImportedCounts).execute(
-        {presentation_id: 0 for presentation_id in ids}, "admin-flow"
-    )
+    result = await counts.execute({presentation_id: 0 for presentation_id in ids}, "admin-flow")
     await relay(container)
 
     assert isinstance(result, Ok)

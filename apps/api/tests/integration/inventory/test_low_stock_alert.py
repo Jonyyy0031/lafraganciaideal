@@ -227,16 +227,68 @@ async def test_an_import_of_three_counts_at_zero_leaves_one_row_listing_all_thre
     container: Container, catalog_rows: CatalogRows
 ) -> None:
     _, ids = await catalog_rows.perfume(sizes=({"ml": 50}, {"ml": 75}, {"ml": 100}))
+    counts = container.services.get(RecordImportedCounts)
+    await counts.execute({presentation_id: 10 for presentation_id in ids}, "admin-load")
+    assert await went_low_rows(container) == []
 
-    result = await container.services.get(RecordImportedCounts).execute(
-        {presentation_id: 0 for presentation_id in ids}, "admin-low"
-    )
+    result = await counts.execute({presentation_id: 0 for presentation_id in ids}, "admin-low")
 
     assert isinstance(result, Ok)
     [row] = await went_low_rows(container)
     assert sorted(row["payload"]["lines"], key=lambda item: item["presentation_id"]) == [
         line(presentation_id, 0) for presentation_id in sorted(ids)
     ]
+
+
+async def test_a_first_import_at_or_below_the_threshold_leaves_no_row_and_the_items_alerted(
+    container: Container, catalog_rows: CatalogRows
+) -> None:
+    """Decision 35: the initial stock load is not a drop."""
+    _, [first, second] = await catalog_rows.perfume(sizes=({"ml": 50}, {"ml": 100}))
+
+    result = await container.services.get(RecordImportedCounts).execute(
+        {first: 0, second: 3}, "admin-first-load"
+    )
+
+    assert isinstance(result, Ok)
+    assert await went_low_rows(container) == []
+    assert await stored_flag(container, first) is True
+    assert await stored_flag(container, second) is True
+
+
+async def test_a_first_restock_at_or_below_the_threshold_leaves_no_row_until_a_real_drop(
+    container: Container, catalog_rows: CatalogRows
+) -> None:
+    _, [presentation_id] = await catalog_rows.perfume()
+
+    await restock(container, presentation_id, 2)
+
+    assert await went_low_rows(container) == []
+    assert await stored_flag(container, presentation_id) is True
+
+    await restock(container, presentation_id, 4)  # 6: re-armed
+    await lose(container, presentation_id, 3)  # 3: now it is a drop
+
+    [row] = await went_low_rows(container)
+    assert row["payload"] == {"lines": [line(presentation_id, 3)]}
+
+
+async def test_empty_rows_inserted_by_the_repository_start_alerted(
+    container: Container, catalog_rows: CatalogRows
+) -> None:
+    """`_insert_empty` stores the never-counted item as alerted, so a later global change over
+    those placeholders reports nothing."""
+    _, [first, second] = await catalog_rows.perfume(sizes=({"ml": 50}, {"ml": 100}))
+    repository = SqlStockRepository(container.database)
+
+    await run_in_transaction(
+        container, lambda: repository.get_many_for_update([first, second], now=NOW)
+    )
+
+    assert await stored_flag(container, first) is True
+    assert await stored_flag(container, second) is True
+    await container.services.get(UpdateInventorySettings).execute(10)
+    assert await went_low_rows(container) == []
 
 
 async def test_raising_a_threshold_alerts_once_and_lowering_it_back_re_arms_silently(

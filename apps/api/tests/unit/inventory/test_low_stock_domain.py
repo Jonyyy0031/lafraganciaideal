@@ -38,9 +38,25 @@ def item(
     )
 
 
-def test_a_new_item_is_not_alerted_and_an_empty_one_neither() -> None:
+def test_an_item_read_from_storage_defaults_to_not_alerted_but_an_empty_one_starts_alerted() -> (
+    None
+):
+    """Decision 35: a never-counted presentation's first count is a load, not a drop."""
     assert item(5).low_alerted is False
-    assert StockItem.empty(UUID(int=1), NOW).low_alerted is False
+    assert StockItem.empty(UUID(int=1), NOW).low_alerted is True
+
+
+def test_an_empty_item_stays_quiet_until_it_goes_above_the_threshold_and_drops() -> None:
+    stock = StockItem.empty(UUID(int=1), NOW)
+    stock.on_hand = 2  # the first count, still low
+
+    assert stock.track_low(GLOBAL) is False
+
+    stock.on_hand = 6
+    assert stock.track_low(GLOBAL) is False
+    assert stock.low_alerted is False
+    stock.on_hand = 3
+    assert stock.track_low(GLOBAL) is True
 
 
 # --- boundaries of the global threshold --------------------------------------------------------
