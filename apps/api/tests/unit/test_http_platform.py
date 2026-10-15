@@ -197,7 +197,11 @@ async def test_admin_route_for_a_non_admin_is_403() -> None:
 
 def test_every_admin_route_declares_admin_access() -> None:
     app = make_app()
-    assert admin_operations(app) == [("GET", "/api/v1/admin/probe/whoami")]
+    assert admin_operations(app) == [
+        ("GET", "/api/v1/admin/outbox/failed"),
+        ("POST", "/api/v1/admin/outbox/{event_id}/retry"),
+        ("GET", "/api/v1/admin/probe/whoami"),
+    ]
     assert_admin_routes_are_protected(app)
 
 

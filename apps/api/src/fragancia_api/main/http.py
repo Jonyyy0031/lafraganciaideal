@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from fragancia_api.config import Settings
 from fragancia_api.container import Container, build_container
-from fragancia_api.shared.http import health
+from fragancia_api.shared.http import health, outbox
 from fragancia_api.shared.http.errors import install_error_handlers
 from fragancia_api.shared.http.middleware import BodySizeLimitMiddleware, RequestContextMiddleware
 from fragancia_api.shared.http.openapi import install_openapi, operation_id
@@ -92,6 +92,7 @@ def build_app(
             reference_router(openapi_url=openapi_url, title=TITLE), prefix=API_PREFIX
         )
     app.include_router(health.router, prefix=API_PREFIX)
+    app.include_router(outbox.router, prefix=API_PREFIX)
     for router in routers:
         app.include_router(router, prefix=API_PREFIX)
     return app

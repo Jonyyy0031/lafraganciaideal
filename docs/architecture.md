@@ -157,8 +157,11 @@ POST /api/v1/admin/brands
   ([ADR 0006](adr/0006-outbox-from-day-one.md)). The worker's 2-second cron
   (`OutboxRelay.relay_batch`) takes due rows with `FOR UPDATE SKIP LOCKED`, delivers each in
   its own transaction to the subscribers registered for its name, and marks it published; a
-  failure records `attempts`/`last_error` and backs off exponentially (max 5 minutes).
-  Delivery is at-least-once; subscribers are idempotent.
+  failure records `attempts`/`last_error` and backs off exponentially (max 5 minutes). After
+  295 attempts (about 24 hours) the row gets `failed_at`, is logged
+  (`outbox.delivery_failed_permanently`) and the relay skips it; owners (`outbox:manage`) list
+  failed events at `GET /admin/outbox/failed` and retry one with `POST /admin/outbox/{id}/retry`,
+  which restarts the window. Delivery is at-least-once; subscribers are idempotent.
 - **Stock on the storefront** (an event feeding a copy): `inventory` publishes
   `inventory.stock.changed` (`presentation_id`, `available`, effective `threshold`, `as_of`) on
   every movement, every threshold change and, for every stock item, every change of the global

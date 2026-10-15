@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -194,6 +194,13 @@ This plan applies README decision 8 (2026-10-15):
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+- Cosmetic: adding `outbox:manage` to the owner role also broke other existing tests that pin the
+  owner permission list or the admin route list (`test_auth_http.py`, `test_resolve_session_actor.py`,
+  `test_sessions.py`, `test_http_platform.py`, `integration/identity/test_sql_identity.py`). Updated
+  their expected values only; no new tests (the tester writes those).
+- Cosmetic: the generated migration was hand-edited to also re-create the partial index, as the
+  plan specifies.
 
 ## Test coverage
 

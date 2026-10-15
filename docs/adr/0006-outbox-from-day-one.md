@@ -28,3 +28,5 @@ provider id before processing, so duplicates are ignored.
 
 - One more table and a relay loop in the worker from the first module that publishes events.
 - Subscribers must tolerate duplicates and out-of-order delivery.
+- Retries stop after about 24 h (295 attempts): the event is marked failed and kept with its
+  error, and owners can list and retry it.

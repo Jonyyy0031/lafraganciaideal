@@ -13,6 +13,7 @@ from fragancia_api.modules.catalog.module import module as catalog
 from fragancia_api.modules.identity.module import module as identity
 from fragancia_api.modules.inventory.module import module as inventory
 from fragancia_api.shared.application.actor import ActorResolver
+from fragancia_api.shared.application.events import OutboxAdmin
 from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.http.health import HealthChecks
 from fragancia_api.shared.http.services import ServiceRegistry
@@ -22,6 +23,7 @@ from fragancia_api.shared.infrastructure.outbox import (
     EventBus,
     OutboxEventPublisher,
     OutboxRelay,
+    SqlOutboxAdmin,
 )
 from fragancia_api.shared.infrastructure.smtp_email_sender import SmtpEmailSender
 from fragancia_api.shared.infrastructure.tables import metadata
@@ -73,6 +75,7 @@ def build_container(settings: Settings, modules: Sequence[AppModule] = MODULES) 
     services = ServiceRegistry()
     services.add(TransactionRunner, platform.transactions)  # type: ignore[type-abstract]
     services.add(HealthChecks, HealthChecks(database=database.ping, valkey=valkey.ping))
+    services.add(OutboxAdmin, SqlOutboxAdmin(database))  # type: ignore[type-abstract]
     for module in modules:
         module.register(platform, services)
     if ActorResolver not in services:

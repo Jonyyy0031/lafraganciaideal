@@ -1,7 +1,8 @@
 ---
-status: open # open → deferred | planned | resolved | discarded (the user decides)
+status: resolved
 module: platform
 found: 2026-10-15
+plan: platform-api-foundation/004
 ---
 
 # The outbox relay retries a failing event forever, with no attempt cap or dead letter
@@ -38,3 +39,9 @@ A platform plan:
 - decide per handler whether partial side effects need their own idempotency.
 
 Or accept it and close this finding.
+
+## Resolution
+
+Resolved by platform-api-foundation/004: retries stop after 295 attempts (about 24 h), the event
+is marked failed (`failed_at`), kept with its error and logged, and owners can list and retry it
+from the panel API.
