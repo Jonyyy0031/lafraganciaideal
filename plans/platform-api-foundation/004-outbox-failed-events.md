@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -276,5 +276,75 @@ check in the acceptance criteria would pass and hide it. Both tests are strict `
   and no xfail is left.
 
 ## Review findings
+
+Reviewer, 2026-10-15. Diff `main...HEAD` (93ba308, 326e356, b43e046, 3796bc0, cb29ec6,
+ddef3cc), worktree clean.
+
+**Checklist: 14/14 applicable items passed (the PR body item does not apply yet, since no PR exists).**
+- `plans-scope`: every change is inside the plan. The `container.py` edit is append-only: one
+  import, one name in the import list, and one `services.add` line after `HealthChecks`.
+- `just check`: green. 2470 unit tests passed and 3 skipped; 685 harness tests passed.
+  `openapi --check` reports the file up to date.
+- `just test-integration`: 716 passed, 5 skipped. Afterwards `fragancia_test` has 0
+  `platform.outbox` rows and no `fragancia_mig_*` database.
+- No business rules in the router; `MAX_ATTEMPTS` and the backoff stay in the relay, as before.
+  The port and adapter follow the plan's design: a platform port and a SQL adapter, the way the
+  health checks are built. The 404 is a `NotFoundError` with code `OUTBOX_EVENT_NOT_FOUND`.
+- The contracts live in `shared/contracts/outbox.py`. `FailedEventPage` extends `Page[T]`.
+- Migration 0016 adds a nullable column and re-creates the partial index with
+  `published_at IS NULL AND failed_at IS NULL`. It drops nothing else and has no cross-schema
+  foreign key. The downgrade restores the old predicate and drops the column; the round trip
+  is covered by `test_migration_0016_outbox_failed_at.py`.
+- Admin access: the router is built with `admin_router`, so `require_admin` runs before
+  `require_permission("outbox:manage")`. `test_every_admin_route_declares_admin_access` lists
+  both new routes, and `assert_admin_routes_are_protected` passes.
+- Wiring resolves (`test_container.py` is green), and the adapter is created only in
+  `container.py`.
+- No secrets or personal data.
+- Deviations are honest. Spot check: `test_sessions.py` and `test_http_platform.py` only
+  changed their expected values.
+- Docs updated: ADR 0006, `architecture.md`, README decision 8 and the initiative table, and
+  both findings are resolved. No other doc lists the permissions.
+
+**Decision 8 trace.**
+- The arithmetic holds. Failures 1 to 294 schedule 294 waits: 2 + 4 + … + 256 = 510 s, plus
+  286 × 300 s, for 86,310 s in total. The failure that brings `attempts` to 295 sets
+  `failed_at`.
+- Using `>=` also fails rows that already had more than 295 attempts before the migration, on
+  their next failure.
+- Retry resets `failed_at` and `attempts`, sets `available_at = now()` and keeps
+  `last_error`. It only matches rows with `failed_at IS NOT NULL`.
+- Relay ordering is unchanged (`occurred_at`). Failed rows are filtered out before `LIMIT 1`,
+  so they do not block the rows behind them.
+
+**Mutants.** Each was edited in place, run against the targeted tests, and restored by hand,
+then confirmed with `git status`. All were killed:
+1. Changing the cap to `attempts > MAX_ATTEMPTS` broke 4 integration tests.
+2. Removing `failed_at IS NULL` from `_relay_one` broke 5 integration tests.
+3. Removing `failed_at IS NOT NULL` from `retry` broke 2 integration tests.
+4. Removing `require_permission` from the router broke `test_staff_is_forbidden_on_both_routes`.
+
+**Findings by severity.** None blocking, high, medium or low.
+
+- **Info: a retried event is delivered ahead of newer events.**
+  - Where: `shared/infrastructure/outbox.py:124`, together with `:210`.
+  - What happens: a retried row keeps its original `occurred_at`. The relay orders by
+    `occurred_at`, so the retried row is delivered before newer pending events.
+  - Example: a stock event retried a day later reaches the subscriber after newer stock events
+    for the same presentation.
+  - This is allowed: ADR 0006 already requires subscribers to tolerate out-of-order delivery,
+    and the plan keeps the ordering out of scope. It is recorded so the verifier knows. No
+    change needed.
+- **Info, uncertain and older than this plan: a concurrent relay can lose or duplicate one
+  attempt.**
+  - Where: `shared/infrastructure/outbox.py:139-141` and `:147-148`.
+  - What happens: after a handler fails, the row lock is released by the rollback.
+    `_record_failure` then writes `row.attempts + 1` from the stale read. A second relay
+    running at the same moment could pick the row in that gap, deliver it again, and record
+    the same attempt number.
+  - Effect: one attempt is lost, which shifts the cap by one, and the handler runs once more
+    (at-least-once delivery already allows that).
+  - This only matters if two relay runs overlap. The plan did not change it, so no finding
+    file was written.
 
 ## Verification
