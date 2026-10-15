@@ -43,8 +43,10 @@ class SmtpEmailSender:
             try:
                 smtp.send_message(mime)
             except smtplib.SMTPRecipientsRefused as error:
-                raise EmailRejected(str(error)) from error
-            except smtplib.SMTPResponseException as error:
-                if error.smtp_code >= 500:
+                # Rejected only when every recipient got a permanent (5xx) refusal; a 4xx
+                # (greylisting, mailbox busy) is temporary, so the event is retried.
+                if all(code >= 500 for code, _ in error.recipients.values()):
                     raise EmailRejected(str(error)) from error
                 raise
+            # Sender, helo and DATA failures are not caught here: they propagate and the
+            # event is retried.
