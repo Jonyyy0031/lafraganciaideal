@@ -434,6 +434,142 @@ Notes for the reviewer:
 
 ## Review findings
 
+### Re-review after repair round 1 (2026-10-15)
+
+Reviewed against `main...HEAD` at `b9b5e3b` (repair `4d446d4`, its tests `b9b5e3b`); the worktree
+was clean. **Status stays `review`**: R-M1 and R-M2 need a code change in
+`smtp_email_sender.py` (and the matching test changes). The first review below is kept as
+history; its M1 and L1–L5 are closed as listed here.
+
+**Checklist: 14/14 applicable items pass** (PR body n/a, no PR yet).
+
+- [x] `plans-scope`: "Every change is inside the plan" (28 declared, 41 changed). The only hot
+  file, `apps/api/.importlinter`, is still two appended `ignore_imports` lines.
+- [x] `uv run just check`: green (2452 unit passed, 3 skipped; 685 harness).
+- [x] `uv run just test-integration`: green (696 passed, 5 skipped).
+- [x] Business rules in `domain/`: decision 35 lives in `StockItem.empty`, mirrored by the
+  repository's `_insert_empty`; the handler only formats and sends.
+- [x] CQRS-lite, contracts, money and time, routes, wiring: the repair changes none of them.
+- [x] Errors: `EmailRejected` is a port-level exception for an adapter outcome, not a domain
+  error. That's fine.
+- [x] Migration: none added; 0015 unchanged, as the spec says.
+- [x] No secrets or personal data (`@low-stock.test`, `@example.test`).
+- [x] `## Deviations`: I spot-checked "`in_memory.py` unchanged": still true (`plans-scope`
+  lists it as declared but unchanged; `StockItem.empty` gives it decision 35). It has one
+  omission, which is part of R-M2.
+- [x] Docs: `docs/architecture.md` now covers both facades and the low-stock email. There is one
+  pre-existing stale fragment (R-L1).
+
+**First-review findings, re-checked:**
+
+| Finding | Verdict | Evidence |
+| --- | --- | --- |
+| M1 (never-counted alerts) | **fixed** (decision 35) | `StockItem.empty` (`domain/stock.py:187-198`) and `_insert_empty` (`sql_stock_repository.py:57`) start alerted. Every creation path goes through one of them; I grepped all `StockItem(` and `stock_items` inserts. The `__init__` default stays False for stored rows, and the backfill is unchanged. Mutant `empty()` back to False: killed by unit tests, among them `test_a_restock_that_stays_at_or_below_the_threshold_does_not_re_arm` and both new domain tests. Mutant `_insert_empty` back to False: 3 integration tests fail. |
+| L1 (stale architecture docs) | **fixed** | `docs/architecture.md:50-56` and the inventory and identity rows. See R-L1 for a leftover. |
+| L2 (missing deviation) | **fixed** | First bullet of `## Deviations`. |
+| L3 (permanent refusal re-sends forever) | **fixed for a 5xx recipient refusal**, but the adapter over-reaches | Handler `low_stock_email.py:60-69` skips and logs per owner. Mutant `break` instead of continue: 4 unit tests fail. The adapter's classification is wrong in two ways; see R-M1 and R-M2. |
+| L4 (tests depend on empty `identity.users`) | **fixed** | `tests/integration/inventory/conftest.py:24-32` truncates the identity tables before and after each inventory test (test DB only). |
+| L5 (vacuous re-arm test) | **fixed** | `test_low_stock_commands.py:352` asserts `alerted` after the raise. |
+
+**Mutants** (each edited in place, run, then restored by hand; `git diff` empty at the end):
+- `empty()` set to False: killed.
+- `_insert_empty` set to False: killed.
+- adapter `>= 500` changed to `>= 400`: killed (`test_a_4xx_smtp_reply_propagates_…[451|499]`).
+- handler `break` on `EmailRejected`: killed.
+
+**State after the review:**
+- `fragancia_test`: 0 users, stock items, reservations and `fragancia_mig_*` databases.
+- `platform.outbox`: 0 rows. The pre-existing `tests.something.happened` row was gone after
+  the integration run (an inventory fixture truncates the outbox); I deleted nothing.
+- Mailpit: 58 messages before and after.
+
+#### Findings
+
+**Medium**
+
+- **R-M1: a temporary (4xx) recipient refusal is treated as permanent, so that owner's alert
+  is lost. This contradicts decision 36.**
+  - **Where:** `apps/api/src/fragancia_api/shared/infrastructure/smtp_email_sender.py:45-46`
+    maps every `SMTPRecipientsRefused` to `EmailRejected`.
+  - **What fails:** `smtplib.SMTP.sendmail` (`/usr/lib/python3.14/smtplib.py:893-902`) collects
+    any reply to `RCPT TO` other than 250/251 and raises `SMTPRecipientsRefused` once every
+    recipient is refused. That includes 421, 450, 451 and 452. The adapter sends one recipient
+    per message, so a temporary refusal of that recipient becomes `EmailRejected`. The handler
+    then logs it as a rejection, skips the owner and consumes the event.
+  - **Contradictions:**
+    - decision 36 says "Temporary failures are still retried";
+    - `EmailRejected`'s own docstring (`shared/application/email.py:15`) says "an SMTP 5xx
+      reply".
+  - **Tests:** the tester confirmed this against a real `smtplib` exchange.
+    `test_low_stock_rejected_recipient.py::test_a_421_reply_before_the_recipient_is_accepted_is_also_refused_by_smtplib`
+    currently pins the wrong behaviour.
+  - **Scenario:** production SMTP rate-limits or greylists at `RCPT` ("451 4.7.1 try again
+    later", or "421 4.7.0 too many connections"). Owner B's low-stock alert is dropped for
+    good, with a log line that says B's address was rejected. Whether a given provider answers
+    `RCPT` with a 4xx is provider-dependent (uncertain how often), but the code path is certain.
+  - **Fix direction (implementer):** raise `EmailRejected` only when every code in
+    `error.recipients.values()` is `>= 500`; otherwise re-raise, so the event is retried. The
+    tester inverts the 421 test and adds a 450/451 case.
+- **R-M2: the 5xx `SMTPResponseException` branch covers failures that are not about the
+  recipient. A misconfigured sender silently drops every low-stock alert.**
+  - **Where:** `smtp_email_sender.py:47-50`.
+  - **What fails:** the repair spec says the 5xx branch is for errors "that `send_message`
+    raises for the recipient". But a `RCPT` refusal never reaches this branch: it is always
+    `SMTPRecipientsRefused`, which is not an `SMTPResponseException`. The only
+    `SMTPResponseException` subclasses `send_message` can raise are:
+    - `SMTPHeloError` (EHLO/HELO);
+    - `SMTPSenderRefused` (`MAIL FROM`, `smtplib.py:883-888`);
+    - `SMTPDataError` (`DATA` or end of data, `smtplib.py:578`, `:903-909`).
+
+    So in practice the branch only catches server, sender or message failures. Each of these
+    would hit every owner the same way. The handler then logs one "rejected" line per owner
+    and marks the event published.
+  - **Not recorded:** the over-reach is missing from `## Deviations`.
+  - **Scenario:** production `SMTP_FROM` is not a verified sender, or the host requires auth
+    but `SMTP_USERNAME` is unset (`_send_blocking` skips `login`). The server answers
+    `MAIL FROM` with "550 sender not allowed" or "530 5.7.0 authentication required". Then:
+    - every low-stock email is consumed with no retry;
+    - the logs blame each owner's address;
+    - the identity emails, which don't catch `EmailRejected`, keep retrying.
+
+    The same misconfiguration thus looks like a delivery outage for account emails and like
+    "bad owner addresses" for stock alerts. Before the repair it was retried and visible.
+  - **Fix direction (implementer):** drop the generic 5xx branch, so sender, HELO and data
+    failures propagate and are retried.
+  - **Uncertain:** a 5xx `SMTPDataError` can, on some servers, be a per-recipient verdict
+    given after `DATA` (for example, "552 mailbox full"). If the user wants that case skipped
+    too, it needs a decision (the content is the same for every owner, so a content rejection
+    would skip all of them). The safe default is to propagate it.
+  - **Tests:** `test_smtp_email_sender.py::test_a_5xx_smtp_reply_becomes_email_rejected`
+    (a bare `SMTPResponseException`) pins the current behaviour. The tester should replace it
+    with `SMTPSenderRefused` / `SMTPDataError` 5xx cases that propagate.
+
+**Low**
+
+- **R-L1: a stale "Next" in the inventory row.** `docs/architecture.md:63` still ends with
+  "Next: reserve on checkout, release on cancellation, commit on payment", but plan 003
+  (reservations) is `done`. This pre-dates plan 004; the first review mentioned it in passing
+  and the repair edited that row without removing it. Docs only.
+- **R-L2: an inherent limit, recorded so nobody over-trusts the skip (uncertain, no code
+  change proposed).** Even with R-M1 and R-M2 fixed, a relay-level policy refusal at `RCPT` is
+  indistinguishable from a bad address by reply code alone. Examples are "554 5.7.1 relay
+  access denied" or "550 5.7.1 not authorized", the kind caused by a sender or auth
+  misconfiguration. The handler would skip every owner in that case too.
+  - Since every owner of one event would be refused, that pattern is detectable: for example,
+    the handler could re-raise when every owner was rejected.
+  - Whether to add that is a user or architect call under decision 36; I am not proposing it
+    as required.
+
+### Tester's observations on `smtp_email_sender.py`, judged
+
+- **(a) 4xx refusals become `EmailRejected`: confirmed, a defect.** This is R-M1. It violates
+  decision 36's "temporary failures are still retried", and the fix is local to the adapter.
+- **(b) The 5xx catch covers `SMTPSenderRefused` and `SMTPDataError`: confirmed, a defect.**
+  This is R-M2. It is worse than the tester framed it: that branch can never see a recipient
+  refusal at all, so everything it catches is a non-recipient failure.
+
+### First review (superseded by the re-review above for M1 and L1–L5)
+
 Reviewed on 2026-10-15 against `main...HEAD` (`f49b55e` implementation, `160a874` tests); the
 worktree was clean. **Status stays `review`**: M1 needs a user decision and may need code, and
 L1 needs a docs edit.
