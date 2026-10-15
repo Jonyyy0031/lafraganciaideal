@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: mid
 depends_on: ["001", "002", "003", "005"]
@@ -280,6 +280,62 @@ owner.
   `main` being behind. Not touched.
 
 ## Test coverage
+
+Baseline (before writing): `uv run just check` green (2361 unit + 685 harness), `uv run just
+test-integration` green (658 passed, 5 skipped). Closing: `check` green (2435 unit + 685 harness),
+`test-integration` green (688 passed, 5 skipped; the 5 skips are the same as the baseline).
+Added: 74 unit and 30 integration tests, no GAP, nothing skipped. All integration tests leave
+`fragancia_test` as they found it (checked with `psql`: no users, stock items, reservations or
+scratch databases; the one leftover `platform.outbox` row, `tests.something.happened`, comes from
+the existing `test_transactions_and_outbox.py`, not from this plan).
+
+Test files (all new):
+- `apps/api/tests/unit/inventory/test_low_stock_domain.py` (23), `test_low_stock_commands.py` (34),
+  `test_low_stock_email.py` (12)
+- `apps/api/tests/unit/identity/test_owner_directory.py` (5)
+- `apps/api/tests/integration/inventory/test_low_stock_alert.py` (14),
+  `test_low_stock_email_flow.py` (5)
+- `apps/api/tests/integration/identity/test_sql_owner_directory.py` (5)
+- `apps/api/tests/integration/inventory/test_migration_0015_low_stock_alert.py` (6)
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| `track_low` returns True once on the first drop to or below the threshold (equal, below, zero), False above | `domain/stock.py` `track_low` | domain | `test_low_stock_domain.py::test_the_first_time_on_hand_reaches_the_threshold_it_returns_true` | CONFIRMED |
+| No repeat while low; going above re-arms; an above-threshold item stays quiet | `domain/stock.py` `track_low` | domain | `test_while_it_stays_low_it_does_not_alert_again`, `test_going_above_the_threshold_re_arms_it_silently`, `test_an_item_above_the_threshold_that_was_never_alerted_stays_quiet` | CONFIRMED |
+| Override vs global (higher, lower, zero), a new global, removing an override | `domain/stock.py` `track_low`, `effective_threshold` | domain | `test_the_override_wins_over_the_global_threshold_when_it_is_higher` / `_lower`, `test_an_override_of_zero_alerts_only_at_zero_units`, `test_a_new_global_threshold_is_what_track_low_compares_against`, `test_removing_an_override_re_arms_...` | CONFIRMED |
+| Alert state uses `on_hand`, never `available`: hold, unhold, sale, movement | `domain/stock.py` `track_low` | domain | `test_reserved_units_do_not_make_an_item_low`, `test_releasing_reserved_units_cannot_re_arm_...`, `test_holding_units_of_...`, `test_a_sale_that_leaves_on_hand_at_the_threshold_alerts`, `test_a_movement_that_takes_on_hand_to_the_threshold_alerts` | CONFIRMED |
+| `StockWentLow` name, lines, JSON payload; `low_stock_event` is None for no items | `domain/stock.py` `StockWentLow`, `low_stock_event` | domain | `test_the_event_is_named_...`, `test_the_event_lists_each_item_...`, `test_the_payload_turns_the_lines_into_json_values`, `test_no_items_means_no_event` | CONFIRMED |
+| `RecordMovement`: one event on a loss to the threshold (after `StockChanged`), none while low, re-arm and alert again, first restock already low, override, refused movement | `commands/stock.py:94` | application | `test_low_stock_commands.py::test_a_loss_to_the_threshold_publishes_one_went_low_with_that_line` and the other `RecordMovement` tests | CONFIRMED |
+| `SetThreshold`: raise alerts once, lower and clear re-arm silently, repeat is quiet, refused publishes nothing | `commands/stock.py:218` | application | `test_raising_a_threshold_above_the_units_on_hand_alerts_once`, `test_lowering_the_threshold_back_re_arms_without_an_event`, `test_clearing_an_override_...`, `test_setting_the_same_threshold_again_...`, `test_a_refused_threshold_...` | CONFIRMED |
+| `SetThreshold` on a never-stocked presentation alerts for its empty item (the Deviations observation) | `commands/stock.py:218` | application | `test_a_threshold_on_a_never_stocked_presentation_alerts_for_its_empty_item` | CONFIRMED (literal; the reviewer decides whether it is wanted) |
+| `RecordImportedCounts`: three counts at 0 give one event with three lines; only the low ones listed; no repeat; nothing recorded gives nothing | `commands/stock.py:166` | application | `test_an_import_of_three_counts_at_zero_publishes_one_event_with_three_lines` and four more | CONFIRMED |
+| `UpdateInventorySettings`: many items in one event, overrides untouched, lowering re-arms and persists it, already alerted not repeated, no items | `commands/stock.py:259` | application | `test_raising_the_global_threshold_alerts_every_item_it_now_covers_in_one_event` and four more | CONFIRMED |
+| `CommitReservation`: a sale to the threshold alerts, two items in one event, above stays quiet, already alerted does not repeat, double commit | `commands/reservations.py:242` | application | `test_a_sale_that_leaves_on_hand_at_the_threshold_alerts` and four more | CONFIRMED |
+| Reserve, expire, release and extend publish no `went_low` and keep the flag | `commands/reservations.py:123,294,340` | application | `test_reserving_so_that_available_is_low_does_not_alert`, `test_reserving_and_letting_it_expire_...`, `test_releasing_a_reservation_...`, `test_extending_a_reservation_...` | CONFIRMED |
+| `SendLowStockEmail`: one message per owner, greeting, line format with labels, unknown id as label, no owners logged `inventory.low_stock_no_owner`, send failure raises (also after earlier owners were sent), empty lines, real payload, malformed payload raises | `handlers/low_stock_email.py` | application | `test_low_stock_email.py` (11 tests) | CONFIRMED |
+| `IdentityOwners` maps `OwnerContact` to `Recipient` | `infrastructure/identity_owners.py` | application | `test_low_stock_email.py::test_the_adapter_maps_...` | CONFIRMED |
+| `OwnerDirectory`: only active owners, ordered by name, reactivation, frozen contact | `identity/.../owner_directory.py` | application | `test_owner_directory.py` (5) | CONFIRMED |
+| SQL owner directory filters role and `is_active`, orders by name, reflects (de)activation, registered in the container | `identity/infrastructure/sql_owner_directory.py` | integration | `test_sql_owner_directory.py` (5) | CONFIRMED |
+| `low_alerted` defaults to false, `save` writes it, `get_for_update`, `get_many_for_update` and `list_all_for_update` read it | `sql_stock_repository.py`, `tables.py` | integration | `test_low_stock_alert.py::test_a_new_item_defaults_...`, `test_save_persists_the_flag_and_every_locked_read_returns_it`, `test_save_clears_the_flag` | CONFIRMED |
+| Each command's outbox row on PostgreSQL: first drop, no repeat, re-arm, expire and release (none), sale, import of three, threshold raise/lower, global change (persisted flags) | commands above | integration | `test_low_stock_alert.py` (8 tests) | CONFIRMED |
+| Concurrent losses crossing the threshold alert once; a settings change and a movement alert the item once (gated, bounded by `TIMEOUT`, gates released on exit) | row locks in `sql_stock_repository.py` | integration | `test_two_concurrent_losses_that_cross_the_threshold_alert_once`, `test_a_settings_change_and_a_movement_alert_the_same_item_once`, `test_the_race_helpers_time_out_instead_of_hanging` | CONFIRMED |
+| Outbox, relay, handler, SMTP to Mailpit: one email per active owner (deactivated owner and staff get nothing), exact body, no repeat then one after re-arm, import lists three, no owners (published and logged), SMTP failure keeps the event and a retry delivers | `module.py` wiring, `low_stock_email.py`, `smtp_email_sender.py` | integration | `test_low_stock_email_flow.py` (5); skipped as NOT CONFIRMED if Mailpit is unreachable | CONFIRMED (Mailpit ran locally) |
+| Migration 0015 backfill marks rows already low by units on hand (equal, zero, higher/lower override, reserved not counted) for global 3, global 5 and no settings row (fallback 3) | `0015_inventory_low_stock_alert.py` | integration | `test_migration_0015_low_stock_alert.py::test_the_backfill_marks_exactly_the_items_already_low_by_units_on_hand` (3 cases) | CONFIRMED |
+| Migration: column not null with default false; downgrade drops it and keeps the rows; upgrade backfills again and recomputes the flag | same | integration | `test_the_column_defaults_to_false_...`, `test_downgrade_drops_the_column_...`, `test_a_flag_an_item_lost_while_migrated_...` | CONFIRMED |
+| Panel/storefront "low" keeps using `available` (decision 29) | `is_low` | domain | `test_reserved_units_do_not_make_an_item_low` asserts `is_low` stays True while `track_low` is False | CONFIRMED |
+
+How the migration is tested without racing other suites: the test creates its own scratch
+database `fragancia_mig_<random>_test` next to `fragancia_test` (the same server, the user the
+tests already use), runs the real Alembic CLI against it in a subprocess (`-x test=true` with
+`DATABASE_URL_TEST` overridden), and drops it in a `finally`. `fragancia_test` is never
+downgraded. Skipped as NOT CONFIRMED if the user cannot create a database.
+
+Notes for the reviewer:
+- The existing flow tests that call `relay_all` now also deliver `went_low` rows through the real
+  SMTP handler; they pass because `identity.users` has no owner left behind. If another suite left
+  an owner in `identity.users` they would send real mail to Mailpit.
+- CRLF: Mailpit returns the body with CRLF line ends (SMTP); the flow test normalizes them to LF
+  before comparing the otherwise exact text.
 
 ## Review findings
 
