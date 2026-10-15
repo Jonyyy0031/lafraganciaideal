@@ -10,6 +10,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 import structlog
 from sqlalchemy import (
@@ -29,6 +30,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import Uuid
 
 from fragancia_api.shared.application.events import EventHandler, EventMessage
+from fragancia_api.shared.contracts.outbox import FailedEvent, FailedEventPage
 from fragancia_api.shared.infrastructure.database import Database
 from fragancia_api.shared.infrastructure.tables import metadata
 from fragancia_api.shared.kernel import DomainEvent
@@ -36,6 +38,10 @@ from fragancia_api.shared.kernel import DomainEvent
 log = structlog.get_logger(__name__)
 
 MAX_BACKOFF = timedelta(minutes=5)
+_BACKOFF_EXPONENT_CAP = 9  # 2**9 = 512 s, the first value above MAX_BACKOFF
+# About 24 h of retries (README decision 8): the waits are 2, 4 ... 256 s (8 waits, 510 s), then
+# MAX_BACKOFF = 300 s each; 510 + 286 * 300 = 86,310 s, just under 24 h, at the 295th attempt.
+MAX_ATTEMPTS = 295
 
 outbox = Table(
     "outbox",
@@ -48,7 +54,12 @@ outbox = Table(
     Column("published_at", DateTime(timezone=True)),
     Column("attempts", Integer, nullable=False, server_default="0"),
     Column("last_error", Text),
-    Index("ix_outbox_pending", "available_at", postgresql_where="published_at IS NULL"),
+    Column("failed_at", DateTime(timezone=True)),
+    Index(
+        "ix_outbox_pending",
+        "available_at",
+        postgresql_where="published_at IS NULL AND failed_at IS NULL",
+    ),
     schema="platform",
 )
 
@@ -105,7 +116,11 @@ class OutboxRelay:
             row = (
                 await session.execute(
                     select(outbox)
-                    .where(outbox.c.published_at.is_(None), outbox.c.available_at <= func.now())
+                    .where(
+                        outbox.c.published_at.is_(None),
+                        outbox.c.failed_at.is_(None),
+                        outbox.c.available_at <= func.now(),
+                    )
                     .order_by(outbox.c.occurred_at)
                     .limit(1)
                     .with_for_update(skip_locked=True)
@@ -131,22 +146,69 @@ class OutboxRelay:
 
     async def _record_failure(self, row: Any, error: Exception) -> None:
         attempts = row.attempts + 1
-        delay = min(timedelta(seconds=2**attempts), MAX_BACKOFF)
-        log.warning(
-            "outbox.delivery_failed",
-            event_id=str(row.id),
-            event_name=row.name,
-            attempts=attempts,
-            error=repr(error),
-        )
-        async with self._database.unit_of_work() as session:
-            await session.execute(
-                update(outbox)
-                .where(outbox.c.id == row.id)
-                .values(
-                    attempts=attempts,
-                    last_error=repr(error)[:2000],
-                    available_at=datetime.now(UTC) + delay,
-                )
+        values: dict[str, Any] = {"attempts": attempts, "last_error": repr(error)[:2000]}
+        if attempts >= MAX_ATTEMPTS:
+            values["failed_at"] = datetime.now(UTC)
+            log.error(
+                "outbox.delivery_failed_permanently",
+                event_id=str(row.id),
+                event_name=row.name,
+                attempts=attempts,
+                error=repr(error),
             )
+        else:
+            # Cap the exponent first: 2**attempts overflows timedelta from about attempt 47.
+            delay = min(timedelta(seconds=2 ** min(attempts, _BACKOFF_EXPONENT_CAP)), MAX_BACKOFF)
+            values["available_at"] = datetime.now(UTC) + delay
+            log.warning(
+                "outbox.delivery_failed",
+                event_id=str(row.id),
+                event_name=row.name,
+                attempts=attempts,
+                error=repr(error),
+            )
+        async with self._database.unit_of_work() as session:
+            await session.execute(update(outbox).where(outbox.c.id == row.id).values(**values))
             await session.commit()
+
+
+class SqlOutboxAdmin:
+    def __init__(self, database: Database) -> None:
+        self._database = database
+
+    async def failed(self, *, page: int, size: int) -> FailedEventPage:
+        failed = outbox.c.failed_at.is_not(None)
+        async with self._database.reader() as session:
+            total = (
+                await session.execute(select(func.count()).select_from(outbox).where(failed))
+            ).scalar_one()
+            rows = (
+                await session.execute(
+                    select(
+                        outbox.c.id,
+                        outbox.c.name,
+                        outbox.c.occurred_at,
+                        outbox.c.failed_at,
+                        outbox.c.attempts,
+                        outbox.c.last_error,
+                    )
+                    .where(failed)
+                    .order_by(outbox.c.failed_at.desc(), outbox.c.id)
+                    .limit(size)
+                    .offset((page - 1) * size)
+                )
+            ).all()
+        items = [FailedEvent.model_validate(row, from_attributes=True) for row in rows]
+        return FailedEventPage(items=items, total=total, page=page, size=size)
+
+    async def retry(self, event_id: UUID) -> bool:
+        async with self._database.unit_of_work() as session:
+            result = await session.execute(
+                update(outbox)
+                .where(outbox.c.id == event_id, outbox.c.failed_at.is_not(None))
+                .values(failed_at=None, attempts=0, available_at=func.now())
+                .returning(outbox.c.id)
+            )
+            matched = result.first() is not None
+            await session.commit()
+        return matched

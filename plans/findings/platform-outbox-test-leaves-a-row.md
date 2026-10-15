@@ -1,5 +1,6 @@
 ---
-status: open # open → deferred | planned | resolved | discarded (the user decides)
+status: resolved # open → deferred | planned | resolved | discarded (the user decides)
+plan: inventory-stock/004
 module: platform
 found: 2026-10-15
 ---
@@ -30,3 +31,13 @@ this row and has to tell it apart from a leak by the plan under review.
 
 A test-only fast-lane fix: make `clean_outbox` a yield fixture that truncates after the test as
 well as before it. Or accept it and close this finding.
+
+## Resolution
+
+Fixed on 2026-10-15 through the fast lane (no plan). `plan:` names the plan whose review found
+it, because `plans-lint` needs one for `resolved`.
+- `clean_outbox` is now a yield fixture that truncates `platform.outbox` before and after each
+  test.
+- Reproduced before the fix: running `test_transactions_and_outbox.py` left 1 row
+  (`tests.something.happened`).
+- After the fix: 0 rows, also after a full `just test-integration` (697 passed, 5 skipped).

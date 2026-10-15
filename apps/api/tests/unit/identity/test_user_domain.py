@@ -6,6 +6,7 @@ from fragancia_api.modules.identity.domain.errors import EmailInvalid, NameInval
 from fragancia_api.modules.identity.domain.user import (
     CATALOG_MANAGE,
     INVENTORY_MANAGE,
+    OUTBOX_MANAGE,
     ROLE_PERMISSIONS,
     USERS_MANAGE,
     DisplayName,
@@ -96,7 +97,12 @@ def test_a_password_never_shows_in_its_repr() -> None:
 
 
 def test_the_owner_has_every_permission_and_staff_only_catalog_and_inventory() -> None:
-    assert ROLE_PERMISSIONS[Role.OWNER] == {CATALOG_MANAGE, INVENTORY_MANAGE, USERS_MANAGE}
+    assert ROLE_PERMISSIONS[Role.OWNER] == {
+        CATALOG_MANAGE,
+        INVENTORY_MANAGE,
+        USERS_MANAGE,
+        OUTBOX_MANAGE,
+    }
     assert ROLE_PERMISSIONS[Role.STAFF] == {CATALOG_MANAGE, INVENTORY_MANAGE}
     assert (CATALOG_MANAGE, INVENTORY_MANAGE, USERS_MANAGE) == (
         "catalog:manage",
@@ -122,7 +128,12 @@ def test_new_users_are_active_with_both_timestamps_set_to_now() -> None:
 
 
 def test_a_user_gets_the_permissions_of_the_role() -> None:
-    assert _user(Role.OWNER).permissions == {CATALOG_MANAGE, INVENTORY_MANAGE, USERS_MANAGE}
+    assert _user(Role.OWNER).permissions == {
+        CATALOG_MANAGE,
+        INVENTORY_MANAGE,
+        USERS_MANAGE,
+        OUTBOX_MANAGE,
+    }
     assert _user(Role.STAFF).permissions == {CATALOG_MANAGE, INVENTORY_MANAGE}
 
 

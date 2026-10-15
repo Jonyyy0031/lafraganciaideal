@@ -364,7 +364,12 @@ async def test_me_derives_permissions_from_the_role(container: Container) -> Non
         "Owner Test",
         "owner",
     )
-    assert owner_me.permissions == ["catalog:manage", "inventory:manage", "users:manage"]
+    assert owner_me.permissions == [
+        "catalog:manage",
+        "inventory:manage",
+        "outbox:manage",
+        "users:manage",
+    ]
     assert (staff_me.role, staff_me.permissions) == (
         "staff",
         ["catalog:manage", "inventory:manage"],
