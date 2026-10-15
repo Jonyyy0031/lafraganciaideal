@@ -167,6 +167,18 @@ changed.
     - **The fix:** the confirm now locks the perfume rows by identity, then every existing
       presentation in id order, before it writes.
     - This follows the standing choice to fix review findings.
+32. (2026-10-15) **The low-stock email is decided by units on hand, not by available.**
+    - A sale, a loss or a count can trigger it; reserving, releasing and expiring cannot.
+    - The panel and "¡Últimas piezas!" keep using available (decision 29).
+    - This way an abandoned checkout never repeats the email.
+33. (2026-10-15) **One low-stock email per operation.** An operation that leaves several
+    presentations low sends one email listing them all, for example an Excel import, a global
+    threshold change or a multi-perfume sale.
+34. (2026-10-15) **A threshold change can trigger the email.**
+    - Raising a threshold so that a presentation becomes low emails once, like any other drop.
+    - Lowering it re-arms the alert.
+    - On deploy, presentations that are already low count as already alerted, so there is no
+      burst of emails.
 
 ## Delivered
 
