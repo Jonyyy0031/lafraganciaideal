@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: inventory
 min_implementer: mid
 depends_on: ["001", "002", "003", "005"]
@@ -219,6 +219,9 @@ and 32–34.
 
 5. **Docs and tests**
    - Files: `docs/architecture.md` (modify), `apps/api/tests/unit/inventory/` (modify),
+     `apps/api/src/fragancia_api/shared/application/email.py` (modify, repair round 1),
+     `apps/api/src/fragancia_api/shared/infrastructure/smtp_email_sender.py` (modify, repair round 1),
+     `apps/api/tests/unit/` (modify, repair round 1), `apps/api/tests/integration/` (modify, repair round 1),
      `apps/api/tests/unit/identity/` (modify), `apps/api/tests/integration/inventory/` (modify),
      `apps/api/tests/integration/identity/` (modify)
    - Do:
@@ -278,6 +281,65 @@ owner.
 - **`plans-scope` reports `apps/api/tests/integration/catalog/test_sql_brands.py` as out of scope**:
   not modified in this worktree (git status clean for it); it comes from the diff against local
   `main` being behind. Not touched.
+  - **Main session:** confirmed. After fast-forwarding local `main`, `plans-scope` is clean.
+
+### Repair round 1 (2026-10-15, main session: review → implementing)
+
+**Why.** The review found:
+- **M1.** A never-stocked presentation alerts on its first stock change, even when nothing
+  dropped. The first Excel import with counts after deploy would email every presentation
+  loaded at or below its threshold.
+- **L1–L5:** see `## Review findings`.
+
+The user decided:
+- never-counted presentations start as already alerted (README decision 35);
+- a recipient the mail server rejects permanently is logged and skipped, not retried
+  (decision 36).
+
+The relay's unbounded retries stay as the platform finding `platform-outbox-relay-retries-forever`.
+
+**Repair spec.**
+1. **M1: new items start alerted.**
+   - Files: `apps/api/src/fragancia_api/modules/inventory/domain/stock.py`,
+     `apps/api/src/fragancia_api/modules/inventory/infrastructure/sql_stock_repository.py`.
+   - `StockItem.empty(...)` passes `low_alerted=True`. Its docstring says why (decision 35): a
+     presentation's first count is a load, not a drop. The alert arms once units on hand go above
+     the threshold.
+   - `SqlStockRepository._insert_empty` inserts `"low_alerted": True` (`:44-63`).
+   - The `__init__` default stays False, for items read from storage.
+   - The column's server default and the 0015 backfill are unchanged.
+2. **L3: a permanent rejection of one recipient.**
+   - Files: `apps/api/src/fragancia_api/shared/application/email.py`,
+     `apps/api/src/fragancia_api/shared/infrastructure/smtp_email_sender.py`,
+     `apps/api/src/fragancia_api/modules/inventory/application/handlers/low_stock_email.py`.
+   - `email.py` gains `class EmailRejected(Exception)`: "The server permanently refused this
+     recipient (an SMTP 5xx reply); retrying will not help." The `EmailSender` docstring
+     mentions it.
+   - `SmtpEmailSender._send_blocking` catches `smtplib.SMTPRecipientsRefused` and re-raises it
+     as `EmailRejected`. It also does so for `smtplib.SMTPResponseException` with
+     `smtp_code >= 500` that `send_message` raises for the recipient. Every other error
+     propagates as today, so it is retried.
+   - `SendLowStockEmail` catches `EmailRejected` per owner. It logs
+     `inventory.low_stock_email_rejected` with the address and continues with the next owner.
+     Any other exception still propagates, so the event is retried. Update its docstring.
+   - The identity handlers are unchanged: they send one email per event.
+3. **L1: architecture docs.**
+   - Files: `docs/architecture.md`.
+   - Fix lines 50-54: `.importlinter` now allows the catalog and identity facade imports.
+   - The inventory row (`:61`) mentions the low-stock email.
+   - The identity row (`:64`) mentions the `OwnerDirectory` facade.
+4. **L2:** record here, as a deviation, that the 0015 backfill uses a settings subquery with a
+   fallback of 3, so it also works without a settings row. The plan's SQL would not.
+5. **L4 and L5:** test-only, for the tester.
+   - L4: the existing outbox tests must not depend on `identity.users` being empty. Use the
+     test clean-up the tester judges right.
+   - L5: the global-lowering re-arm test must assert the item was alerted first.
+   - Also update the tests pinned to the old M1 behaviour.
+   - Add a test that a rejected recipient is skipped and the others still get the email,
+     against Mailpit if it can reject, otherwise at the adapter and handler level.
+
+**Scope.** The product code is the five files above, plus the docs. The implementer changes no
+tests.
 
 ## Test coverage
 

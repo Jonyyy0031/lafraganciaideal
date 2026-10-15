@@ -179,6 +179,15 @@ changed.
     - Lowering it re-arms the alert.
     - On deploy, presentations that are already low count as already alerted, so there is no
       burst of emails.
+35. (2026-10-15) **A presentation never counted before starts as already alerted** (plan 004
+    review M1).
+    - Loading it, or a first small restock, sends no email.
+    - The alert arms once its units on hand go above the threshold, and fires on the next drop.
+36. (2026-10-15) **If the mail server permanently rejects one owner's address**, that owner is
+    logged and skipped, and the others still get the email.
+    - The event is not retried for it, so the others don't get repeats.
+    - Temporary failures are still retried.
+    - Capping the outbox's retries in general stays a platform finding.
 
 ## Delivered
 
