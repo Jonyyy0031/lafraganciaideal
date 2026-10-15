@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -203,6 +203,41 @@ This plan applies README decision 8 (2026-10-15):
   plan specifies.
 
 ## Test coverage
+
+Baseline (before the tests): `just check` green (2455 unit passed, 3 skipped), `just
+test-integration` 697 passed, 5 skipped. Closing: `just check` 2470 unit passed, 3 skipped, 685
+harness passed; `just test-integration` 714 passed, 5 skipped, 2 xfailed. `fragancia_test` has 0
+outbox rows afterwards and no `fragancia_mig_*` database is left.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| `outbox:manage` for owner only | `identity/domain/user.py:83-87` | domain | `unit/identity/test_user_domain.py` (owner and staff sets, updated in the implementation commit) | CONFIRMED |
+| The router literal equals identity's permission | `shared/http/outbox.py:14` | http | `unit/test_outbox_http.py::test_the_router_permission_literal_is_the_one_identity_grants_to_owners` | CONFIRMED |
+| Owner lists failed events (200, shape, default paging) | `shared/http/outbox.py:25-32` | http | `test_outbox_http.py::test_an_owner_lists_failed_events` | CONFIRMED |
+| Paging parameters reach the port; bounds 422 (page 0 / above `MAX_PAGE`, size 0 / above `MAX_PAGE_SIZE`, non-numeric) | `shared/http/outbox.py:28-29` | http | `test_paging_parameters_reach_the_port`, `test_out_of_bounds_paging_is_a_validation_error` | CONFIRMED |
+| Owner retry answers 204; unknown or non-failed id 404 `OUTBOX_EVENT_NOT_FOUND`; malformed id 422 | `shared/http/outbox.py:35-42`, `application/events.py:37-40` | http | `test_an_owner_retries_a_failed_event`, `test_retrying_an_unknown_or_not_failed_event_is_404`, `test_a_malformed_event_id_is_a_validation_error` | CONFIRMED |
+| Staff 403 `FORBIDDEN`, unauthenticated or unknown session 401, port never called | `shared/http/access.py:43-49` | http | `test_staff_is_forbidden_on_both_routes`, `test_unauthenticated_requests_are_401_on_both_routes` | CONFIRMED |
+| OpenAPI: both operations, `FailedEventPage`, 204/401/403/404, cookie security, `FailedEvent` fields | `openapi.json` | http | `test_the_openapi_document_describes_both_protected_operations`, `test_the_outbox_routes_declare_admin_access`; `test_http_platform.py::test_every_admin_route_declares_admin_access` (existing, lists both routes) | CONFIRMED |
+| Below the cap: failure backs off, not failed, still retried | `outbox.py:158-167` | integration | `integration/test_outbox_failed_events.py::test_an_event_still_below_the_cap_is_retried_with_backoff` (attempts 5) | CONFIRMED |
+| The attempt that reaches 295 sets `failed_at`, keeps the error, logs `outbox.delivery_failed_permanently` (error level, id, name, attempts, error) | `outbox.py:149-157` | integration | `test_the_attempt_that_reaches_the_cap_marks_the_event_failed_and_logs_it` (seeded at 294) | CONFIRMED |
+| A failed event is never picked again, even when due; a failed row does not block later due rows | `outbox.py:119-121` | integration | `test_a_failed_event_is_never_picked_again_even_when_due`, `test_a_failed_row_does_not_block_the_due_rows_after_it` | CONFIRMED |
+| Transient failure still succeeds later | `outbox.py:158-170` | integration | `test_a_transient_failure_still_succeeds_later_and_never_fails` | CONFIRMED |
+| `SqlOutboxAdmin.failed`: only failed rows, newest `failed_at` first, ties by id, fields, total | `outbox.py:177-200` | integration | `test_failed_lists_only_failed_rows_newest_failure_first_ties_by_id`, `test_failed_is_empty_when_nothing_failed` | CONFIRMED |
+| `failed` paging slices and keeps the total | `outbox.py:195-196` | integration | `test_failed_pages_slice_the_list_and_keep_the_total` | CONFIRMED |
+| `retry` resets `failed_at`/`attempts`, makes it due, keeps `last_error`; only matches failed rows; second retry False | `outbox.py:202-212` | integration | `test_retry_resets_the_window_and_keeps_the_last_error`, `test_retry_only_matches_failed_rows`, `test_a_second_retry_of_the_same_event_does_not_match` | CONFIRMED |
+| A retried event is delivered by the relay once fixed; a retried event restarts at attempts 1 | `outbox.py:202-212` | integration | `test_a_retried_event_is_delivered_by_the_relay_once_the_cause_is_fixed`, `test_a_retried_event_gets_a_fresh_window_and_fails_again_only_at_the_cap` | CONFIRMED |
+| Migration 0016: nullable timestamptz column, index predicate `published_at IS NULL AND failed_at IS NULL`, existing rows keep `failed_at` null, downgrade restores the old predicate and drops the column, round trip (scratch database) | `migrations/versions/0016_platform_outbox_failed_at.py` | integration | `integration/test_migration_0016_outbox_failed_at.py` (3 tests) | CONFIRMED |
+| Retries reach the cap from attempt 0 (an always-failing subscriber fails the event at exactly 295) | plan step 2, acceptance "Cap" | integration | `test_an_always_failing_subscriber_fails_the_event_after_exactly_max_attempts` | GAP |
+| A failure recorded far below the cap (attempts 60) still backs off at 5 minutes | `outbox.py:159` | integration | `test_a_failure_recorded_far_below_the_cap_still_backs_off_at_the_maximum` | GAP |
+| Application layer | n/a | application | not required (the port has no logic) | n/a |
+
+**GAP (product bug, tests do not fix it).** `_record_failure` builds
+`timedelta(seconds=2**attempts)` before applying `MAX_BACKOFF`, which raises `OverflowError`
+from about attempt 47. The failure is then not recorded, so a subscriber that always fails
+never reaches attempt 295 by retrying; the row keeps raising in the relay. The attempt-294 live
+check in the acceptance criteria would pass and hide it. Both tests are strict `xfail`
+(`raises=OverflowError`) and become XPASS failures when it is fixed. Finding:
+`plans/findings/platform-outbox-backoff-overflows-before-the-cap.md`.
 
 ## Review findings
 
