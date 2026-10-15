@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: high
 depends_on: ["001", "002"]
@@ -633,6 +633,44 @@ Commands run: baseline `uv run just check` green (2358 unit, 685 harness) and
 test added (L1 is a Postgres lock behaviour). `fragancia_test` afterwards: 0 rows in
 `stock_items`, `reservations`, `reservation_lines`, `stock_movements`, `catalog.presentations`,
 `catalog.perfumes`; the single `platform.outbox` row is the same platform-suite row as before.
+
+### Test coverage, repair round 2 (2026-10-14, re-review M2; supersedes nothing above)
+
+Files: `apps/api/tests/integration/inventory/test_import_confirm_lock_order.py` (new; reuses
+`Scenario`, `PausingCatalog` and the confirm helpers of `test_sql_catalog_import_confirm.py`),
+`apps/api/tests/unit/catalog/test_confirm_catalog_import.py` (modified: three tests appended).
+Product code unchanged.
+
+| Behavior (repair spec) | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| `lock_presentations` locks every stored presentation of the given perfumes and none of another perfume | `sql_perfume_repository.py:244` | integration | `test_import_confirm_lock_order.py::test_lock_presentations_locks_every_presentation_of_the_given_perfumes_only` | CONFIRMED |
+| It locks in ascending id order (holds the lowest row while waiting on the highest, asked in the opposite perfume order) | same | integration | `::test_lock_presentations_takes_the_rows_in_ascending_id_order` | CONFIRMED |
+| An empty list is a no-op (no row locked) | same | integration | `::test_lock_presentations_with_no_perfume_ids_locks_nothing` | CONFIRMED |
+| A reserve of two perfumes and a confirm updating both (identity order opposite to presentation id order) both finish; reserve and prices both applied | `catalog_imports.py:428-432`, `reservations.py` | integration | `::test_a_two_perfume_reserve_and_an_import_confirm_updating_both_do_not_deadlock` | CONFIRMED |
+| The confirm locks the existing perfumes (`get_for_update`, identity order) and then calls `lock_presentations` once with their ids in that order, before any `save` | `catalog_imports.py:428-432` | application | `test_confirm_catalog_import.py::test_a_confirm_locks_the_existing_perfumes_then_their_presentations_before_any_save` | CONFIRMED |
+| A mixed import locks only its existing perfumes | same | application | `::test_a_mixed_confirm_locks_only_the_existing_perfumes` | CONFIRMED |
+| An import of only new perfumes locks no perfume row; `lock_presentations` is still called, with an empty list (no-op in the repository) | same | application | `::test_a_confirm_of_only_new_perfumes_locks_no_perfume_and_no_presentation` | CONFIRMED (the spec says "never for an import with only new perfumes"; the code calls it unconditionally with `[]`, which the SQL no-op test covers. Not a GAP in effect: nothing is locked) |
+
+The race: the reserve is paused after it share-locks the lower presentation (through
+`PausingCatalog`), the confirm starts and must block, then the gate opens; both must finish
+(`finish` raises on a deadlock). The seeded perfume "Zz Imp B" is created first, so its
+presentation has the lower id while the confirm's identity order puts "Zz Imp A" first.
+
+Mutation checks (product edited in place, restored by hand from scratchpad copies; `git diff` on
+`apps/api/src` empty afterwards):
+- Confirm without the up-front `get_for_update` and `lock_presentations` (the round-1 shape): the
+  race test fails with `psycopg.errors.DeadlockDetected`; the three unit tests fail; the three
+  SQL `lock_presentations` tests are unaffected.
+- `lock_presentations` ordering by `id DESC`: the id-order test and the race test fail (the
+  confirm then holds the higher row and waits on the lower one).
+
+Commands run: baseline `uv run just check` green (2358 unit, 685 harness) and
+`uv run just test-integration` green (654 passed, 5 skipped). Closing: `uv run just check` green
+(2361 unit passed, 3 skipped; 685 harness; plans OK) and `uv run just test-integration` green
+(658 passed, 5 skipped); race file run 3 times, green each time. New tests: 3 unit, 4
+integration. `fragancia_test` afterwards: 0 rows in `stock_items`, `reservations`,
+`stock_movements`, `catalog.presentations`, `catalog.perfumes`, `catalog.imports`; the single
+`platform.outbox` row is the same platform-suite row as before.
 
 ## Review findings
 
