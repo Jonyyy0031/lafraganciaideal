@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: orders
 min_implementer: mid
 depends_on: ["platform-api-foundation/004"]
@@ -329,5 +329,82 @@ Observations (not gaps): the admin payload accepts prices up to 1e9 and the doma
 `VALIDATION_ERROR`, which matches the plan ("bound the payload only").
 
 ## Review findings
+
+Reviewer run, 2026-10-15, on `git diff main...HEAD` (df0c33d implementation, 32c9d26 tests;
+worktree clean).
+
+**Checklist: 14/14 applicable items passed (1 not applicable).**
+
+- [x] `plans-scope`: "Every change is inside the plan" (30 declared, 42 changed). Hot files
+  checked by hand: `.importlinter` adds one container line; `container.py` adds one import
+  and appends `orders` after `inventory` in `MODULES`; `modules.json` changes only the
+  `orders` status to `active` (step 1, recipe §1).
+- [x] `uv run just check` green (2633 unit passed, 3 skipped; 685 harness; OpenAPI
+  `--check` up to date).
+- [x] `uv run just test-integration` green (751 passed, 5 skipped).
+- [x] Business rules in `domain/delivery.py` (bounds, enabled-method requirements, `quote`);
+  router, mappers and reader hold none. The subtotal sanity bound sits in `QuoteDelivery`, as
+  the plan specified (constant from the domain; see L2).
+- [x] CQRS-lite: `UpdateDeliveryOptions` validates, then `get_for_update()` + `save()` inside
+  `transactions.run`, returns `Result`; queries go through the `DeliverySettingsReader` port
+  (`Database.reader()`) and return contract models.
+- [x] Models from `orders/contracts.py`; `openapi.json` regenerated (generator `--check` passes).
+- [x] Errors `ORDERS_DELIVERY_OPTIONS_INVALID` / `ORDERS_POSTAL_CODE_INVALID` as
+  `InvalidValueError` subclasses via `Err`, `details.field` set; no internals leaked.
+- [x] Money as `Money` integer cents; no floats; no datetimes or ids involved.
+- [x] Migration 0017: new file, `CREATE SCHEMA IF NOT EXISTS "orders"`, table matches
+  `tables.py` (types, nullability, lengths, PK), seeded default row all off, no FKs, no drops;
+  downgrade drops table then schema (exercised by the migration test on a scratch DB).
+  `env.py` derives managed schemas from `metadata`, so `orders` is covered automatically.
+- [x] Routes in `admin_router` / `public_router` only; admin router depends on
+  `require_permission("delivery:manage")` with the inventory-style comment;
+  `assert_admin_routes_are_protected` runs in the HTTP fixture.
+- [x] Wiring resolves (`test_delivery_wiring.py`, `test_container.py` green); module
+  registered once; adapters created only in `module.py` `register()` like catalog.
+- [x] No secrets or real personal data (pickup fixture is a fake address).
+- [x] `## Deviations` honest. Spot-checked the reader-port claim: `Database.session`
+  (`shared/infrastructure/database.py:26-34`) raises outside a unit of work, so a query
+  could not use `get()`.
+- [x] Docs: `docs/architecture.md` orders row marked built; `modules.json` active; no other
+  doc lists modules or role permissions (grepped `apps/api/README.md`, `docs/`).
+- [-] PR body: not applicable yet (no PR open for the branch); the main session writes it per
+  `conventions/pull-requests.md`.
+
+**Decisions checked.** 3 (three methods), 5 (home flat rate, free from a minimum, `>=` at the
+boundary, editable), 6 (local list + one price, pickup one point and always 0), 19
+(`DELIVERY_MANAGE` in `Role.OWNER` only; staff 403 on GET and PUT; anonymous 401) and 20
+(migration and `default()` all off; public list and quote empty by default). The public
+`GET` returns only enabled methods, without the `enabled` flag, and a disabled method's
+stored price never appears publicly; the quote never exposes a disabled method.
+
+**Mutants (edited in place, restored by hand, `git status` clean afterwards), all killed:**
+`>=` → `>` on `free_from` (3 tests fail across domain, application, http); staff given
+`delivery:manage` (4 identity tests fail); admin router guarded by `catalog:manage` instead
+(3 http tests fail); public pickup shown while disabled (4 tests fail); migration seeds
+`home_enabled = true` (3 migration tests fail); downgrade keeps the schema (1 migration test
+fails). `fragancia_test` afterwards: exactly one `orders.delivery_settings` row (id 1, all off,
+prices 0, `{}`, empty strings); 0 `fragancia_mig_*` databases left.
+
+**Findings: 0 critical, 0 high, 0 medium, 3 low (none needs a change for this plan).**
+
+- **L1 (low, informational)** `apps/api/src/fragancia_api/modules/orders/domain/repositories.py:22`:
+  the read port `DeliverySettingsReader` lives in `domain/repositories.py`, while the recipe
+  puts query ports in `application/ports.py` (`XxxQueries`). Declared in Deviations and
+  allowed by the plan ("or through an `XxxQueries` port"); no behavior impact. When plan
+  002/003 add an `application/ports.py`, consider moving it there.
+- **L2 (low, informational)** `apps/api/src/fragancia_api/modules/orders/application/queries/delivery.py:106`:
+  the subtotal bound (0..`QUOTE_SUBTOTAL_MAX_CENTS`) is enforced in `QuoteDelivery`, not in
+  the domain `quote()`. Plan-conformant, but plan 003 calls `quote()` directly with a
+  server-computed subtotal, so it will not get that bound. Scenario: none today; note for
+  plan 003 so it does not rely on `quote()` rejecting a negative subtotal.
+- **L3 (low, uncertain/UX)** `apps/api/src/fragancia_api/modules/orders/domain/delivery.py:108-115`:
+  a malformed postal code in the PUT reports `details.field = "local.postal_codes"` without
+  saying which entry is bad. Scenario: an owner pastes 300 codes with one typo and the panel
+  cannot point at it. Meets the plan's acceptance criteria as written; worth deciding before
+  the web panel (phase 3) is built.
+
+Observation (not a finding): enabling home or local delivery at price 0 is accepted. The plan
+bounds the price at 0..1,000,000 and decision 20 does not require a positive price, so this
+matches the plan.
 
 ## Verification
