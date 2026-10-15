@@ -38,6 +38,7 @@ from fragancia_api.shared.kernel import DomainEvent
 log = structlog.get_logger(__name__)
 
 MAX_BACKOFF = timedelta(minutes=5)
+_BACKOFF_EXPONENT_CAP = 9  # 2**9 = 512 s, the first value above MAX_BACKOFF
 # About 24 h of retries (README decision 8): the waits are 2, 4 ... 256 s (8 waits, 510 s), then
 # MAX_BACKOFF = 300 s each; 510 + 286 * 300 = 86,310 s, just under 24 h, at the 295th attempt.
 MAX_ATTEMPTS = 295
@@ -156,7 +157,8 @@ class OutboxRelay:
                 error=repr(error),
             )
         else:
-            delay = min(timedelta(seconds=2**attempts), MAX_BACKOFF)
+            # Cap the exponent first: 2**attempts overflows timedelta from about attempt 47.
+            delay = min(timedelta(seconds=2 ** min(attempts, _BACKOFF_EXPONENT_CAP)), MAX_BACKOFF)
             values["available_at"] = datetime.now(UTC) + delay
             log.warning(
                 "outbox.delivery_failed",

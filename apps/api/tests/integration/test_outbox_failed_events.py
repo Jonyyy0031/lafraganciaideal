@@ -164,16 +164,10 @@ async def test_a_failed_row_does_not_block_the_due_rows_after_it(container: Cont
     assert skipped["published_at"] is None and skipped["attempts"] == MAX_ATTEMPTS
 
 
-GAP_REASON = (
-    "GAP: platform-api-foundation/004 step 2 promises the event fails permanently at attempt 295, "
-    "but OutboxRelay._record_failure computes timedelta(seconds=2**attempts) before capping it "
-    "with MAX_BACKOFF, which raises OverflowError from about attempt 47 on, so the failure is "
-    "never recorded and the cap is unreachable by retrying (see "
-    "plans/findings/platform-outbox-backoff-overflows-before-the-cap.md)"
-)
+# Regressions for plans/findings/platform-outbox-backoff-overflows-before-the-cap.md: the backoff
+# used to build timedelta(seconds=2**attempts) before the cap and overflowed from about attempt 47.
 
 
-@pytest.mark.xfail(strict=True, raises=OverflowError, reason=GAP_REASON)
 async def test_a_failure_recorded_far_below_the_cap_still_backs_off_at_the_maximum(
     container: Container,
 ) -> None:
@@ -188,7 +182,6 @@ async def test_a_failure_recorded_far_below_the_cap_still_backs_off_at_the_maxim
     assert timedelta(minutes=4) < wait <= timedelta(minutes=5)
 
 
-@pytest.mark.xfail(strict=True, raises=OverflowError, reason=GAP_REASON)
 async def test_an_always_failing_subscriber_fails_the_event_after_exactly_max_attempts(
     container: Container,
 ) -> None:

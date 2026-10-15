@@ -1,5 +1,6 @@
 ---
-status: open
+status: resolved
+plan: platform-api-foundation/004
 module: platform
 found: 2026-10-15
 ---
@@ -39,3 +40,7 @@ hide it.
 Fast-lane or in-plan fix: cap the exponent before building the delta, for example
 `min(2 ** min(attempts, 20), MAX_BACKOFF_SECONDS)`, or compare in seconds. The two xfail tests
 then XPASS (strict) and get promoted to normal tests.
+
+## Resolution
+
+Fixed in plan 004 repair round 1: the exponent is capped at 9 before the `timedelta` is built (`outbox.py`), so waits are unchanged (2 ... 256 s, then 300 s) and no overflow occurs.

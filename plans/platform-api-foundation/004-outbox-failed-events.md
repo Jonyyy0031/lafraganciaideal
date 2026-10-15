@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: review
 module: platform
 min_implementer: mid
 depends_on: ["001"]
@@ -263,6 +263,17 @@ never reaches attempt 295 by retrying; the row keeps raising in the relay. The a
 check in the acceptance criteria would pass and hide it. Both tests are strict `xfail`
 (`raises=OverflowError`) and become XPASS failures when it is fixed. Finding:
 `plans/findings/platform-outbox-backoff-overflows-before-the-cap.md`.
+
+**Repair round 1 (main session, tester role, 2026-10-15).**
+- The fix capped the exponent (`_BACKOFF_EXPONENT_CAP = 9`).
+- Both strict-xfail tests then reported XPASS. Their markers and `GAP_REASON` were removed, and
+  they are normal regression tests now:
+  - `test_a_failure_recorded_far_below_the_cap_still_backs_off_at_the_maximum`;
+  - `test_an_always_failing_subscriber_fails_the_event_after_exactly_max_attempts`. Its log
+    shows `outbox.delivery_failed_permanently` at attempts 295.
+- `uv run just check` is green: 2470 unit tests and 685 harness tests.
+- `uv run just test-integration`: 716 passed, 5 skipped. That is the 714 earlier plus these 2,
+  and no xfail is left.
 
 ## Review findings
 
