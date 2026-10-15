@@ -1007,3 +1007,76 @@ counted it (1) and deleted it by slug and `created_at`.
 (concentrations, families, inventory settings) are untouched.
 
 ## Verification
+
+Verified by the main session on 2026-10-15, against `feat/inventory-reservations` at `52be0b9`.
+- **Environment:** the API (`just api`, port 8100) and the worker (`just worker`) ran on the
+  development database, migrated to `0014`. The worker started with
+  `cron:inventory_expire_reservations` among its 4 functions.
+- **Driver:** the session-scratchpad script `qa_inv/qa_reservations.py` called
+  `StockReservations` from `build_container(Settings()).services`, and read state through the
+  admin API, the catalog copy and `inventory.reservations`.
+- **Presentations used:**
+  - A = QA Confirma 30 ml, on hand 7;
+  - B = QA Confirma 100 ml, on hand 4;
+  - C = QA Existencias 30 ml, on hand 5;
+  - the made-to-order 200 ml.
+
+**Suites:** the review closed with `just check` green (2361 unit, 685 harness), `just
+test-integration` green (658 passed, 5 skipped), and `plans-scope` clean. There has been no code
+change since.
+
+**Flows driven against the acceptance criteria**
+- [x] **Reserve.**
+  - R1 {A: 2} returned an id.
+  - The stock detail showed on hand 7, reserved 2, available 5.
+  - `…/reservations` listed `QA-R1-…`, quantity 2.
+  - The catalog copy followed: `stock_available` 5.
+- [x] **All or nothing.**
+  - {C: 1, B: 10} answered `INVENTORY_STOCK_UNAVAILABLE`, with `lines` = B, `requested 10`,
+    `available 4`.
+  - C was unchanged (5/0/5).
+- [x] **Reference taken.** Reusing R1's reference answered
+  `INVENTORY_RESERVATION_REFERENCE_TAKEN`.
+- [x] **Not stocked.** The 200 ml (made to order) answered `INVENTORY_PRESENTATION_NOT_STOCKED`,
+  and a random id `INVENTORY_PRESENTATION_NOT_FOUND`.
+- [x] **Extend.**
+  - Extending to +72 h moved `expires_at` to three days later.
+  - Extending to an earlier time answered `INVENTORY_RESERVATION_EXPIRY_INVALID`.
+  - Extending an expired reservation answered `INVENTORY_RESERVATION_NOT_ACTIVE`.
+- [x] **Commit.**
+  - A ended at on hand 5, reserved 0.
+  - The movement was `sale`, quantity 2, delta −2, reason `Venta: QA-R1-…`, actor `system`.
+  - A second commit was `Ok` and changed nothing.
+- [x] **Release.**
+  - R3 {C: 2} showed 5/2/3. The low flag was true, because 3 is at the threshold.
+  - Release brought it back to 5/0/5, with no new movement.
+  - Releasing again was `Ok`.
+  - Releasing the committed R1 answered `INVENTORY_RESERVATION_COMMITTED`.
+- [x] **Expiry job, run by the real worker.**
+  - R4 {C: 1} and R5 {B: 1} expired after 5 s.
+  - Within 44 s both were `expired` (worker log: `inventory.reservations_expired count=2`).
+  - C and B showed reserved 0, and the catalog copy of C followed.
+- [x] **Late commit.**
+  - The expired R4, with units available, sold: C went to 4, with a `sale` delta −1,
+    `Venta: QA-R4-…`.
+  - The expired R5, after R6 took all of B, answered `INVENTORY_STOCK_UNAVAILABLE`
+    (`requested 1`, `available 0`) and stayed `expired`.
+- [x] **A loss below reserved.**
+  - B was counted to 3 and R7 {B: 2} reserved; a loss of 2 was then recorded (201).
+  - B showed on hand 1, reserved 2, available 0. The catalog copy read 0, and the storefront
+    showed the 100 ml as `sold_out`.
+  - Committing R7 answered `INVENTORY_STOCK_INSUFFICIENT` (`requested 2`, `on_hand 1`), and
+    nothing changed. R7 stayed `active` and was then released.
+- [x] **The panel cannot record a sale.** `POST …/movements` with `kind: "sale"` answered 422.
+- [x] **Logs.** No error or warning in the API or worker logs.
+
+**NOT VERIFIED live**
+- **The concurrency guarantees:** the races, the lock order, and the deadlock fixes against
+  the perfume save and the import confirm. A single script cannot exercise them. They are
+  covered by the Postgres race tests and the reviewers' mutants.
+- **A caller from the orders module:** none exists yet. The facade was called directly.
+
+**Data left in the development database:** the QA reservations `QA-R*-151915` (committed,
+released or expired), and changed stock: A 5, B 1, C 4.
+
+**Verdict: verified.** The plan is ready for the user to mark it `done`.
