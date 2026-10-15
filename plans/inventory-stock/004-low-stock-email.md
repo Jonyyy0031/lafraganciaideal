@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: inventory
 min_implementer: mid
 depends_on: ["001", "002", "003", "005"]
@@ -493,6 +493,69 @@ Notes for the reviewer:
   before comparing the otherwise exact text.
 
 ## Review findings
+
+### Re-review after repair round 2 (2026-10-15)
+
+Reviewed against `main...HEAD` at `69f3603` (repair `3bac26a`, its tests `69f3603`); the worktree
+was clean. **All passed: status set to `verify`.** The re-review below is kept as history; its
+R-M1, R-M2 and R-L1 are closed as listed here. No new defect needs a code change.
+
+**Checklist: 14/14 applicable items pass** (PR body n/a, no PR yet).
+
+- [x] `plans-scope`: "Every change is inside the plan" (28 declared, 41 changed). The only hot
+  file, `apps/api/.importlinter`, is still exactly two appended `ignore_imports` lines.
+- [x] `uv run just check`: green (2455 unit passed, 3 skipped; 685 harness).
+- [x] `uv run just test-integration`: green (697 passed, 5 skipped).
+- [x] Domain, CQRS-lite, contracts, money and time, routes, wiring, migration: round 2 touches
+  only the SMTP adapter and docs, so none of them change.
+- [x] Errors: `EmailRejected` now matches its docstring (`shared/application/email.py:15`,
+  "an SMTP 5xx reply") and the port's contract.
+- [x] No secrets or personal data (`@low-stock.test`, `@example.test`).
+- [x] `## Deviations`: "Repair round 2" matches the code. I spot-checked "Remove the
+  `SMTPResponseException` branch": `smtp_email_sender.py:43-52` catches only
+  `SMTPRecipientsRefused`.
+- [x] Docs: the inventory row of `docs/architecture.md:63` no longer has the stale "Next:".
+
+**Re-review findings, re-checked:**
+
+| Finding | Verdict | Evidence |
+| --- | --- | --- |
+| R-M1 (4xx refusal treated as permanent) | **fixed** (decision 36) | `smtp_email_sender.py:45-50`: `EmailRejected` only when every `error.recipients` code is `>= 500`; otherwise the original error is re-raised. Checked against `/usr/lib/python3.14/smtplib.py:889-902`: a 421 at `RCPT` closes the connection and raises `SMTPRecipientsRefused` with code 421, which now propagates; the `with` block's `QUIT` on a closed connection is swallowed by `SMTP.__exit__`. A non-numeric reply (code -1) also propagates. The integration test with a real 451 shows the event kept unpublished with `attempts == 1` and no rejection log. |
+| R-M2 (generic 5xx branch) | **fixed** | The branch is gone; `SMTPSenderRefused`, `SMTPHeloError`, `SMTPDataError` and a plain `SMTPResponseException` propagate unchanged (unit test over 500/550/554). |
+| R-L1 (stale "Next:") | **fixed** | See R2-L1 for a wording nit in the new text. |
+| R-L2 (relay-level 5xx at `RCPT` skips every owner) | accepted by the main session in the round 2 deviation | No change expected. |
+
+**Mutants** (each edited in place, run, then restored by hand; `git diff` empty at the end and
+`test_smtp_email_sender.py` green again):
+- `all(...)` changed to `any(...)`: killed (`test_a_mix_of_4xx_and_5xx_recipient_refusals_…`).
+- `>= 500` changed to `>= 400`: killed (2 unit tests; the 421 integration test and
+  `test_a_temporarily_refused_owner_keeps_the_event_unpublished_for_a_retry`).
+- the old generic 5xx `SMTPResponseException` branch put back: killed
+  (`test_a_5xx_failure_that_is_not_a_recipient_refusal_…[500|550|554]`).
+
+**State after the review:**
+- `fragancia_test`: 0 users, stock items, reservations, outbox rows and `fragancia_mig_*`
+  databases.
+- Mailpit: 58 messages before and after; I deleted none.
+
+#### Findings
+
+**Low**
+
+- **R2-L1: the new inventory row text is redundant (docs nit, does not block).**
+  `docs/architecture.md:63` says "Emails the owners when a presentation drops to its low-stock
+  threshold." and then "Reservations (checkout, cancellation, payment) and the low-stock email
+  are done". The low-stock email is stated twice, and "done" reads like a changelog in a table
+  that already marks built modules with ✔. Also, the `orders` and `payments` modules that call
+  the reservations at checkout and payment do not exist yet, so "(checkout, cancellation,
+  payment)" names the intended callers, not working flows. Suggested wording when the docs are
+  next touched: "…low-stock thresholds and list, stock reservations (reserve, release, commit)
+  for checkout and payment. Emails the owners when a presentation drops to its low-stock
+  threshold."
+
+**Out of scope, recorded:** the `catalog` row of the same table (`docs/architecture.md:62`)
+still says "Next: Excel import", but plans catalog-perfumes/007 and 008 are `done`. Recorded as
+`plans/findings/catalog-architecture-row-stale-excel-import.md`.
 
 ### Re-review after repair round 1 (2026-10-15)
 
