@@ -881,3 +881,70 @@ still uses `available` (decision 29).
   only weakens the coverage. Add `assert alerted(inv, STOCKED)` after the first `execute(10)`.
 
 ## Verification
+
+Verified by the main session on 2026-10-15, against `feat/inventory-low-stock-email` at
+`6fafc80`.
+- **Environment:** the API (`just api`, port 8100), the worker (`just worker`) and the compose
+  Mailpit (UI at 8026) ran on the development database. `just db-migrate` ran
+  `0014 -> 0015, inventory low stock alert`.
+- **Driver:** the session-scratchpad script `qa_inv/qa_low_stock.py` drove the admin API and
+  the container's commands, then read the outbox, `inventory.stock_items` and Mailpit's API.
+- **Recipients:**
+  - there were three active owners (`example@example.com`, `verifier007@example.test`,
+    `verifier@example.test`);
+  - the script created a QA staff user and a QA owner, then deactivated the owner, through
+    `CreateUser` and `DeactivateUser`.
+- **Presentations used:**
+  - A = QA Confirma 30 ml, on hand 5;
+  - A50 = 50 ml, on hand 20;
+  - B = 100 ml, on hand 1;
+  - C = QA Existencias 30 ml, on hand 4;
+  - the global threshold was 3.
+
+**Suites:** the review closed with `just check` green (2455 unit, 685 harness),
+`just test-integration` green (697 passed, 5 skipped), and `plans-scope` clean. Only the docs
+changed since.
+
+**Flows driven against the acceptance criteria**
+- [x] **Deploy.** After the migration, `low_alerted` was true only for B (on hand 1, already
+  low). A, A50 and C were false.
+- [x] **First drop.**
+  - A lost 2 (5 → 3), and exactly one `inventory.stock.went_low` row was written, with payload
+    `{"lines": [{"presentation_id": A, "on_hand": 3, "threshold": 3}]}`.
+  - Within 12 s, Mailpit held one "Stock bajo en La Fragancia Ideal" email per active owner
+    (3).
+  - The body listed "- QA Versace QA Confirma EDP 30 ml: 3 en almacén (umbral 3)", with the
+    exact Spanish copy.
+- [x] **No repeat.** 3 → 2 sent no email.
+- [x] **Re-arm.** A restock to 6, then a loss to 3, sent 3 emails again.
+- [x] **Reservations don't alert.** C (on hand 4) reserved 1 (available 3). The reservation was
+  expired by the real worker after 22 s, and no email was sent.
+- [x] **A sale alerts.** Reserving 1 of C and committing it (on hand 4 → 3) sent 3 emails.
+- [x] **One per operation.**
+  - A and C were restocked to 10, and A50 stayed at 20.
+  - `RecordImportedCounts {A: 0, A50: 0, C: 0}` wrote **one** `went_low` row and sent one email
+    per owner (3).
+  - Each email listed all three presentations at "0 en almacén (umbral 3)".
+- [x] **Threshold change.**
+  - A50 was restocked from 0 to 6, which re-armed it (`low_alerted` false).
+  - Raising its threshold to 10 sent 3 emails.
+  - Clearing the override (back to 3) re-armed it with no email.
+- [x] **Recipients.** The QA staff user and the deactivated QA owner received none of the
+  emails.
+- [x] **Logs.** There were no error, warning, `low_stock_email_rejected` or `low_stock_no_owner`
+  lines in the API or worker logs.
+
+**NOT VERIFIED live** (covered by tests only):
+- **The import through the real Excel confirm.** The "one per operation" case called
+  `RecordImportedCounts`, the command the `catalog.import.applied` subscriber runs, directly.
+  The confirm-to-counts path itself was verified live in plan 005.
+- **A recipient rejected by the mail server, and temporary SMTP failures.** Mailpit cannot
+  refuse a recipient. Both are covered by the loopback SMTP stub in the integration tests.
+
+**Data left in the development database:**
+- the QA users `qa004-staff-…@example.test` (staff) and `qa004-off-…@example.test` (deactivated
+  owner);
+- changed stock: A 0, A50 6, B 1, C 0;
+- 15 low-stock emails in Mailpit.
+
+**Verdict: verified.** The plan is ready for the user to mark it `done`.
