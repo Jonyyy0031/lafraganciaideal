@@ -103,7 +103,13 @@ async def test_login_returns_the_user_and_the_expiry(client: AsyncClient) -> Non
         "email": OWNER,
         "name": "Owner Test",
         "role": "owner",
-        "permissions": ["catalog:manage", "inventory:manage", "outbox:manage", "users:manage"],
+        "permissions": [
+            "catalog:manage",
+            "delivery:manage",
+            "inventory:manage",
+            "outbox:manage",
+            "users:manage",
+        ],
     }
     UUID(body["user"]["id"])
     assert body["expires_at"].startswith("2026-10-03T00:00:00")  # FixedClock + 12h

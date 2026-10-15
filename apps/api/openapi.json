@@ -4909,6 +4909,192 @@
           }
         ]
       }
+    },
+    "/api/v1/admin/delivery-options": {
+      "get": {
+        "tags": [
+          "orders · admin"
+        ],
+        "summary": "Get Delivery Options",
+        "description": "The delivery configuration: home, local and pickup, each with its on/off switch. Pickup\nis always free; home delivery is free from `free_from_cents` of subtotal when that is set.",
+        "operationId": "get_delivery_options",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryOptions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "orders · admin"
+        ],
+        "summary": "Update Delivery Options",
+        "description": "Replace the whole delivery configuration. Pickup is always free; home delivery is free\nfrom `free_from_cents` of subtotal when that is set. 422 `ORDERS_DELIVERY_OPTIONS_INVALID`\nwith `details.field` naming the broken field.",
+        "operationId": "update_delivery_options",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeliveryOptions"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not an admin or lacks the permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/delivery-options": {
+      "get": {
+        "tags": [
+          "orders"
+        ],
+        "summary": "Get Public Delivery Options",
+        "description": "The enabled delivery methods only (a disabled one is `null`). Pickup is always free; home\ndelivery is free from `free_from_cents` of subtotal when that is set.",
+        "operationId": "get_public_delivery_options",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicDeliveryOptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/delivery-options/quote": {
+      "get": {
+        "tags": [
+          "orders"
+        ],
+        "summary": "Quote Delivery",
+        "description": "The methods that apply, in the order home, local, pickup, with their cost. Pickup is\nfree; home delivery is free when the subtotal reaches `free_from_cents`; local delivery\napplies only when the postal code is on its list (without a postal code it never does). 422\n`ORDERS_POSTAL_CODE_INVALID` or `ORDERS_DELIVERY_OPTIONS_INVALID` (`field: subtotal_cents`).",
+        "operationId": "quote_delivery",
+        "parameters": [
+          {
+            "name": "subtotal_cents",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Subtotal Cents"
+            }
+          },
+          {
+            "name": "postal_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Postal Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryQuoteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6022,6 +6208,68 @@
         ],
         "title": "CreatedResponse"
       },
+      "DeliveryOptions": {
+        "properties": {
+          "home": {
+            "$ref": "#/components/schemas/HomeDeliveryOptions"
+          },
+          "local": {
+            "$ref": "#/components/schemas/LocalDeliveryOptions"
+          },
+          "pickup": {
+            "$ref": "#/components/schemas/PickupOptions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "home",
+          "local",
+          "pickup"
+        ],
+        "title": "DeliveryOptions",
+        "description": "The three delivery methods: the admin request and response body."
+      },
+      "DeliveryQuoteLine": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "home",
+              "local",
+              "pickup"
+            ],
+            "title": "Method"
+          },
+          "cost_cents": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Cost Cents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "cost_cents"
+        ],
+        "title": "DeliveryQuoteLine"
+      },
+      "DeliveryQuoteResponse": {
+        "properties": {
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/DeliveryQuoteLine"
+            },
+            "type": "array",
+            "title": "Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "options"
+        ],
+        "title": "DeliveryQuoteResponse",
+        "description": "The methods that apply, in the order home, local, pickup; empty when none does."
+      },
       "ErrorResponse": {
         "properties": {
           "code": {
@@ -6135,6 +6383,46 @@
         ],
         "title": "FailedEventPage"
       },
+      "HomeDeliveryOptions": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "price_cents": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "title": "Price Cents",
+            "examples": [
+              18000
+            ]
+          },
+          "free_from_cents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000000000.0,
+                "minimum": -1000000000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free From Cents",
+            "examples": [
+              250000
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "price_cents"
+        ],
+        "title": "HomeDeliveryOptions",
+        "description": "Home delivery: a flat rate, free from `free_from_cents` of subtotal when that is set."
+      },
       "InventorySettingsRequest": {
         "properties": {
           "low_stock_threshold": {
@@ -6197,6 +6485,45 @@
         },
         "type": "object",
         "title": "Liveness"
+      },
+      "LocalDeliveryOptions": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "price_cents": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "title": "Price Cents",
+            "examples": [
+              9000
+            ]
+          },
+          "postal_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "title": "Postal Codes",
+            "examples": [
+              [
+                "77500",
+                "77505"
+              ]
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "price_cents",
+          "postal_codes"
+        ],
+        "title": "LocalDeliveryOptions",
+        "description": "Local delivery: one price for a list of 5-digit postal codes."
       },
       "LoginRequest": {
         "properties": {
@@ -6473,6 +6800,32 @@
         "title": "PerfumeRequest",
         "description": "Payload to create a perfume, or to replace every field of one (update)."
       },
+      "PickupOptions": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "address": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Address"
+          },
+          "hours": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Hours"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "address",
+          "hours"
+        ],
+        "title": "PickupOptions",
+        "description": "Pickup at one point. Always free."
+      },
       "PresentationRequest": {
         "properties": {
           "ml": {
@@ -6618,6 +6971,96 @@
         ],
         "title": "PublicConcentration",
         "description": "A concentration as customers see it (active ones only); `slug` is the name slug."
+      },
+      "PublicDeliveryOptions": {
+        "properties": {
+          "home": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicHomeDelivery"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "local": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicLocalDelivery"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pickup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicPickup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "home",
+          "local",
+          "pickup"
+        ],
+        "title": "PublicDeliveryOptions",
+        "description": "The enabled methods only; a disabled one is `null`."
+      },
+      "PublicHomeDelivery": {
+        "properties": {
+          "price_cents": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Price Cents"
+          },
+          "free_from_cents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free From Cents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "price_cents"
+        ],
+        "title": "PublicHomeDelivery"
+      },
+      "PublicLocalDelivery": {
+        "properties": {
+          "price_cents": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Price Cents"
+          },
+          "postal_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Postal Codes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "price_cents",
+          "postal_codes"
+        ],
+        "title": "PublicLocalDelivery"
       },
       "PublicOlfactoryFamily": {
         "properties": {
@@ -6909,6 +7352,24 @@
         ],
         "title": "PublicPhoto",
         "description": "A photo of a public perfume."
+      },
+      "PublicPickup": {
+        "properties": {
+          "address": {
+            "type": "string",
+            "title": "Address"
+          },
+          "hours": {
+            "type": "string",
+            "title": "Hours"
+          }
+        },
+        "type": "object",
+        "required": [
+          "address",
+          "hours"
+        ],
+        "title": "PublicPickup"
       },
       "PublicPresentation": {
         "properties": {

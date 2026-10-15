@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["platform-api-foundation/004"]
@@ -259,6 +259,21 @@ the new owner-only permission `delivery:manage`. The storefront reads the option
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+- **Queries read through a reader port.** `DeliverySettingsRepository.get()` uses
+  `Database.session`, which raises outside a transaction, so the queries cannot use it. Added
+  `DeliverySettingsReader.current()` (in `domain/repositories.py`, a listed file), implemented by
+  `SqlDeliverySettingsReader` (in `sql_delivery_settings_repository.py`, via
+  `Database.reader()`) and by `InMemoryDeliverySettings`. No new files.
+- **Existing tests updated for the new owner permission** (step 5): in
+  `apps/api/tests/unit/identity/`: `test_auth_http.py`, `test_resolve_session_actor.py`,
+  `test_sessions.py`, `test_user_domain.py`; and
+  `apps/api/tests/integration/identity/test_sql_identity.py`. No other existing test pinned
+  the route list.
+- **Cosmetic:** the generated migration was rewritten by hand to the repo's style (double
+  quotes), plus the schema creation and default row the plan asked for.
+- The layered tests for orders (`tests/unit/orders/`, `tests/integration/orders/`) are not
+  written: they are the tester's phase.
 
 ## Test coverage
 
