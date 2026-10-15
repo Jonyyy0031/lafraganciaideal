@@ -7,6 +7,7 @@ SMTP server on a loopback port (`StubSmtp`) that answers `RCPT TO` with a chosen
 raises from real replies, not hand-built ones. Every call is bounded by `TIMEOUT`."""
 
 import asyncio
+import smtplib
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -128,14 +129,17 @@ async def test_an_accepted_recipient_is_delivered_without_error(smtp_stub: StubS
 @pytest.mark.parametrize(
     "smtp_stub", [{"ana@low-stock.test": "421 4.3.2 shutting down"}], indirect=True
 )
-async def test_a_421_reply_before_the_recipient_is_accepted_is_also_refused_by_smtplib(
+async def test_a_421_reply_to_the_recipient_propagates_so_the_event_is_retried(
     smtp_stub: StubSmtp,
 ) -> None:
-    """Observation, confirmed locally: `smtplib` raises `SMTPRecipientsRefused` when every
-    recipient gets a non-2xx reply, 4xx included, so the adapter treats a temporary refusal of
-    the only recipient as a permanent one (the spec maps `SMTPRecipientsRefused` as a whole)."""
-    with pytest.raises(EmailRejected):
+    """Repair round 2: `smtplib` raises `SMTPRecipientsRefused` for a 4xx refusal too, but only
+    an all-5xx refusal is a rejection; a temporary one reaches the relay unchanged."""
+    with pytest.raises(smtplib.SMTPRecipientsRefused) as raised:
         await asyncio.wait_for(sender_to(smtp_stub).send(MAIL), timeout=TIMEOUT)
+
+    assert not isinstance(raised.value, EmailRejected)
+    assert raised.value.recipients["ana@low-stock.test"][0] == 421
+    assert smtp_stub.delivered == []
 
 
 async def test_a_refused_connection_is_not_a_rejection_so_it_is_retried() -> None:
@@ -193,5 +197,38 @@ async def test_a_refused_owner_is_skipped_and_logged_the_others_are_mailed_and_t
         [row] = went_low
         assert row["published_at"] is not None  # consumed, not retried
         assert row["attempts"] == 0
+    finally:
+        await stub.stop()
+
+
+async def test_a_temporarily_refused_owner_keeps_the_event_unpublished_for_a_retry(
+    container: Container, settings: Settings, catalog_rows: CatalogRows
+) -> None:
+    suffix = new_id().hex[:10]
+    ana = f"ana-{suffix}@low-stock.test"
+    zoe = f"zoe-{suffix}@low-stock.test"
+    stub = StubSmtp({ana: "451 4.7.1 greylisted, try later"})
+    await stub.start()
+    try:
+        await add_owner(container, "Ana", ana)
+        await add_owner(container, "Zoe", zoe)
+        _, [presentation_id] = await catalog_rows.perfume()
+        await restock(container, presentation_id, 5)
+        await lose(container, presentation_id, 2)
+        refusing = build_container(
+            settings.model_copy(update={"smtp_host": "127.0.0.1", "smtp_port": stub.port})
+        )
+        try:
+            with structlog.testing.capture_logs() as logs:
+                await asyncio.wait_for(refusing.relay.relay_batch(), timeout=TIMEOUT)
+        finally:
+            await refusing.close()
+
+        assert stub.refused_attempts == [ana]
+        assert not [e for e in logs if e["event"] == "inventory.low_stock_email_rejected"]
+        [row] = [r for r in await outbox_rows(container) if r["name"].endswith("went_low")]
+        assert row["published_at"] is None  # kept for a retry, not consumed
+        assert row["attempts"] == 1
+        assert row["last_error"]
     finally:
         await stub.stop()

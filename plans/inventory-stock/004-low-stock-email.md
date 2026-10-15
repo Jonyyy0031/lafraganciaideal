@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: inventory
 min_implementer: mid
 depends_on: ["001", "002", "003", "005"]
@@ -467,6 +467,24 @@ Observation for the reviewer (not a GAP, the spec says so): `smtplib` raises
 so the adapter treats a temporary refusal of the only recipient as permanent. Likewise a 5xx
 `SMTPSenderRefused` or `SMTPDataError` also becomes `EmailRejected` (the adapter catches any 5xx
 `SMTPResponseException`), which the handler would log as that owner's rejection. Not tested.
+(Both observations are resolved by repair round 2, below.)
+
+### Repair round 2 (tester, 2026-10-15)
+
+Baseline: the four expected failures only (the three `test_a_5xx_smtp_reply_becomes_email_rejected`
+cases and the 421 integration test), as in the dispatch. Closing: `check` green (685 harness tests
+pass; no GAP), `test-integration` green (697 passed, 5 skipped, the same 5). Net: +3 unit, +1
+integration. After the runs: `fragancia_test` has 0 users, 0 stock items, 0 scratch databases, and
+Mailpit holds 0 messages.
+
+| Behavior | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| A 5xx that is not a recipient refusal (plain `SMTPResponseException`, `SMTPSenderRefused`, `SMTPHeloError`, `SMTPDataError`; 500, 550, 554) propagates unchanged, never `EmailRejected` | `smtp_email_sender.py` | unit | `test_smtp_email_sender.py::test_a_5xx_failure_that_is_not_a_recipient_refusal_propagates_so_it_is_retried` (3) | CONFIRMED (repins the old 5xx test) |
+| A 4xx `SMTPRecipientsRefused` propagates unchanged | same | unit | `test_a_4xx_recipient_refusal_propagates_so_it_is_retried` | CONFIRMED |
+| Mixed 4xx and 5xx refusals propagate unchanged | same | unit | `test_a_mix_of_4xx_and_5xx_recipient_refusals_propagates_so_it_is_retried` | CONFIRMED |
+| Every recipient 5xx gives `EmailRejected` with the cause kept; a single 550 still does | same | unit | `test_every_recipient_refused_with_a_5xx_becomes_email_rejected`, `test_a_refused_recipient_becomes_email_rejected` | CONFIRMED |
+| Against real `smtplib` replies from the loopback stub: a 421 refusal raises `SMTPRecipientsRefused` (code 421), not `EmailRejected`; a 550 still raises `EmailRejected` | same | integration | `test_low_stock_rejected_recipient.py::test_a_421_reply_to_the_recipient_propagates_so_the_event_is_retried` (repinned), `test_a_550_reply_to_the_recipient_is_raised_as_email_rejected` | CONFIRMED (stub, not Mailpit) |
+| Full flow with a 4xx (451) refusal: the `went_low` event stays unpublished with `attempts == 1` and a `last_error`, no rejection log; with a 5xx (550) refusal the owner is skipped, the other mailed and the event published with `attempts == 0` | `container.py`, handler, relay | integration | `test_a_temporarily_refused_owner_keeps_the_event_unpublished_for_a_retry` (new), `test_a_refused_owner_is_skipped_and_logged_the_others_are_mailed_and_the_event_is_done` | CONFIRMED |
 
 Notes for the reviewer:
 - (Superseded by L4 above.) The existing flow tests that call `relay_all` deliver `went_low` rows
