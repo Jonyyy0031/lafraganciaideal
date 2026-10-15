@@ -194,6 +194,43 @@ changed.
 
 ## Delivered
 
+The series closed on 2026-10-15, when all five plans were `done`. What shipped is in the
+`inventory` module (`apps/api/src/fragancia_api/modules/inventory/`), plus a small catalog
+part:
+- the storefront copy;
+- the Excel column;
+- the presentation lock order.
+
+The contract is in `apps/api/openapi.json`.
+
+- **Stock ledger (001):**
+  - stock per in-stock presentation, changed only by movements (restock, adjustment, loss,
+    return, count), with history;
+  - global and per-presentation low-stock thresholds, and the low-stock list;
+  - the `inventory:manage` permission, and the catalog `PresentationDirectory` facade.
+- **Storefront status (002):** `inventory.stock.changed` feeds a stock copy in the catalog.
+  - Presentations show `available`, `last_units` ("¡Últimas piezas!") or `sold_out`
+    ("Agotado").
+  - The "from" price, the price filters and the sort count only buyable sizes.
+  - `in_stock=true` hides perfumes with nothing to buy.
+- **Initial stock from Excel (005):** an optional "Existencias" column. Confirming publishes
+  `catalog.import.applied`, and inventory records count movements. Counts need
+  `inventory:manage`, checked under the import lock.
+- **Reservations (003):** the `StockReservations` facade for the orders module.
+  - It reserves all or nothing, and extends, commits (a `sale` movement) and releases.
+  - An expiry job runs every minute.
+  - Available is `on hand − reserved`.
+  - Every writer of presentation and stock rows takes them in one global lock order.
+  - The panel lists the active reservations.
+- **Low-stock email (004):** one email per operation to every active owner, when units on hand
+  drop to the threshold. It re-arms when they go back above.
+  - Owners are read through identity's `OwnerDirectory`, its first public facade.
+  - A recipient the server rejects with a 5xx is skipped; other failures are retried.
+
+**Open for later:** the platform findings `platform-outbox-relay-retries-forever` and
+`platform-outbox-test-leaves-a-row`. The orders module will be the first real caller of
+`StockReservations`.
+
 ## Considered and discarded
 
 - **Editing the stock number directly:** no history to audit discrepancies (decision 5).
