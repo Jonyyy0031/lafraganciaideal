@@ -54,6 +54,7 @@ class SqlStockRepository:
                         "on_hand": 0,
                         "reserved": 0,
                         "threshold_override": None,
+                        "low_alerted": True,
                         "updated_at": now,
                     }
                     for presentation_id in presentation_ids

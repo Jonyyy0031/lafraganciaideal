@@ -2,7 +2,8 @@
 
 It runs in the worker, inside the relay's transaction. A send failure raises, so the relay
 retries the event; delivery is at-least-once, so a retry can send again to the owners who
-already got the email.
+already got the email. An owner the mail server permanently rejects (`EmailRejected`) is
+logged and skipped, not retried (decision 36); the other owners still get the email.
 """
 
 from collections.abc import Mapping
@@ -12,7 +13,7 @@ from uuid import UUID
 import structlog
 
 from fragancia_api.modules.inventory.application.ports import OwnerRecipients, PresentationCatalog
-from fragancia_api.shared.application.email import EmailMessage, EmailSender
+from fragancia_api.shared.application.email import EmailMessage, EmailRejected, EmailSender
 from fragancia_api.shared.application.events import EventMessage
 
 _log = structlog.get_logger(__name__)
@@ -56,10 +57,13 @@ class SendLowStockEmail:
             _log.warning("inventory.low_stock_no_owner", presentations=len(ids))
             return
         for owner in owners:
-            await self._email.send(
-                EmailMessage(
-                    to=owner.email,
-                    subject=LOW_STOCK_SUBJECT,
-                    body=LOW_STOCK_BODY.format(name=owner.name, lines="\n".join(lines)),
+            try:
+                await self._email.send(
+                    EmailMessage(
+                        to=owner.email,
+                        subject=LOW_STOCK_SUBJECT,
+                        body=LOW_STOCK_BODY.format(name=owner.name, lines="\n".join(lines)),
+                    )
                 )
-            )
+            except EmailRejected:
+                _log.warning("inventory.low_stock_email_rejected", address=owner.email)

@@ -49,19 +49,21 @@ Each module:
   - **Asynchronously**: domain events published through the **outbox**.
   - Built example: `inventory` defines `PresentationCatalog`, implemented in
     `inventory/infrastructure/catalog_presentations.py` over the catalog's public
-    `PresentationDirectory` facade. `.importlinter` allows exactly that import, plus
-    `inventory/module.py` fetching the facade from the service registry (the catalog registers
-    first in `MODULES`).
+    `PresentationDirectory` facade, and `OwnerRecipients`, implemented in
+    `inventory/infrastructure/identity_owners.py` over identity's `OwnerDirectory` facade.
+    `.importlinter` allows exactly those imports (the catalog and identity ones), plus
+    `inventory/module.py` fetching the facades from the service registry (the catalog and
+    identity register first in `MODULES`).
 
 Modules (✔ = built; `catalog` is the **reference module** — see [recipes/new-module.md](recipes/new-module.md)):
 
 | Module          | Responsibility                                                                        |
 | --------------- | ------------------------------------------------------------------------------------- |
 | `catalog`       | ✔ Brands, olfactory families, concentrations, perfumes and presentations (back office), public catalog (filters, search, sort, detail by slug), perfume photos (S3, WebP). Next: Excel import |
-| `inventory`     | ✔ Back-office stock ledger: units per in-stock presentation, append-only movements (restock, adjustment, loss, return, count), low-stock thresholds and list. Next: reserve on checkout, release on cancellation, commit on payment |
+| `inventory`     | ✔ Back-office stock ledger: units per in-stock presentation, append-only movements (restock, adjustment, loss, return, count), low-stock thresholds and list. Emails the owners when a presentation drops to its low-stock threshold. Next: reserve on checkout, release on cancellation, commit on payment |
 | `orders`        | Cart → order; the `Order` aggregate and its state machine                             |
 | `payments`      | `PaymentGateway` port → Mercado Pago adapter (Checkout Pro); idempotent webhooks      |
-| `identity`      | ✔ Back-office users (owner, staff), opaque sessions in a cookie, login throttle, invitations, password reset by email, deactivation |
+| `identity`      | ✔ Back-office users (owner, staff), opaque sessions in a cookie, login throttle, invitations, password reset by email, deactivation, `OwnerDirectory` facade (active owners, for other modules) |
 | `notifications` | Order emails first; WhatsApp (Cloud API) later; driven by events                      |
 | `shipping`      | `CarrierGateway` port (quotes, labels, tracking) — later                              |
 

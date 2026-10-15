@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: inventory
 min_implementer: mid
 depends_on: ["001", "002", "003", "005"]
@@ -266,6 +266,12 @@ owner.
 
 ## Deviations
 
+- **L2 (repair round 1).** The 0015 backfill uses a settings subquery with a fallback of 3, so
+  it also works without a settings row. The plan's SQL would not.
+- **Repair round 1 product code done** (M1, L3, L1). Seven unit tests pinned to the old
+  never-stocked-alerts behaviour now fail by design (`test_low_stock_commands.py`: six;
+  `test_low_stock_domain.py::test_a_new_item_is_not_alerted_and_an_empty_one_neither`); the
+  implementer changes no tests, so they go to the tester (L4, L5, rejected-recipient test).
 - **Existing tests touched (cosmetic).** Eight existing assertions assumed every published or
   outbox event is `inventory.stock.changed`, which the new `went_low` event breaks. Filtered to
   `StockChanged` / `name == "inventory.stock.changed"` in `tests/unit/inventory/`

@@ -185,12 +185,16 @@ class StockItem(AggregateRoot):
 
     @classmethod
     def empty(cls, presentation_id: UUID, now: datetime) -> StockItem:
+        """A presentation never counted. It starts already alerted (decision 35): its first
+        count is a load, not a drop, so it must not email. The alert arms once units on hand
+        go above the threshold."""
         return cls(
             presentation_id=presentation_id,
             on_hand=0,
             threshold_override=None,
             updated_at=now,
             reserved=0,
+            low_alerted=True,
         )
 
     @property
