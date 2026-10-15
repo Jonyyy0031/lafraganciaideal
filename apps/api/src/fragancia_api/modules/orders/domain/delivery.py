@@ -36,6 +36,23 @@ class PostalCode:
 
 
 @dataclass(frozen=True, slots=True)
+class Subtotal:
+    """A cart subtotal to quote against, bounded as a sanity limit."""
+
+    money: Money
+
+    @classmethod
+    def create(cls, cents: int) -> Result[Self, DeliveryOptionsInvalid]:
+        if not 0 <= cents <= QUOTE_SUBTOTAL_MAX_CENTS:
+            return Err(
+                DeliveryOptionsInvalid(
+                    details={"field": "subtotal_cents", "min": 0, "max": QUOTE_SUBTOTAL_MAX_CENTS}
+                )
+            )
+        return Ok(cls(Money(cents)))
+
+
+@dataclass(frozen=True, slots=True)
 class DeliveryPrice:
     money: Money
 
@@ -104,13 +121,17 @@ def _local(
         case Ok(price):
             pass
     codes: set[PostalCode] = set()
-    for raw in postal_codes:
+    for index, raw in enumerate(postal_codes):
         match PostalCode.create(raw):
             case Err():
                 return Err(
                     DeliveryOptionsInvalid(
                         message="A postal code is exactly 5 digits",
-                        details={"field": "local.postal_codes"},
+                        details={
+                            "field": "local.postal_codes",
+                            "index": index,
+                            "value": raw[:20],
+                        },
                     )
                 )
             case Ok(code):
@@ -203,7 +224,7 @@ class DeliveryQuote:
 
 
 def quote(
-    settings: DeliverySettings, postal_code: PostalCode | None, subtotal: Money
+    settings: DeliverySettings, postal_code: PostalCode | None, subtotal: Subtotal
 ) -> list[DeliveryQuote]:
     """The methods that apply, in the order home, local, pickup. Home is free when `free_from`
     is set and the subtotal reaches it; local needs a postal code on the list; pickup is
@@ -211,7 +232,7 @@ def quote(
     lines: list[DeliveryQuote] = []
     home = settings.home
     if home.enabled:
-        free = home.free_from is not None and subtotal >= home.free_from
+        free = home.free_from is not None and subtotal.money >= home.free_from
         lines.append(DeliveryQuote(DeliveryMethod.HOME, Money(0) if free else home.price.money))
     local = settings.local
     if local.enabled and postal_code is not None and postal_code in local.postal_codes:

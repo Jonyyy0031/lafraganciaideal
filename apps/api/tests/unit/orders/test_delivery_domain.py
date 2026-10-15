@@ -13,6 +13,7 @@ from fragancia_api.modules.orders.domain.delivery import (
     DeliveryQuote,
     DeliverySettings,
     PostalCode,
+    Subtotal,
     quote,
 )
 from fragancia_api.modules.orders.domain.errors import DeliveryOptionsInvalid, PostalCodeInvalid
@@ -115,8 +116,8 @@ def test_the_default_has_every_method_off_and_empty() -> None:
 def test_the_default_quotes_nothing_for_any_input() -> None:
     settings = DeliverySettings.default()
 
-    assert quote(settings, PostalCode("77500"), Money(1_000_000)) == []
-    assert quote(settings, None, Money(0)) == []
+    assert quote(settings, PostalCode("77500"), Subtotal(Money(1_000_000))) == []
+    assert quote(settings, None, Subtotal(Money(0))) == []
 
 
 # --- create: valid -----------------------------------------------------------------------------
@@ -307,7 +308,7 @@ def costs(lines: list[DeliveryQuote]) -> dict[DeliveryMethod, int]:
 
 
 def test_quotes_every_method_in_the_order_home_local_pickup() -> None:
-    lines = quote(build_settings(), CODE, Money(100000))
+    lines = quote(build_settings(), CODE, Subtotal(Money(100000)))
 
     assert [line.method for line in lines] == [
         DeliveryMethod.HOME,
@@ -322,33 +323,33 @@ def test_quotes_every_method_in_the_order_home_local_pickup() -> None:
 
 
 def test_home_is_free_when_the_subtotal_equals_free_from() -> None:
-    lines = quote(build_settings(), CODE, Money(250000))
+    lines = quote(build_settings(), CODE, Subtotal(Money(250000)))
 
     assert costs(lines)[DeliveryMethod.HOME] == 0
 
 
 def test_home_is_charged_one_cent_below_free_from() -> None:
-    lines = quote(build_settings(), CODE, Money(249999))
+    lines = quote(build_settings(), CODE, Subtotal(Money(249999)))
 
     assert costs(lines)[DeliveryMethod.HOME] == 18000
 
 
 def test_home_is_free_above_free_from() -> None:
-    assert costs(quote(build_settings(), CODE, Money(250001)))[DeliveryMethod.HOME] == 0
+    assert costs(quote(build_settings(), CODE, Subtotal(Money(250001))))[DeliveryMethod.HOME] == 0
 
 
 def test_home_is_never_free_when_free_from_is_unset() -> None:
     settings = build_settings(home_free_from_cents=None)
 
-    assert costs(quote(settings, CODE, Money(100_000_000)))[DeliveryMethod.HOME] == 18000
+    assert costs(quote(settings, CODE, Subtotal(Money(100_000_000))))[DeliveryMethod.HOME] == 18000
 
 
 def test_home_charges_its_price_for_an_empty_cart() -> None:
-    assert costs(quote(build_settings(), CODE, Money(0)))[DeliveryMethod.HOME] == 18000
+    assert costs(quote(build_settings(), CODE, Subtotal(Money(0))))[DeliveryMethod.HOME] == 18000
 
 
 def test_free_from_does_not_make_local_delivery_free() -> None:
-    lines = quote(build_settings(), CODE, Money(250000))
+    lines = quote(build_settings(), CODE, Subtotal(Money(250000)))
 
     assert costs(lines)[DeliveryMethod.LOCAL] == 9000
 
@@ -356,57 +357,57 @@ def test_free_from_does_not_make_local_delivery_free() -> None:
 def test_home_at_price_zero_costs_zero_below_free_from() -> None:
     settings = build_settings(home_price_cents=0)
 
-    assert costs(quote(settings, None, Money(1)))[DeliveryMethod.HOME] == 0
+    assert costs(quote(settings, None, Subtotal(Money(1))))[DeliveryMethod.HOME] == 0
 
 
 def test_local_is_absent_for_a_postal_code_off_the_list() -> None:
-    lines = quote(build_settings(), PostalCode("01000"), Money(100000))
+    lines = quote(build_settings(), PostalCode("01000"), Subtotal(Money(100000)))
 
     assert [line.method for line in lines] == [DeliveryMethod.HOME, DeliveryMethod.PICKUP]
 
 
 def test_local_applies_to_every_code_on_the_list() -> None:
-    lines = quote(build_settings(), PostalCode("77505"), Money(100000))
+    lines = quote(build_settings(), PostalCode("77505"), Subtotal(Money(100000)))
 
     assert DeliveryMethod.LOCAL in costs(lines)
 
 
 def test_without_a_postal_code_only_home_and_pickup_apply() -> None:
-    lines = quote(build_settings(), None, Money(100000))
+    lines = quote(build_settings(), None, Subtotal(Money(100000)))
 
     assert [line.method for line in lines] == [DeliveryMethod.HOME, DeliveryMethod.PICKUP]
 
 
 def test_a_method_that_is_off_is_not_quoted() -> None:
-    lines = quote(build_settings(home_enabled=False), CODE, Money(100000))
+    lines = quote(build_settings(home_enabled=False), CODE, Subtotal(Money(100000)))
 
     assert [line.method for line in lines] == [DeliveryMethod.LOCAL, DeliveryMethod.PICKUP]
 
 
 def test_local_off_is_not_quoted_even_for_a_listed_code() -> None:
-    lines = quote(build_settings(local_enabled=False), CODE, Money(100000))
+    lines = quote(build_settings(local_enabled=False), CODE, Subtotal(Money(100000)))
 
     assert [line.method for line in lines] == [DeliveryMethod.HOME, DeliveryMethod.PICKUP]
 
 
 def test_pickup_off_is_not_quoted() -> None:
-    lines = quote(build_settings(pickup_enabled=False), CODE, Money(100000))
+    lines = quote(build_settings(pickup_enabled=False), CODE, Subtotal(Money(100000)))
 
     assert [line.method for line in lines] == [DeliveryMethod.HOME, DeliveryMethod.LOCAL]
 
 
 def test_pickup_is_always_free() -> None:
-    assert costs(quote(build_settings(), None, Money(0)))[DeliveryMethod.PICKUP] == 0
+    assert costs(quote(build_settings(), None, Subtotal(Money(0))))[DeliveryMethod.PICKUP] == 0
 
 
 def test_nothing_applies_when_every_method_is_off() -> None:
     settings = build_settings(home_enabled=False, local_enabled=False, pickup_enabled=False)
 
-    assert quote(settings, CODE, Money(100000)) == []
+    assert quote(settings, CODE, Subtotal(Money(100000))) == []
 
 
 def test_switching_home_off_keeps_the_stored_price_for_when_it_is_switched_on() -> None:
     off = build_settings(home_enabled=False)
 
     assert off.home.price.money == Money(18000)
-    assert DeliveryMethod.HOME not in costs(quote(off, CODE, Money(1)))
+    assert DeliveryMethod.HOME not in costs(quote(off, CODE, Subtotal(Money(1))))

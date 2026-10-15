@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["platform-api-foundation/004"]
@@ -307,6 +307,13 @@ user chose to fix all three now.
    - When an entry of `local.postal_codes` is invalid, the error's details add `"index"` (its
      position in the request, from 0) and `"value"` (the raw entry, truncated to 20
      characters). The first invalid entry is reported.
+
+**Repair done (implementer).** L1: `DeliverySettingsReader` moved to the new
+`application/ports.py` (domain, SQL, in-memory and `module.py` needed no import change: they
+satisfy it structurally). L2: `Subtotal` + `Subtotal.create` in `domain/delivery.py`; `quote`
+takes a `Subtotal`; `QuoteDelivery` uses it. L3: invalid postal code error details carry
+`index` and `value[:20]`. Only mechanical test change: `quote(...)` calls in
+`tests/unit/orders/test_delivery_domain.py` wrap the amount in `Subtotal(...)`. No deviations.
 
 **Scope.** These product files only. The implementer updates only the test imports and the call
 sites that the moved port and the new `quote` signature break, mechanically. The tester adds the

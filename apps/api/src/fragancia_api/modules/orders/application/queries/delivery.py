@@ -1,3 +1,4 @@
+from fragancia_api.modules.orders.application.ports import DeliverySettingsReader
 from fragancia_api.modules.orders.contracts import (
     DeliveryOptions,
     DeliveryQuoteLine,
@@ -11,13 +12,11 @@ from fragancia_api.modules.orders.contracts import (
     PublicPickup,
 )
 from fragancia_api.modules.orders.domain.delivery import (
-    QUOTE_SUBTOTAL_MAX_CENTS,
     PostalCode,
+    Subtotal,
     quote,
 )
-from fragancia_api.modules.orders.domain.errors import DeliveryOptionsInvalid
-from fragancia_api.modules.orders.domain.repositories import DeliverySettingsReader
-from fragancia_api.shared.kernel import DomainError, Err, Money, Ok, Result
+from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 
 
 def _sorted_codes(codes: frozenset[PostalCode]) -> list[str]:
@@ -103,17 +102,12 @@ class QuoteDelivery:
                     return Err(invalid)
                 case Ok(parsed):
                     code = parsed
-        if not 0 <= subtotal_cents <= QUOTE_SUBTOTAL_MAX_CENTS:
-            return Err(
-                DeliveryOptionsInvalid(
-                    details={
-                        "field": "subtotal_cents",
-                        "min": 0,
-                        "max": QUOTE_SUBTOTAL_MAX_CENTS,
-                    }
-                )
-            )
-        lines = quote(await self._reader.current(), code, Money(subtotal_cents))
+        match Subtotal.create(subtotal_cents):
+            case Err(bad_subtotal):
+                return Err(bad_subtotal)
+            case Ok(subtotal):
+                pass
+        lines = quote(await self._reader.current(), code, subtotal)
         return Ok(
             DeliveryQuoteResponse(
                 options=[

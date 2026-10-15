@@ -17,11 +17,3 @@ class DeliverySettingsRepository(Protocol):
         ...
 
     async def save(self, settings: DeliverySettings) -> None: ...
-
-
-class DeliverySettingsReader(Protocol):
-    """Read side: the settings outside any transaction (`Database.reader()`)."""
-
-    async def current(self) -> DeliverySettings:
-        """The delivery settings (the default when nothing is stored)."""
-        ...
