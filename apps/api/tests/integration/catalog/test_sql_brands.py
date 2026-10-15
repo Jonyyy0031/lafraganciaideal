@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
@@ -18,9 +19,16 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture(autouse=True)
-async def clean_brands(container: Container) -> None:
-    async with container.database.engine.begin() as connection:
-        await connection.execute(text("TRUNCATE catalog.brands CASCADE"))
+async def clean_brands(container: Container) -> AsyncIterator[None]:
+    """No brands before and after each test, so the last test leaves no row behind."""
+
+    async def reset() -> None:
+        async with container.database.engine.begin() as connection:
+            await connection.execute(text("TRUNCATE catalog.brands CASCADE"))
+
+    await reset()
+    yield
+    await reset()
 
 
 async def test_create_brand_persists_the_row_and_the_event_together(container: Container) -> None:

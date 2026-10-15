@@ -1,5 +1,6 @@
 ---
-status: open # open → deferred | planned | resolved | discarded (the user decides)
+status: resolved # open → deferred | planned | resolved | discarded (the user decides)
+plan: inventory-stock/003
 module: catalog
 found: 2026-10-15
 ---
@@ -32,3 +33,14 @@ The test database should be empty after a run.
 
 A test-only fast-lane fix: make `clean_brands` a yield fixture that truncates after the test as
 well as before it, like the inventory `conftest.py` cleanup. Or accept it and close this finding.
+
+## Resolution
+
+Fixed on 2026-10-15 through the fast lane (no plan). `plan:` names the plan whose review found
+it, because `plans-lint` needs one for `resolved`.
+- `clean_brands` is now a yield fixture that truncates `catalog.brands` before and after each
+  test.
+- Reproduced before the fix: running `test_sql_brands.py` left 1 row (`chanel`).
+- After the fix: 0 rows.
+- A full `just test-integration` (658 passed, 5 skipped) left 0 rows in `catalog.brands`,
+  `catalog.perfumes`, `inventory.stock_items` and `inventory.reservations`.
