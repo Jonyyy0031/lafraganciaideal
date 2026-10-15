@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: inventory
 min_implementer: high
 depends_on: ["001", "002"]
@@ -894,5 +894,116 @@ comments at `reservations.py:7-8` and `sql_perfume_repository.py:255-256` need a
 a pre-existing catalog test. That file empties `catalog.brands` before each test but not after,
 so the last test's row stays. The reviewer counted it
 (1 row) and deleted it by slug and `created_at`, so `catalog.brands` is empty.
+
+### Re-review, repair round 2 (2026-10-15; repair cea349d, tests 9c4a7bd)
+
+Reviewed `main...HEAD` with the tree clean. The earlier reviews above stand as history. This
+section covers the round-2 repair, plus a fresh pass over every writer of presentation or stock
+rows.
+
+**Checklist: 14/15 pass, 1 not applicable.**
+
+- [x] `plans-scope`: 28 declared, 43 changed, every change inside the plan. No hot file was
+  touched.
+- [x] `uv run just check` is green: 2361 unit passed, 3 skipped; 685 harness; lint, types, arch,
+  plans and adapters OK.
+- [x] `uv run just test-integration` is green: 658 passed, 5 skipped.
+- [x] Layers and CQRS-lite: `lock_presentations` is a port method on `PerfumeRepository`
+  (`catalog/domain/repositories.py:130-134`). It has a SQL adapter and an in-memory no-op. The
+  confirm still runs in one `transactions.run`. No business rule moved.
+- [x] No contract, route, migration or wiring change in the repair.
+- [x] No secrets or personal data.
+- [x] Deviations are honest. Spot-check: "no deviations from the spec" holds. The confirm calls
+  `lock_presentations(existing_ids)` unconditionally, as spec step 2.2 says, and the SQL adapter
+  returns early on an empty list, as spec step 1 says (`sql_perfume_repository.py:245-246`).
+- [x] Docs: README decision 31 is added, and the M2 finding has `status: resolved` with a
+  resolution. The comments at `sql_perfume_repository.py:266-268` and `reservations.py:7-10`
+  now state the real guarantee.
+- [ ] (n/a) PR body: no PR is open for `feat/inventory-reservations` yet.
+
+**M2: fixed.** `ConfirmCatalogImport.execute` (`catalog_imports.py:428-433`) takes its locks in
+this order:
+1. the import row;
+2. every existing perfume row, by identity;
+3. `lock_presentations(existing_ids)`, which runs `SELECT id … WHERE perfume_id IN (…) ORDER BY
+   id FOR UPDATE` (`sql_perfume_repository.py:244-252`);
+4. then the apply loop, unchanged.
+
+The loop's `get_for_update` and `save` then touch only rows the transaction already holds, or
+rows it inserts that nobody else can see yet. `get_for_update` locks only the perfume row
+(`:214-216`), so step 2 takes no presentation locks out of id order.
+
+The race test reproduces the M2 scenario and passes:
+`test_import_confirm_lock_order.py::test_a_two_perfume_reserve_and_an_import_confirm_updating_both_do_not_deadlock`.
+The tester's round-1-shape mutant fails it with `DeadlockDetected`.
+
+**Mutants.** Each was edited in place and restored by hand. `cmp` against a scratchpad copy
+and `git status` were clean after each.
+
+| Mutant | Result |
+| --- | --- |
+| `lock_presentations` takes `FOR SHARE` instead of `FOR UPDATE` (`with_for_update(read=True)`) | Killed by the race test. The confirm share-locks both rows, upgrades the higher one when it writes it, then waits on the lower one, which the reserve holds: `DeadlockDetected`. |
+| The confirm drops the perfume-row pre-lock loop and keeps only `lock_presentations` | Killed by the two order-pinning unit tests (`test_a_confirm_locks_the_existing_perfumes_then_their_presentations_before_any_save`, `test_a_mixed_confirm_locks_only_the_existing_perfumes`). No Postgres test catches it: the confirm-file and lock-order integration suites pass. This mutant would let an admin save of perfume X wait on X's presentations held by the confirm, while the confirm waits on X's perfume row. The unit pin is enough to guard that order. |
+
+**The `lock_presentations([])` call for an all-new import.** It does not matter.
+- The SQL adapter returns before running any statement (`sql_perfume_repository.py:245-246`,
+  pinned by `test_lock_presentations_with_no_perfume_ids_locks_nothing`). The in-memory fake is
+  a no-op.
+- So an all-new import takes no presentation lock and runs no extra query.
+- The spec's test bullet ("never for an import with only new perfumes") disagrees with spec
+  step 2.2 (call it with those ids). The code follows step 2.2. The unit test documents that
+  choice. No finding.
+
+**Bug hunt: lock-order cycles with reservations.** I checked every writer of
+`catalog.presentations` or `inventory.stock_items`. Reasoned from the code and PostgreSQL
+row-lock semantics; only the two mutants above were run.
+- **Reserve** (`reservations.py:89-97`): presentations share, one by one in id order; then
+  settings share; then items `FOR UPDATE` in id order. `find_for_update` locks only the
+  presentation row (`of=presentations`, `sql_presentation_directory.py:65-70`), not the joined
+  perfume or brand rows. So a reserve never holds a perfume row the confirm or an admin save
+  waits on.
+- **Admin perfume save** (`perfumes.py`, `presentations.py`, `photos.py`): one perfume row, then
+  that perfume's presentations in id order. No settings or stock locks. No cycle with a reserve
+  (one global presentation order) or with a confirm (both take the perfume row before its
+  presentations).
+- **Import confirm:** above. Against another confirm, all perfume-row locks are now taken before
+  any insert. A confirm can wait on another's perfume row only while it holds no unique-index
+  entry. Inserts still go in identity order. So the earlier same-new-perfume cycle
+  (`plans/findings/catalog-import-confirm-same-new-perfume-deadlock.md`) does not come back. Its
+  regression test still passes.
+- **Stock copy handler** (`sql_stock_copy.py:20-27`, through `outbox.py:103-128`): one
+  presentation `UPDATE` per relay transaction, which holds only that outbox row besides. It can
+  wait behind a reserve's share lock, but it never holds anything a reserve waits for.
+- **RecordMovement / SetThreshold** (`stock.py:72-97`, `:200-217`): one presentation share,
+  then settings share, then one item. Consistent with the reserve.
+- **RecordImportedCounts** (`stock.py:131-160`): ascending ids. For each, presentation share,
+  then settings share (once), then that item. Interleaving share locks with item locks is safe:
+  - share locks never block a reserve's share locks;
+  - catalog writers take no settings or stock locks;
+  - items go in ascending order on both sides.
+- **Settings change** (`stock.py:253-255`): settings `FOR UPDATE`, then every item ascending.
+  A reserve takes the settings share before any item, so it never holds an item the change needs
+  while waiting on the settings row.
+- **Commit / release / extend / expiry job:** the reservation row(s) first (the job uses `SKIP
+  LOCKED`), then settings share, then items ascending. No presentation locks. Only reservation
+  operations lock reservation rows.
+
+No wait cycle remains between reservations and these writers.
+
+Note, not a finding: the confirm now loads each existing perfume aggregate twice (pre-lock and
+`_update`). That costs some extra reads per import; it does not affect correctness.
+
+**Findings: none (High 0, Medium 0, Low 0).** All checklist items pass (the PR body is n/a).
+Status → `verify`.
+
+Out of scope, recorded: `plans/findings/catalog-brands-test-leaves-a-row.md`. The full
+integration run again left one `catalog.brands` row (`chanel`, created 2026-01-01). It comes
+from `test_sql_brands.py`, whose fixture truncates before each test but not after. The reviewer
+counted it (1) and deleted it by slug and `created_at`.
+
+`fragancia_test` afterwards: 0 rows in `inventory.stock_items`, `reservations`,
+`reservation_lines`, `stock_movements`, `catalog.presentations`, `catalog.perfumes`,
+`catalog.imports`, `catalog.brands` and `platform.outbox`. The seeded reference rows
+(concentrations, families, inventory settings) are untouched.
 
 ## Verification
