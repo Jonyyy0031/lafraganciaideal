@@ -339,4 +339,191 @@ Notes for the reviewer:
 
 ## Review findings
 
+Reviewed on 2026-10-15 against `main...HEAD` (`f49b55e` implementation, `160a874` tests); the
+worktree was clean. **Status stays `review`**: M1 needs a user decision and may need code, and
+L1 needs a docs edit.
+
+### Checklist: 13/14 applicable items pass (docs item fails)
+
+- [x] `plans-scope`: "Every change is inside the plan" (24 declared, 34 changed). The one hot
+  file, `.importlinter`, is append-only: two `ignore_imports` lines added at the end.
+- [x] `uv run just check`: green (2435 unit passed, 3 skipped; 685 harness).
+- [x] `uv run just test-integration`: green (688 passed, 5 skipped).
+- [x] Business rules in `domain/`: `track_low` and `low_stock_event`. The handler only formats
+  the email.
+- [x] CQRS-lite: every new write happens inside the existing `TransactionRunner.run`, and the
+  `OwnerDirectory` facade reads through `database.reader()`.
+- [x] Contracts: no contract or route change, so `openapi.json` is correctly untouched.
+- [x] Errors: no new error codes. The handler raises only for the unexpected (a send failure
+  or a malformed payload).
+- [x] Money and time: not involved. `now` still comes from the `Clock`.
+- [x] Migration 0015 is new and reversible (the downgrade drops the column), with no
+  cross-schema foreign key. Its backfill rule equals `track_low`. Integration tests cover the
+  round trip on a scratch database.
+- [x] Routes: none added.
+- [x] Wiring:
+  - identity registers `OwnerDirectory`, and inventory reads it from the registry;
+  - the adapter lives in `infrastructure/`;
+  - `test_container` and `arch` are green.
+- [x] No secrets or real personal data: the tests use `@low-stock.test` and `@example.test`.
+- [x] `## Deviations` exists and its claims check out. I spot-checked "UpdateInventorySettings
+  now saves every item" (`commands/stock.py:279-282`) and "`in_memory.py` unchanged": both true.
+  One deviation is missing; see L2.
+- [ ] **Docs: stale lines remain (L1).**
+- n/a PR body: no PR exists yet for this branch.
+
+### Focus areas requested by the main session
+
+**Re-arm logic (decisions 10, 32–34), command by command:**
+
+| Command | Calls `track_low` | Threshold used | One event per execution | Verdict |
+| --- | --- | --- | --- | --- |
+| `RecordMovement` | yes, before save (`stock.py:103`) | global from the share-locked settings, plus the override through `effective_threshold` | yes | correct |
+| `RecordImportedCounts` | yes, per recorded count (`:178`); skipped counts are excluded | same | yes, after the loop (`:183-184`); none when nothing was recorded | correct |
+| `SetThreshold` | yes, after `set_threshold` (`:234`) | new override, or the global one | yes | a raise alerts and a lower re-arms (decision 34); see M1 for a never-stocked item |
+| `UpdateInventorySettings` | yes, on every item, with the new threshold (`:279`) | new global; items with an override are unaffected | yes | correct |
+| `CommitReservation` | yes, per item (`reservations.py:245`) | global | yes | a double commit returns early, so it cannot repeat |
+| Reserve, extend, release, expire | no | — | — | correct: `on_hand` and the thresholds don't change, and they save the `low_alerted` they loaded |
+
+`track_low` compares `on_hand` with the effective threshold (decision 32), alerts once while
+low, and re-arms only when the item is above the threshold (decision 10). The panel's `is_low`
+still uses `available` (decision 29).
+
+**Lock order of the new saves:**
+- `list_all_for_update` (`sql_stock_repository.py:92-95`) already holds every item
+  `FOR UPDATE` in `presentation_id` order, under the settings row's `FOR UPDATE`.
+- The new saves (`stock.py:280-281`) are upserts on rows already locked, so they take no new
+  locks.
+- No row can be inserted concurrently: every path that inserts placeholder rows
+  (`_insert_empty`) takes the settings `FOR SHARE` first. I checked movement, import, threshold,
+  reserve, commit, release and expire.
+- So no new wait cycle is possible.
+- Cost: every global-threshold change now writes every stock row, even unchanged ones. That is
+  fine at this shop's scale (no finding).
+
+**Identity facade and `.importlinter`:**
+- `OwnerDirectory` and `OwnerContact` are exported from `identity/__init__.py`.
+- The SQL filters on `role = 'owner'` and `is_active`, ordered by name.
+- The inventory adapter maps the identity types to its own `Recipient`.
+- The two `ignore_imports` lines are exactly the module and adapter imports.
+- The `ports.py` ↔ `owner_directory.py` import cycle is guarded by `TYPE_CHECKING`, and import
+  works (`check` is green).
+
+**Email handler retries:**
+- Any exception (a catalog lookup, the owners query, any send) propagates, so the relay rolls
+  back and backs off. The behaviour is as planned and documented as at-least-once.
+- With no active owner, the event is consumed (logged and marked published). That alert is
+  never re-sent when an owner is added later. That is the plan as written.
+- See L3 for a permanent per-recipient failure.
+
+**Migration 0015 backfill:**
+- `on_hand <= coalesce(threshold_override, (SELECT low_stock_threshold … LIMIT 1), 3)` matches
+  `track_low`, and `3` equals `DEFAULT_LOW_STOCK_THRESHOLD`.
+- Unlike the plan's `FROM inventory.settings` join, it also covers a database with no settings
+  row. That is an improvement, but it is undocumented (L2).
+- `reserved` is correctly ignored.
+
+**Mutants** (each edited in place, run, then restored by hand; `git diff` was empty after each):
+
+| Mutant | Result |
+| --- | --- |
+| `track_low` on `available` | killed (`test_reserved_units_do_not_make_an_item_low`) |
+| no re-arm | killed (7 tests) |
+| `UpdateInventorySettings` drops the save loop | killed (`test_raising_the_global_threshold_alerts_every_item_…`) |
+| `CommitReservation` drops the `went_low` publish | killed (3 tests) |
+| the handler emails only the first owner | killed (2 tests) |
+| backfill `<=` changed to `<` | killed (5 migration integration tests) |
+
+**State after the review:**
+- `fragancia_test`: 0 users, stock items, reservations, outbox rows and `fragancia_mig_*`
+  databases.
+- Mailpit: 58 messages before and after, so none were left by the run.
+- The full integration run left the pre-existing `tests.something.happened` outbox row. I counted
+  it (1) and deleted it by name.
+
+### Tester's notes, judged
+
+1. **`SetThreshold` on a never-stocked presentation alerts.** This is real, and wider than
+   `SetThreshold`. See M1; the user decides.
+2. **Existing relay tests now reach the real SMTP handler.** This is accurate.
+   - `relay_all` in `test_stock_status_flow.py:68` (also used by the import, reservation and
+     settings-race tests) now runs `SendLowStockEmail` with the container's SMTP sender.
+   - Their isolation depends on `identity.users` holding no owner. `clean_identity`
+     (`tests/integration/identity/conftest.py:22-30`) truncates only *before* each identity
+     test.
+   - Today the run leaves no user, and Mailpit was unchanged. But a crashed or partially run
+     identity test, or a new identity test that ends with an owner, would make these tests mail
+     that owner silently and still pass.
+   - L4: test-only, for the tester.
+3. **The leftover platform outbox row.** This is confirmed, pre-existing and not from this plan
+   (`clean_outbox` truncates only before each test). It is recorded as
+   `plans/findings/platform-outbox-test-leaves-a-row.md`.
+
+### Findings
+
+**Medium**
+
+- **M1 — A presentation that was never stocked alerts on its first touch, even when nothing
+  dropped (needs a user decision).**
+  - **Where:**
+    - `StockItem.empty` (`domain/stock.py:187`) and `_insert_empty`
+      (`sql_stock_repository.py:44-63`) create items with `low_alerted = False` at `on_hand = 0`,
+      which is always at or below the threshold;
+    - the backfill only covers rows that exist at deploy.
+  - **What happens:** the first `track_low` on such an item returns True whenever the result is
+    still at or below the threshold.
+  - **Scenarios:**
+    - **The initial stock load.** After deploy, the first Excel import with "Existencias"
+      (plan 005, decision 7) records 1–3 bottles for many presentations that had no row. One
+      email then lists every one of them as "low". This is the burst decision 34 wanted to
+      avoid. It is also not a "drop" (decision 10): the stock went up from 0.
+    - **The same from the panel.** A first restock of 2 units (threshold 3), or a first
+      `SetThreshold` on a never-counted presentation, emails "2 en almacén" or "0 en almacén".
+    - **Placeholder rows.** The placeholder rows that `ReserveStock` leaves inside a caller's
+      transaction (`reservations.py:120-122`), or that a skipped import count leaves
+      (`stock.py:161-175`, `continue` after `get_for_update` inserted the row), stay at 0 /
+      False. The next global-threshold change emails them all.
+  - **Status of the code:** this is literal to the plan (the defaults are False), and the tests
+    pin it (`test_a_threshold_on_a_never_stocked_presentation_alerts_for_its_empty_item`,
+    "first restock already low").
+  - **Possible fix, if the user wants "drops" literally:**
+    - treat a never-counted item as already alerted: `empty()` and `_insert_empty` set
+      `low_alerted = True`;
+    - so the first alert needs the item to rise above the threshold and fall back.
+  - **Uncertain:** whether the user wants the initial-load email.
+
+**Low**
+
+- **L1 — Stale docs** in `docs/architecture.md`:
+  - `:50-54` says `.importlinter` "allows exactly that import", the catalog one. Now identity is
+    allowed too, and `OwnerDirectory` is a second built example.
+  - The module table rows are stale:
+    - `inventory` (`:61`) does not mention the low-stock email (it still lists reservations as
+      "Next", which was already stale);
+    - `identity` (`:64`) does not mention its first public facade.
+  - The new events bullet at `:175-182` is correct.
+- **L2 — Missing deviation.** Step 2's backfill SQL (a `FROM inventory.settings` join) was
+  replaced by a subquery with a fallback of `3`
+  (`migrations/versions/0015_inventory_low_stock_alert.py:30-36`). It is better: with no
+  settings row, the plan's join would mark nothing. But `## Deviations` does not record it.
+- **L3 — A permanent failure for one owner re-sends forever to the owners before it**
+  (`handlers/low_stock_email.py:58-65`, together with the relay having no attempt cap).
+  - **Scenario:** owners A and B; the SMTP provider synchronously refuses B (for example, a
+    suppressed address). A gets the same email at every retry, up to every 5 minutes,
+    indefinitely.
+  - **Status:** this is the plan's at-least-once design. The likelihood is low with Mailpit or a
+    typical relay. Uncertain: it depends on the production SMTP provider's behaviour.
+  - **Where it's recorded:** the root cause is the relay, recorded as
+    `plans/findings/platform-outbox-relay-retries-forever.md`.
+  - **A local mitigation for the user to weigh:** send per owner (one job each), or skip and log
+    a recipient refusal.
+- **L4 — Test hygiene (tester).** This is the tester's note 2: the existing relay tests depend
+  on an empty `identity.users`. Suggestion: an inventory integration fixture that asserts, or
+  arranges, no active owner before `relay_all`. Test-only.
+- **L5 — A vacuous test (tester).**
+  `test_low_stock_commands.py::test_lowering_the_global_threshold_re_arms_silently_and_persists_it`
+  (`:309`) never asserts that the item was alerted after the raise to 10. With the "no save"
+  mutant, it passes, because the flag was never stored. Another test kills that mutant, so this
+  only weakens the coverage. Add `assert alerted(inv, STOCKED)` after the first `execute(10)`.
+
 ## Verification
