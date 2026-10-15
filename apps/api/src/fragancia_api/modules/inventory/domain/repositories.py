@@ -1,7 +1,9 @@
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from fragancia_api.modules.inventory.domain.reservation import Reservation
 from fragancia_api.modules.inventory.domain.stock import InventorySettings, StockItem
 
 
@@ -15,6 +17,16 @@ class StockRepository(Protocol):
         presentation was never counted. Callers verify the presentation exists before calling."""
         ...
 
+    async def get_many_for_update(
+        self, presentation_ids: Iterable[UUID], *, now: datetime
+    ) -> dict[UUID, StockItem]:
+        """The stock items of several presentations, every one present, with their rows locked
+        until the transaction ends in ascending `presentation_id` order (the global lock order).
+        As `get_for_update`, the SQL adapter first inserts the missing ones empty, stamped `now`;
+        the fakes return an empty item for a presentation never counted. Callers verify the
+        presentations exist before calling."""
+        ...
+
     async def list_all_for_update(self) -> list[StockItem]:
         """Every stock item with its row locked until the transaction ends, ordered by
         `presentation_id` (the lock order of a global settings change)."""
@@ -22,6 +34,28 @@ class StockRepository(Protocol):
 
     async def save(self, item: StockItem) -> None:
         """Upsert the item and insert its `new_movements` (then forget them)."""
+        ...
+
+
+class ReservationRepository(Protocol):
+    """Write side of reservations. Joins the active transaction."""
+
+    async def add(self, reservation: Reservation) -> bool:
+        """Insert the reservation and its lines; False (nothing written) when its reference is
+        taken."""
+        ...
+
+    async def get_for_update(self, reservation_id: UUID) -> Reservation | None:
+        """The reservation with its row locked until the transaction ends; None when unknown."""
+        ...
+
+    async def claim_expired(self, now: datetime, limit: int) -> list[Reservation]:
+        """Up to `limit` active reservations with `expires_at <= now`, ordered by id, locked
+        `FOR UPDATE SKIP LOCKED` (one locked by a commit or release in progress is skipped)."""
+        ...
+
+    async def save(self, reservation: Reservation) -> None:
+        """Update its status, `expires_at` and `closed_at`; the lines never change."""
         ...
 
 

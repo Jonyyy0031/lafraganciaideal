@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-from fragancia_api.modules.inventory.contracts import StockMovementPage
+from fragancia_api.modules.inventory.contracts import ReservationHoldPage, StockMovementPage
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,16 +37,25 @@ class PresentationCatalog(Protocol):
 class StockQueries(Protocol):
     """Read side: returns response models directly, no aggregates involved."""
 
-    async def get(self, presentation_id: UUID) -> tuple[int, int | None] | None:
-        """`(on_hand, threshold override)`, or None when the presentation was never counted."""
+    async def get(self, presentation_id: UUID) -> tuple[int, int, int | None] | None:
+        """`(on_hand, reserved, threshold override)`, or None when the presentation was never
+        counted."""
         ...
 
     async def movements(self, presentation_id: UUID, *, page: int, size: int) -> StockMovementPage:
         """The ledger of one presentation, newest first (ties by id), one page at a time."""
         ...
 
-    async def on_hand_by_id(self, ids: Sequence[UUID]) -> dict[UUID, tuple[int, int | None]]:
-        """`(on_hand, threshold override)` of the counted presentations; others are absent."""
+    async def on_hand_by_id(self, ids: Sequence[UUID]) -> dict[UUID, tuple[int, int, int | None]]:
+        """`(on_hand, reserved, threshold override)` of the counted presentations; others are
+        absent."""
+        ...
+
+    async def active_holds(
+        self, presentation_id: UUID, *, page: int, size: int
+    ) -> ReservationHoldPage:
+        """The active reservations holding units of one presentation, soonest expiry first
+        (ties by id), one page at a time."""
         ...
 
     async def low_stock_threshold(self) -> int:

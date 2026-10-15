@@ -132,6 +132,41 @@ changed.
     - the check now runs inside the confirm's transaction, with the import locked;
     - L1 (the 403's OpenAPI description) is fixed;
     - L2 (the in-memory import query dropping `stock_counts`, the tester's finding) is fixed.
+24. (2026-10-14) **A reservation is all or nothing.**
+    - If any presentation of a checkout lacks units, the whole reservation is refused, and the
+      refusal lists every short presentation.
+    - A reservation is never left half done.
+25. (2026-10-14) **A payment approved after its reservation expired** is committed only if the
+    units are still available.
+    - If they are not, inventory refuses, and the order is left for the shop to resolve
+      (refund, or fulfil later).
+    - The same refusal applies when a loss left fewer units on hand than a reservation holds.
+    - Stock never goes below 0.
+26. (2026-10-14) **Orders can extend an active reservation**, for example when the customer
+    switches from card to OXXO, or when Mercado Pago keeps a payment pending. An expired
+    reservation cannot be extended.
+27. (2026-10-14) **A committed reservation records a "sale" movement per presentation.**
+    - The reason is the order reference, and the system is the actor.
+    - Reserving and releasing record no movement: they don't change what is in the warehouse.
+28. (2026-10-14) **A loss or count may leave the units on hand below the units reserved.** It
+    reflects the physical reality. Available is then 0, never negative.
+29. (2026-10-14) **The panel shows units on hand, reserved and available, plus the active
+    reservations of each presentation**: reference, units and expiry. The low-stock list and
+    flag use available.
+30. (2026-10-14) **Plan 003 repair round.** The review found M1:
+    - a two-size reserve could deadlock with an admin's perfume save, because the catalog
+      wrote presentations in `ml` order while reservations lock them in id order;
+    - following the standing choice to fix review findings, the catalog's perfume save now
+      writes presentations in id order, inside plan 003.
+
+    L1 (a race test pinning the item lock order) and L2 (the comment on a refused reserve
+    inside a caller's transaction) are fixed too.
+31. (2026-10-14) **Plan 003 repair round 2.**
+    - **The finding (M2):** the re-review found that an import confirm saving several
+      perfumes could still deadlock with a reservation.
+    - **The fix:** the confirm now locks the perfume rows by identity, then every existing
+      presentation in id order, before it writes.
+    - This follows the standing choice to fix review findings.
 
 ## Delivered
 

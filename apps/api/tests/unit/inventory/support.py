@@ -2,6 +2,13 @@
 
 from uuid import UUID
 
+from fragancia_api.modules.inventory.application.commands.reservations import (
+    CommitReservation,
+    ExpireReservations,
+    ExtendReservation,
+    ReleaseReservation,
+    ReserveStock,
+)
 from fragancia_api.modules.inventory.application.commands.stock import (
     RecordImportedCounts,
     RecordMovement,
@@ -9,6 +16,7 @@ from fragancia_api.modules.inventory.application.commands.stock import (
     UpdateInventorySettings,
 )
 from fragancia_api.modules.inventory.application.ports import StockedPresentation
+from fragancia_api.modules.inventory.application.stock_reservations import StockReservations
 from fragancia_api.modules.inventory.infrastructure.in_memory import (
     InMemoryPresentationCatalog,
     InMemorySettings,
@@ -87,4 +95,44 @@ class Inventory:
             transactions=transactions,
             events=self.events,
             clock=self.clock,
+        )
+        reservations = self.store.reservations
+        self.reserve = ReserveStock(
+            reservations=reservations,
+            stock=self.store,
+            settings=settings,
+            catalog=self.catalog,
+            transactions=transactions,
+            events=self.events,
+            clock=self.clock,
+        )
+        self.extend = ExtendReservation(
+            reservations=reservations, transactions=transactions, clock=self.clock
+        )
+        self.commit = CommitReservation(
+            reservations=reservations,
+            stock=self.store,
+            settings=settings,
+            transactions=transactions,
+            events=self.events,
+            clock=self.clock,
+        )
+        self.release = ReleaseReservation(
+            reservations=reservations,
+            stock=self.store,
+            settings=settings,
+            transactions=transactions,
+            events=self.events,
+            clock=self.clock,
+        )
+        self.expire = ExpireReservations(
+            reservations=reservations,
+            stock=self.store,
+            settings=settings,
+            transactions=transactions,
+            events=self.events,
+            clock=self.clock,
+        )
+        self.facade = StockReservations(
+            reserve=self.reserve, extend=self.extend, commit=self.commit, release=self.release
         )

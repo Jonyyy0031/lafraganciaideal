@@ -1243,5 +1243,86 @@ async def test_a_confirmed_import_cannot_be_discarded_and_its_photos_stay() -> N
     assert len(rig.world.perfumes.by_id[UUID(int=7)].photos) == 1
 
 
+# --- confirm: the up-front presentation locks (plan inventory-stock/003, repair round 2) -------
+
+
+def _record_lock_calls(rig: Rig) -> list[tuple[str, Any]]:
+    """Wraps the repository's lock methods (on the instance) so every call is recorded in order."""
+    calls: list[tuple[str, Any]] = []
+    repository = rig.world.perfumes
+    get_for_update = repository.get_for_update
+    lock_presentations = repository.lock_presentations
+    save = repository.save
+
+    async def spy_get(perfume_id: UUID) -> Any:
+        calls.append(("get_for_update", perfume_id))
+        return await get_for_update(perfume_id)
+
+    async def spy_lock(perfume_ids: Any) -> None:
+        calls.append(("lock_presentations", list(perfume_ids)))
+        await lock_presentations(perfume_ids)
+
+    async def spy_save(perfume: Perfume) -> Any:
+        calls.append(("save", perfume.id))
+        return await save(perfume)
+
+    repository.get_for_update = spy_get  # type: ignore[method-assign]
+    repository.lock_presentations = spy_lock  # type: ignore[method-assign]
+    repository.save = spy_save  # type: ignore[method-assign]
+    return calls
+
+
+async def test_a_confirm_locks_the_existing_perfumes_then_their_presentations_before_any_save() -> (
+    None
+):
+    rig = _rig()
+    # Planned in the opposite order to their identity order (name slug): Zulu first, Alfa second.
+    zulu, zulu_presentation = _stored(rig, "Zulu")
+    alfa, alfa_presentation = _stored(rig, "Alfa")
+    import_id = await _store(
+        rig,
+        _existing(rig, zulu, zulu_presentation, first_row=2),
+        _existing(rig, alfa, alfa_presentation, first_row=3),
+    )
+    calls = _record_lock_calls(rig)
+
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
+
+    lock = ("lock_presentations", [alfa.id, zulu.id])  # identity order, not plan order
+    assert calls.count(lock) == 1
+    assert [name for name, _ in calls].count("lock_presentations") == 1
+    assert calls[: calls.index(lock)] == [
+        ("get_for_update", alfa.id),
+        ("get_for_update", zulu.id),
+    ]
+    assert [name for name, _ in calls[calls.index(lock) + 1 :]].count("save") == 2
+
+
+async def test_a_mixed_confirm_locks_only_the_existing_perfumes() -> None:
+    rig = _rig()
+    stored, presentation_id = _stored(rig, "Luna")
+    import_id = await _store(rig, _new(rig, 7, "Eros"), _existing(rig, stored, presentation_id))
+    calls = _record_lock_calls(rig)
+
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
+
+    lock = ("lock_presentations", [stored.id])
+    assert calls.count(lock) == 1
+    assert calls[: calls.index(lock)] == [("get_for_update", stored.id)]
+
+
+async def test_a_confirm_of_only_new_perfumes_locks_no_perfume_and_no_presentation() -> None:
+    """The confirm still calls `lock_presentations`, but with an empty list (the repository
+    treats that as a no-op): the repair spec calls it unconditionally."""
+    rig = _rig()
+    import_id = await _store(rig, _new(rig, 7, "Eros"), _new(rig, 8, "Luna", first_row=3))
+    calls = _record_lock_calls(rig)
+
+    unwrap_ok(await rig.confirm.execute(import_id, ACTOR, may_record_stock=True))
+
+    assert [ids for name, ids in calls if name == "lock_presentations"] == [[]]
+    assert [name for name, _ in calls if name == "get_for_update"] == []
+
+
 # Silence "unused" for helpers kept for readability of failures.
 _ = (Ok,)

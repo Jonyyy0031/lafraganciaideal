@@ -3,12 +3,20 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 
-from fragancia_api.modules.inventory.contracts import StockMovement, StockMovementPage
+from fragancia_api.modules.inventory.contracts import (
+    ReservationHold,
+    ReservationHoldPage,
+    StockMovement,
+    StockMovementPage,
+)
+from fragancia_api.modules.inventory.domain.reservation import ReservationStatus
 from fragancia_api.modules.inventory.domain.stock import DEFAULT_LOW_STOCK_THRESHOLD
 from fragancia_api.modules.inventory.infrastructure.sql_settings_repository import (
     SETTINGS_ROW_ID,
 )
 from fragancia_api.modules.inventory.infrastructure.tables import (
+    reservation_lines,
+    reservations,
     settings,
     stock_items,
     stock_movements,
@@ -20,13 +28,42 @@ class SqlStockQueries:
     def __init__(self, database: Database) -> None:
         self._database = database
 
-    async def get(self, presentation_id: UUID) -> tuple[int, int | None] | None:
-        statement = select(stock_items.c.on_hand, stock_items.c.threshold_override).where(
-            stock_items.c.presentation_id == presentation_id
-        )
+    async def get(self, presentation_id: UUID) -> tuple[int, int, int | None] | None:
+        statement = select(
+            stock_items.c.on_hand, stock_items.c.reserved, stock_items.c.threshold_override
+        ).where(stock_items.c.presentation_id == presentation_id)
         async with self._database.reader() as session:
             row = (await session.execute(statement)).first()
-        return (row[0], row[1]) if row is not None else None
+        return (row[0], row[1], row[2]) if row is not None else None
+
+    async def active_holds(
+        self, presentation_id: UUID, *, page: int, size: int
+    ) -> ReservationHoldPage:
+        joined = reservation_lines.join(
+            reservations, reservations.c.id == reservation_lines.c.reservation_id
+        )
+        where = (reservation_lines.c.presentation_id == presentation_id) & (
+            reservations.c.status == ReservationStatus.ACTIVE.value
+        )
+        statement = (
+            select(
+                reservations.c.id.label("reservation_id"),
+                reservations.c.reference,
+                reservation_lines.c.quantity,
+                reservations.c.expires_at,
+                reservations.c.created_at,
+            )
+            .select_from(joined)
+            .where(where)
+            .order_by(reservations.c.expires_at, reservations.c.id)
+            .limit(size)
+            .offset((page - 1) * size)
+        )
+        async with self._database.reader() as session:
+            total = await session.scalar(select(func.count()).select_from(joined).where(where)) or 0
+            rows = (await session.execute(statement)).mappings()
+            items = [ReservationHold.model_validate(dict(row)) for row in rows]
+        return ReservationHoldPage(items=items, total=total, page=page, size=size)
 
     async def movements(self, presentation_id: UUID, *, page: int, size: int) -> StockMovementPage:
         where = stock_movements.c.presentation_id == presentation_id
@@ -55,15 +92,18 @@ class SqlStockQueries:
             items = [StockMovement.model_validate(dict(row)) for row in rows]
         return StockMovementPage(items=items, total=total, page=page, size=size)
 
-    async def on_hand_by_id(self, ids: Sequence[UUID]) -> dict[UUID, tuple[int, int | None]]:
+    async def on_hand_by_id(self, ids: Sequence[UUID]) -> dict[UUID, tuple[int, int, int | None]]:
         if not ids:
             return {}
         statement = select(
-            stock_items.c.presentation_id, stock_items.c.on_hand, stock_items.c.threshold_override
+            stock_items.c.presentation_id,
+            stock_items.c.on_hand,
+            stock_items.c.reserved,
+            stock_items.c.threshold_override,
         ).where(stock_items.c.presentation_id.in_(list(ids)))
         async with self._database.reader() as session:
             rows = (await session.execute(statement)).all()
-        return {row[0]: (row[1], row[2]) for row in rows}
+        return {row[0]: (row[1], row[2], row[3]) for row in rows}
 
     async def low_stock_threshold(self) -> int:
         statement = select(settings.c.low_stock_threshold).where(settings.c.id == SETTINGS_ROW_ID)

@@ -90,7 +90,7 @@ async def test_the_first_lock_creates_an_empty_item_that_save_then_fills(
     await in_transaction(container, first)
 
     counted = await SqlStockQueries(container.database).get(presentation_id)
-    assert counted == (10, None)
+    assert counted == (10, 0, None)
     assert await count(container, "inventory.stock_items") == 1
     assert await count(container, "inventory.stock_movements") == 1
 
@@ -204,7 +204,7 @@ async def test_two_concurrent_first_movements_serialize_on_the_row_lock(
     second = asyncio.create_task(in_transaction(container, lambda: movement(0)))
     await asyncio.gather(first, second)
 
-    assert await SqlStockQueries(container.database).get(presentation_id) == (10, None)
+    assert await SqlStockQueries(container.database).get(presentation_id) == (10, 0, None)
     assert await count(container, "inventory.stock_movements") == 2
 
 
@@ -223,7 +223,7 @@ async def test_two_concurrent_restocks_through_the_use_case_end_at_ten(
     assert isinstance(first, Ok)
     assert isinstance(second, Ok)
     assert sorted([first.value.on_hand, second.value.on_hand]) == [5, 10]
-    assert await SqlStockQueries(container.database).get(presentation_id) == (10, None)
+    assert await SqlStockQueries(container.database).get(presentation_id) == (10, 0, None)
     movements = await SqlStockQueries(container.database).movements(
         presentation_id, page=1, size=10
     )
@@ -248,7 +248,7 @@ async def test_concurrent_losses_cannot_drive_the_stock_below_zero(
 
     outcomes = sorted("ok" if isinstance(r, Ok) else r.error.code for r in results)
     assert outcomes == ["INVENTORY_STOCK_INSUFFICIENT", "ok"]
-    assert await SqlStockQueries(container.database).get(presentation_id) == (1, None)
+    assert await SqlStockQueries(container.database).get(presentation_id) == (1, 0, None)
 
 
 # --- check constraint --------------------------------------------------------------------------
@@ -299,7 +299,7 @@ async def test_an_update_to_a_negative_on_hand_is_refused_too(container: Contain
                 text("UPDATE inventory.stock_items SET on_hand = -3 WHERE presentation_id = :p"),
                 {"p": presentation_id},
             )
-    assert await SqlStockQueries(container.database).get(presentation_id) == (2, None)
+    assert await SqlStockQueries(container.database).get(presentation_id) == (2, 0, None)
 
 
 # --- SqlStockQueries ---------------------------------------------------------------------------
@@ -405,11 +405,11 @@ async def test_get_and_on_hand_by_id(container: Container) -> None:
     await in_transaction(container, write)
     queries = SqlStockQueries(container.database)
 
-    assert await queries.get(counted) == (6, None)
+    assert await queries.get(counted) == (6, 0, None)
     assert await queries.get(never) is None
     assert await queries.on_hand_by_id([counted, with_override, never]) == {
-        counted: (6, None),
-        with_override: (0, 0),
+        counted: (6, 0, None),
+        with_override: (0, 0, 0),
     }
     assert await queries.on_hand_by_id([]) == {}
 

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
@@ -124,6 +125,12 @@ class PerfumeRepository(Protocol):
     async def get_for_update(self, perfume_id: UUID) -> Perfume | None:
         """The perfume with every presentation (ordered by ml), with its row locked until the
         transaction ends."""
+        ...
+
+    async def lock_presentations(self, perfume_ids: Sequence[UUID]) -> None:
+        """Lock every stored presentation of these perfumes until the transaction ends, in
+        ascending presentation id order (the order every writer of several presentation rows
+        and inventory's reservations use). Lock the perfume rows first."""
         ...
 
     async def save(
