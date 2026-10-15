@@ -1,5 +1,5 @@
 ---
-status: verify
+status: implementing
 module: orders
 min_implementer: mid
 depends_on: ["platform-api-foundation/004"]
@@ -123,6 +123,7 @@ the new owner-only permission `delivery:manage`. The storefront reads the option
 
 3. **Contracts, application, infrastructure and migration**
    - Files: `apps/api/src/fragancia_api/modules/orders/contracts.py` (create),
+     `apps/api/src/fragancia_api/modules/orders/application/ports.py` (create, repair round 1),
      `apps/api/src/fragancia_api/modules/orders/application/__init__.py` (create),
      `apps/api/src/fragancia_api/modules/orders/application/commands/__init__.py` (create),
      `apps/api/src/fragancia_api/modules/orders/application/commands/delivery.py` (create),
@@ -274,6 +275,42 @@ the new owner-only permission `delivery:manage`. The storefront reads the option
   quotes), plus the schema creation and default row the plan asked for.
 - The layered tests for orders (`tests/unit/orders/`, `tests/integration/orders/`) were written
   in the tester phase (see Test coverage).
+
+### Repair round 1 (2026-10-15, main session: review → implementing)
+
+**Why.** The review found nothing blocking, only three Lows. Following the standing choice, the
+user chose to fix all three now.
+
+**Repair spec.**
+1. **L1: the read port moves to `application/ports.py`.**
+   - Files: `apps/api/src/fragancia_api/modules/orders/application/ports.py` (create),
+     `apps/api/src/fragancia_api/modules/orders/domain/repositories.py`,
+     `apps/api/src/fragancia_api/modules/orders/application/queries/delivery.py`,
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/sql_delivery_settings_repository.py`,
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/in_memory.py`,
+     `apps/api/src/fragancia_api/modules/orders/module.py`.
+   - Move `DeliverySettingsReader` unchanged into the new `ports.py`, with a module docstring as
+     in `modules/catalog/application/ports.py`.
+   - Remove it from `domain/repositories.py` and update every import.
+2. **L2: the subtotal bound lives in the domain.**
+   - Files: `apps/api/src/fragancia_api/modules/orders/domain/delivery.py`, the same
+     `queries/delivery.py`.
+   - Add `QUOTE_SUBTOTAL_MAX_CENTS = 100_000_000` and a frozen `Subtotal` holding a `Money`,
+     with `Subtotal.create(cents) -> Result[Subtotal, DeliveryOptionsInvalid]`.
+     - It accepts 0..`QUOTE_SUBTOTAL_MAX_CENTS`.
+     - Otherwise it returns `details={"field": "subtotal_cents", "min": 0, "max": …}`, the
+       same answer as today.
+   - `quote(settings, postal_code, subtotal: Subtotal)`. `QuoteDelivery` calls
+     `Subtotal.create`, and its own bound check goes. Plan 003 gets the bound from the domain.
+3. **L3: the invalid postal code is named.**
+   - Files: the same `domain/delivery.py`.
+   - When an entry of `local.postal_codes` is invalid, the error's details add `"index"` (its
+     position in the request, from 0) and `"value"` (the raw entry, truncated to 20
+     characters). The first invalid entry is reported.
+
+**Scope.** These product files only. The implementer updates only the test imports and the call
+sites that the moved port and the new `quote` signature break, mechanically. The tester adds the
+regression tests.
 
 ## Test coverage
 
