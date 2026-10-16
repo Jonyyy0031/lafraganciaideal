@@ -86,6 +86,9 @@ from fragancia_api.modules.catalog.application.queries.perfumes import (
 from fragancia_api.modules.catalog.application.queries.presentation_directory import (
     PresentationDirectory,
 )
+from fragancia_api.modules.catalog.application.queries.presentation_offers import (
+    PresentationOffers,
+)
 from fragancia_api.modules.catalog.http.import_router import import_routers
 from fragancia_api.modules.catalog.http.perfume_router import perfume_routers
 from fragancia_api.modules.catalog.http.router import routers
@@ -125,6 +128,9 @@ from fragancia_api.modules.catalog.infrastructure.sql_perfume_repository import 
 )
 from fragancia_api.modules.catalog.infrastructure.sql_presentation_directory import (
     SqlPresentationDirectory,
+)
+from fragancia_api.modules.catalog.infrastructure.sql_presentation_offers import (
+    SqlPresentationOffers,
 )
 from fragancia_api.modules.catalog.infrastructure.sql_stock_copy import SqlStockCopy
 from fragancia_api.modules.catalog.infrastructure.xlsx_sheets import (
@@ -258,6 +264,14 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     services.add(PhotoUploadLimit, PhotoUploadLimit(max_bytes=platform.settings.photo_max_bytes))
     services.add(
         PresentationDirectory, PresentationDirectory(SqlPresentationDirectory(platform.database))
+    )
+    services.add(
+        PresentationOffers,
+        PresentationOffers(
+            SqlPresentationOffers(
+                platform.database, media_base_url=platform.settings.media_public_base_url
+            )
+        ),
     )
     platform.subscriptions.subscribe(
         STOCK_CHANGED_EVENT,

@@ -7,6 +7,9 @@ from uuid import UUID
 from fragancia_api.modules.catalog.application.queries.presentation_directory import (
     PresentationRef,
 )
+from fragancia_api.modules.catalog.application.queries.presentation_offers import (
+    PresentationOffer,
+)
 from fragancia_api.modules.catalog.contracts import (
     AdminBrandPage,
     AdminConcentrationPage,
@@ -128,6 +131,14 @@ class PresentationDirectoryQueries(Protocol):
     async def list_in_stock(self) -> list[PresentationRef]:
         """Every active in-stock presentation of a non-archived perfume, ordered by brand
         name, perfume name (both case-insensitive) and ml."""
+        ...
+
+
+class PresentationOffersQueries(Protocol):
+    """Read side behind the `PresentationOffers` facade other modules use."""
+
+    async def offers(self, ids: Sequence[UUID], now: datetime) -> dict[UUID, PresentationOffer]:
+        """The known presentations by id, priced at `now`; unknown ids are absent."""
         ...
 
 

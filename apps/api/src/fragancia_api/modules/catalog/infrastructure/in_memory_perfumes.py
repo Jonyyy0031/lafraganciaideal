@@ -11,6 +11,9 @@ from fragancia_api.modules.catalog.application.ports import PublicPerfumeFilters
 from fragancia_api.modules.catalog.application.queries.presentation_directory import (
     PresentationRef,
 )
+from fragancia_api.modules.catalog.application.queries.presentation_offers import (
+    PresentationOffer,
+)
 from fragancia_api.modules.catalog.contracts import (
     AdminPerfume,
     AdminPerfumePage,
@@ -183,6 +186,37 @@ class InMemoryPerfumes:
 
     async def find_for_update(self, presentation_id: UUID) -> PresentationRef | None:
         return (await self.find([presentation_id])).get(presentation_id)
+
+    async def offers(self, ids: Sequence[UUID], now: datetime) -> dict[UUID, PresentationOffer]:
+        """The `PresentationOffersQueries` port, over the same store."""
+        wanted = set(ids)
+        found: dict[UUID, PresentationOffer] = {}
+        for perfume in self.by_id.values():
+            brand = self._brands.by_id[perfume.brand_id]
+            concentration = self._concentrations.by_id[perfume.concentration_id]
+            for presentation in perfume.presentations:
+                if presentation.id not in wanted:
+                    continue
+                in_stock = presentation.availability.kind == "in_stock"
+                found[presentation.id] = PresentationOffer(
+                    presentation_id=presentation.id,
+                    perfume_id=perfume.id,
+                    perfume_slug=perfume.slug,
+                    label=(
+                        f"{brand.name.value} {perfume.name.value} "
+                        f"{concentration.abbreviation.value} {presentation.ml.value} ml"
+                    ),
+                    ml=presentation.ml.value,
+                    card_url=self._photo_url(perfume),
+                    price_cents=presentation.effective_price(now).cents,
+                    regular_price_cents=presentation.price.amount.cents,
+                    availability=presentation.availability.kind,
+                    lead_time_min_days=presentation.availability.min_days,
+                    lead_time_max_days=presentation.availability.max_days,
+                    is_visible=presentation.is_active and self._visible(perfume),
+                    available_units=self._figures(presentation).available if in_stock else None,
+                )
+        return found
 
     async def list_in_stock(self) -> list[PresentationRef]:
         refs = [

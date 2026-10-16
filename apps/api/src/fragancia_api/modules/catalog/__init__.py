@@ -5,6 +5,9 @@ REFERENCE MODULE — new modules copy its shape by name (docs/recipes/new-module
 Public API for other modules:
 - `PresentationDirectory` (+ `PresentationRef`): look presentations up by id, or list the
   in-stock ones, with the names that identify them.
+- `PresentationOffers` (+ `PresentationOffer`): what a buyer sees of presentations, priced at a
+  given moment: label, slug, card photo, effective and regular price, availability, lead times,
+  visibility and the available units (from the stock copy).
 
 Events (published through the outbox; other modules subscribe by name, never by import):
 
@@ -19,5 +22,9 @@ from fragancia_api.modules.catalog.application.queries.presentation_directory im
     PresentationDirectory,
     PresentationRef,
 )
+from fragancia_api.modules.catalog.application.queries.presentation_offers import (
+    PresentationOffer,
+    PresentationOffers,
+)
 
-__all__ = ["PresentationDirectory", "PresentationRef"]
+__all__ = ["PresentationDirectory", "PresentationOffer", "PresentationOffers", "PresentationRef"]
