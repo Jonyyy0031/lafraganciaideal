@@ -490,3 +490,51 @@ repair spec instead of dispatching the reviewer.
 Status → `verify`.
 
 ## Verification
+
+Verified by the main session on 2026-10-16, against `feat/orders-delivery-options` at `34f3baf`.
+- **Environment:** the API (`just api`, port 8100) ran on the development database, migrated to
+  `0017`.
+- **Driver:** the session-scratchpad script `qa_inv/qa_delivery.py` called the admin and public
+  routes over HTTP.
+- **Users:** the owner `verifier007@example.test`, and the QA staff user from inventory-stock/004.
+
+**Suites:** the repair closed with `just check` green (2650 unit, 685 harness) and
+`just test-integration` green (751 passed, 5 skipped). No code changed since.
+
+**Flows driven against the acceptance criteria**
+- [x] **Default.**
+  - `orders.delivery_settings` had one row, `(1, off, off, off)`.
+  - The public `GET /api/v1/delivery-options` returned `{home: null, local: null, pickup: null}`.
+  - The quote for `77500` returned `[]`.
+- [x] **Configure.** The owner `PUT`:
+  - home on at 18,000, free from 250,000;
+  - local on at 9,000 for `77500` and `77505`;
+  - pickup on, with "Av. Tulum 123, Cancún" and "Lun-Sáb 10:00-19:00".
+
+  It answered 204. The admin `GET` returned exactly the same body. The public `GET` listed all
+  three without the on/off flags.
+- [x] **Quote.**
+  - `77500` with subtotal 100,000: home 18000, local 9000, pickup 0.
+  - Subtotal 250,000: home 0.
+  - `01000`: local absent.
+  - No postal code: home and pickup only.
+- [x] **Validation.** Each answered 422 `ORDERS_DELIVERY_OPTIONS_INVALID`:
+  - local on with no codes: `field local.postal_codes, min 1`;
+  - an empty pickup address: `field pickup.address`;
+  - a negative price: `field home.price_cents, min 0, max 1000000`;
+  - a 4-digit code: `field local.postal_codes, index 1, value "7750"` (the L3 fix).
+
+  A quote with `postal_code=abc` answered 422 `ORDERS_POSTAL_CODE_INVALID`. A subtotal of `-1`
+  answered 422, with `field subtotal_cents, min 0, max 100000000` (the L2 fix).
+- [x] **Permission.** Staff got 403 on both the admin `GET` and `PUT`, and an anonymous admin
+  `GET` got 401. The public routes answered without a session.
+- [x] **Switch off.** Turning home off removed it from the public `GET` and from the quote. The
+  admin `GET` kept its 18,000 and 250,000.
+
+**After the run:** the settings were restored to the default (all off), and the public `GET` was
+empty again. No QA data remains.
+
+**NOT VERIFIED live:** nothing in this plan's criteria. The migration round trip is covered by
+the scratch-database integration test.
+
+**Verdict: verified.** The plan is ready for the user to mark it `done`.
