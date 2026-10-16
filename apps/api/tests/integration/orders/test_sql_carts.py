@@ -80,6 +80,23 @@ async def backdate(container: Container, cart_id: UUID, moment: datetime) -> Non
         )
 
 
+async def wait_until_a_delete_waits_on_a_lock(container: Container) -> None:
+    """Poll `pg_stat_activity` until a `DELETE` on the carts is blocked on a lock, so a test
+    never releases the lock holder before the waiter is actually waiting."""
+    query = text(
+        "SELECT count(*) FROM pg_stat_activity "
+        "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+        "AND wait_event_type = 'Lock' AND query ILIKE 'DELETE FROM orders.carts%'"
+    )
+    deadline = asyncio.get_running_loop().time() + TIMEOUT
+    while asyncio.get_running_loop().time() < deadline:
+        async with container.database.engine.connect() as connection:
+            if (await connection.execute(query)).scalar_one() >= 1:
+                return
+        await asyncio.sleep(0.05)
+    pytest.fail("no DELETE on orders.carts is waiting on a lock")
+
+
 # --- repository ---------------------------------------------------------------------------------
 
 
@@ -551,7 +568,7 @@ async def test_a_purge_waiting_on_a_cart_that_is_touched_meanwhile_keeps_it(
     try:
         await asyncio.wait_for(holding.wait(), TIMEOUT)
         purge_task = asyncio.create_task(runner.run(purge))
-        await asyncio.sleep(WAIT)
+        await wait_until_a_delete_waits_on_a_lock(container)
         assert not purge_task.done(), "the purge did not wait for the row lock"
         release.set()
         assert isinstance(await asyncio.wait_for(touch_task, TIMEOUT), Ok)

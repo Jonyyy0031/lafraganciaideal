@@ -324,9 +324,11 @@ Run with the API on the development database, using the QA perfumes from the inv
 
 ## Test coverage
 
-Baseline (`uv run just check`, before any test): green (2649 passed, 3 skipped). Closing:
-`uv run just check` green (2784 passed, 3 skipped) and `uv run just test-integration` green
-(801 passed, 5 skipped; none of the skips are mine). Added: 135 unit tests (domain 43,
+Baseline (`uv run just check`, before any test): green (2649 passed, 3 skipped). Closing of the
+first testing phase: `uv run just check` green (2784 passed, 3 skipped) and `uv run just
+test-integration` green (801 passed, 5 skipped; none of the skips are mine). **That evidence is
+superseded for the code the repair round (2026-10-16) touched: `application/commands/cart.py`,
+`infrastructure/sql_cart_repository.py` and `contracts.py`; see "Repair round" below.** Added: 135 unit tests (domain 43,
 application 36, http 31, wiring/adapters 14, catalog facade 11) and 50 integration tests
 (carts and use cases 25, migration 12, catalog SQL facade 13). No GAP and no NOT CONFIRMED:
 every plan behavior has code behind it. Files under `apps/api/tests/`: `unit/orders/`
@@ -364,9 +366,28 @@ truncates `orders.carts` and shares the scratch-database fixture),
 | Full flow on real adapters and real catalog: add, over-stock refusal with `available`, made to order lead time, price change then acknowledge, sold out then back | `commands/cart.py` over SQL | integration | `test_sql_carts.py::test_the_whole_cart_flow_*`, `::test_a_price_change_shows_*`, `::test_a_line_that_sells_out_*` | CONFIRMED |
 | Migration 0018 round trip on a scratch database: absent before, columns/types/lengths, `updated_at` index, constraints, downgrade drops only the cart tables | `migrations/versions/0018_orders_carts.py` | integration | `test_migration_0018_orders_carts.py` (12) | CONFIRMED |
 
-Not exercised by tests: the SQL `Secure` cookie flag behind a real HTTPS proxy, and behavior on
-a multi-process race beyond the single-cart row lock (the lock test covers one cart). Neither is
-promised by the plan.
+### Repair round (2026-10-16)
+
+Baseline: the implementer's green run after the repair (2787 passed unit, 802 integration).
+Closing: `uv run just check` green (2790 passed, 3 skipped; harness 685 passed) and
+`uv run just test-integration` green (802 passed, 5 skipped). Four regression tests came with the
+repair; this phase added 3 unit tests (the `AcknowledgeCartPrices` window) and hardened one
+integration test. No GAP and no NOT CONFIRMED.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| `SetCartLine` reads the catalog outside the transaction | `commands/cart.py` `SetCartLine` | application | `test_cart_application.py::test_setting_a_line_reads_the_catalog_outside_the_transaction` | CONFIRMED |
+| `AcknowledgeCartPrices` reads the catalog outside the transaction | `commands/cart.py` `AcknowledgeCartPrices` | application | `::test_acknowledging_reads_the_catalog_outside_the_transaction` | CONFIRMED |
+| A line added between listing the ids and locking keeps the price its buyer saw (still flagged `price_changed_from`); the listed line is acknowledged | `AcknowledgeCartPrices`, `cart.py` `acknowledge_prices` | application | `::test_a_line_added_while_acknowledging_keeps_the_price_its_buyer_saw` (catalog fake mutates the stored cart during the read) | CONFIRMED |
+| A line removed in that window is ignored; the remaining line is acknowledged | `AcknowledgeCartPrices` | application | `::test_a_line_removed_while_acknowledging_is_ignored` | CONFIRMED |
+| A cart purged in that window answers the empty cart, no cookie, no write | `AcknowledgeCartPrices` | application | `::test_a_cart_purged_while_acknowledging_answers_the_empty_cart_without_a_cookie` | CONFIRMED |
+| A purge waiting on a cart touched meanwhile keeps it (outer `WHERE` repeats the age test). The test first polls `pg_stat_activity` until the `DELETE` is blocked on a `Lock` wait and fails with a clear message otherwise, so it cannot pass vacuously | `sql_cart_repository.py` `delete_untouched_before` | integration | `test_sql_carts.py::test_a_purge_waiting_on_a_cart_that_is_touched_meanwhile_keeps_it` (helper `wait_until_a_delete_waits_on_a_lock`) | CONFIRMED |
+| `CartLineView` text: hidden or archived keeps catalog fields and price; only a vanished presentation leaves them `null` | `contracts.py`, `openapi.json` | http | `test_cart_http.py::test_the_line_contract_describes_hidden_lines_as_keeping_their_catalog_fields` | CONFIRMED |
+
+Not exercised by tests: the SQL `Secure` cookie flag behind a real HTTPS proxy; a failure of the
+view's catalog read after the commit (review Info 3: a 500 after a stored write, accepted); the
+older row-lock test still waits a fixed `WAIT` instead of polling the lock. Races beyond one
+cart row are not promised by the plan.
 
 ## Review findings
 

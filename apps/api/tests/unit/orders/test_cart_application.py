@@ -592,3 +592,77 @@ async def test_acknowledging_reads_the_catalog_outside_the_transaction() -> None
     assert watched.reads_inside_a_transaction == 0
     assert [line.price_changed_from_cents for line in outcome.view.lines] == [None]
     assert world.stored("t").lines[0].seen_price_cents == 280_000
+
+
+# --- AcknowledgeCartPrices: the window between listing the ids and locking -----------------------
+
+
+class MeddlingOffers(InMemoryCatalogOffers):
+    """Runs `meddle` once, during the first catalog read: the window in which another request
+    may change the cart, because `AcknowledgeCartPrices` holds no lock while it reads offers."""
+
+    def __init__(self, meddle: Callable[[], None], *offers: Offer) -> None:
+        super().__init__(*offers)
+        self.meddle: Callable[[], None] | None = meddle
+
+    async def offers(self, ids: Sequence[UUID], now: datetime) -> dict[UUID, Offer]:
+        found = await super().offers(ids, now)
+        if self.meddle is not None:
+            meddle, self.meddle = self.meddle, None
+            meddle()
+        return found
+
+
+def meddling_world(meddle: Callable[[World], None], *offers: Offer) -> World:
+    holder: list[World] = []
+    world = World(offers=MeddlingOffers(lambda: meddle(holder[0]), *offers))
+    holder.append(world)
+    return world
+
+
+async def test_a_line_added_while_acknowledging_keeps_the_price_its_buyer_saw() -> None:
+    def add_a_line(world: World) -> None:
+        world.stored("t").set_line(presentation_id(2), 1, 200_000, NOW)
+
+    world = meddling_world(
+        add_a_line, make_offer(1, price_cents=280_000), make_offer(2, price_cents=300_000)
+    )
+    world.seed_cart("t", (1, 1, 250_000))
+
+    outcome = ok(await world.acknowledge().execute("t"))
+
+    seen = {line.presentation_id: line.seen_price_cents for line in world.stored("t").lines}
+    assert seen == {presentation_id(1): 280_000, presentation_id(2): 200_000}
+    changed = {line.presentation_id: line.price_changed_from_cents for line in outcome.view.lines}
+    assert changed == {presentation_id(1): None, presentation_id(2): 200_000}
+    assert outcome.token == "t"
+
+
+async def test_a_line_removed_while_acknowledging_is_ignored() -> None:
+    def remove_a_line(world: World) -> None:
+        world.stored("t").remove_line(presentation_id(2), NOW)
+
+    world = meddling_world(
+        remove_a_line, make_offer(1, price_cents=280_000), make_offer(2, price_cents=300_000)
+    )
+    world.seed_cart("t", (1, 1, 250_000), (2, 1, 250_000))
+
+    outcome = ok(await world.acknowledge().execute("t"))
+
+    assert [line.presentation_id for line in outcome.view.lines] == [presentation_id(1)]
+    assert [(line.presentation_id, line.seen_price_cents) for line in world.stored("t").lines] == [
+        (presentation_id(1), 280_000)
+    ]
+
+
+async def test_a_cart_purged_while_acknowledging_answers_the_empty_cart_without_a_cookie() -> None:
+    def purge(world: World) -> None:
+        world.carts.by_id.clear()
+
+    world = meddling_world(purge, make_offer(1, price_cents=280_000))
+    world.seed_cart("t", (1, 1, 250_000))
+
+    outcome = ok(await world.acknowledge().execute("t"))
+
+    assert outcome == CartOutcome(EMPTY_CART, None)
+    assert world.carts.writes == []
