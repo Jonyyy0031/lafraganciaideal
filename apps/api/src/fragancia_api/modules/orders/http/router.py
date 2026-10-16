@@ -1,18 +1,29 @@
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import Depends, Query
+from fastapi import Cookie, Depends, Query, Response
 
+from fragancia_api.modules.orders.application.commands.cart import (
+    AcknowledgeCartPrices,
+    CartOutcome,
+    RemoveCartLine,
+    SetCartLine,
+)
 from fragancia_api.modules.orders.application.commands.delivery import UpdateDeliveryOptions
+from fragancia_api.modules.orders.application.queries.cart import GetCart
 from fragancia_api.modules.orders.application.queries.delivery import (
     GetDeliveryOptions,
     GetPublicDeliveryOptions,
     QuoteDelivery,
 )
 from fragancia_api.modules.orders.contracts import (
+    CartView,
     DeliveryOptions,
     DeliveryQuoteResponse,
     PublicDeliveryOptions,
+    SetCartLineRequest,
 )
+from fragancia_api.modules.orders.http.cart_cookie import CART_COOKIE, CartCookie
 from fragancia_api.shared.http import (
     ErrorResponse,
     admin_router,
@@ -75,4 +86,75 @@ async def quote_delivery(
     return unwrap(await use_case.execute(postal_code, subtotal_cents))
 
 
-routers = (admin, public)
+cart = public_router(prefix="/cart", tags=["orders · cart"])
+
+_CartToken = Annotated[str | None, Cookie(alias=CART_COOKIE)]
+
+
+def _respond(outcome: CartOutcome, response: Response, cookie: CartCookie) -> CartView:
+    if outcome.token is not None:
+        cookie.set(response, outcome.token)
+    return outcome.view
+
+
+@cart.get("")
+async def get_cart(
+    use_case: Annotated[GetCart, Depends(provide(GetCart))],
+    token: _CartToken = None,
+) -> CartView:
+    """The cart behind the `fragancia_cart` cookie, with current prices and availability. No
+    cookie, or an unknown one, gives an empty cart and sets no cookie. A line whose presentation
+    is sold out, hidden or archived stays in the cart, flagged and left out of the totals
+    (decision 22). The cart never reserves stock: only the checkout does."""
+    return await use_case.execute(token)
+
+
+@cart.put(
+    "/lines/{presentation_id}",
+    responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+async def set_cart_line(
+    presentation_id: UUID,
+    body: SetCartLineRequest,
+    response: Response,
+    use_case: Annotated[SetCartLine, Depends(provide(SetCartLine))],
+    cookie: Annotated[CartCookie, Depends(provide(CartCookie))],
+    token: _CartToken = None,
+) -> CartView:
+    """Set the quantity of a presentation (1 to 10 units, decision 14), creating the cart and
+    its cookie when there is none. Changing the quantity acknowledges the current price
+    (decision 23). 409 `ORDERS_CART_PRESENTATION_UNAVAILABLE` (unknown or hidden) or
+    `ORDERS_CART_STOCK_UNAVAILABLE` (`details.available`, decision 21; in-stock only: made to
+    order has no such limit); 422 `ORDERS_CART_QUANTITY_INVALID` or
+    `ORDERS_CART_TOO_MANY_LINES`. The cart never reserves stock."""
+    outcome = unwrap(await use_case.execute(token, presentation_id, body.quantity))
+    return _respond(outcome, response, cookie)
+
+
+@cart.delete("/lines/{presentation_id}")
+async def remove_cart_line(
+    presentation_id: UUID,
+    response: Response,
+    use_case: Annotated[RemoveCartLine, Depends(provide(RemoveCartLine))],
+    cookie: Annotated[CartCookie, Depends(provide(CartCookie))],
+    token: _CartToken = None,
+) -> CartView:
+    """Remove a line; removing an absent line changes nothing."""
+    outcome = unwrap(await use_case.execute(token, presentation_id))
+    return _respond(outcome, response, cookie)
+
+
+@cart.post("/acknowledge-prices")
+async def acknowledge_cart_prices(
+    response: Response,
+    use_case: Annotated[AcknowledgeCartPrices, Depends(provide(AcknowledgeCartPrices))],
+    cookie: Annotated[CartCookie, Depends(provide(CartCookie))],
+    token: _CartToken = None,
+) -> CartView:
+    """The buyer confirms the current prices ("Entendido", decision 23): every line's
+    `price_changed_from_cents` clears."""
+    outcome = unwrap(await use_case.execute(token))
+    return _respond(outcome, response, cookie)
+
+
+routers = (admin, public, cart)

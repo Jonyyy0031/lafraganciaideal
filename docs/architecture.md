@@ -59,9 +59,9 @@ Modules (✔ = built; `catalog` is the **reference module** — see [recipes/new
 
 | Module          | Responsibility                                                                        |
 | --------------- | ------------------------------------------------------------------------------------- |
-| `catalog`       | ✔ Brands, olfactory families, concentrations, perfumes and presentations (back office), public catalog (filters, search, sort, detail by slug), perfume photos (S3, WebP), Excel import (template, validation in the worker, confirm) |
+| `catalog`       | ✔ Brands, olfactory families, concentrations, perfumes and presentations (back office), public catalog (filters, search, sort, detail by slug), perfume photos (S3, WebP), Excel import (template, validation in the worker, confirm), public facades `PresentationDirectory` (names, for inventory) and `PresentationOffers` (price at a moment, availability, photo, stock copy; for the cart) |
 | `inventory`     | ✔ Back-office stock ledger: units per in-stock presentation, append-only movements (restock, adjustment, loss, return, count), low-stock thresholds and list, stock reservations (reserve, extend, commit, release, expiry job) for checkout and payment. Emails the owners when a presentation drops to its low-stock threshold |
-| `orders`        | ✔ Delivery options (home, local, pickup; quote). Next: cart → order; the `Order` aggregate and its state machine |
+| `orders`        | ✔ Delivery options (home, local, pickup; quote). ✔ Server-side cart in a `fragancia_cart` cookie (token digest stored; lines of at most 10 units; current prices and availability read through the `CatalogOffers` port over the catalog's `PresentationOffers` facade; never reserves stock; purged after 30 days by a worker job). Next: checkout → order; the `Order` aggregate and its state machine |
 | `payments`      | `PaymentGateway` port → Mercado Pago adapter (Checkout Pro); idempotent webhooks      |
 | `identity`      | ✔ Back-office users (owner, staff), opaque sessions in a cookie, login throttle, invitations, password reset by email, deactivation, `OwnerDirectory` facade (active owners, for other modules) |
 | `notifications` | Order emails first; WhatsApp (Cloud API) later; driven by events                      |

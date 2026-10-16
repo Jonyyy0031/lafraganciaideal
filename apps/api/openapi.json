@@ -5095,6 +5095,244 @@
           }
         }
       }
+    },
+    "/api/v1/cart": {
+      "get": {
+        "tags": [
+          "orders · cart"
+        ],
+        "summary": "Get Cart",
+        "description": "The cart behind the `fragancia_cart` cookie, with current prices and availability. No\ncookie, or an unknown one, gives an empty cart and sets no cookie. A line whose presentation\nis sold out, hidden or archived stays in the cart, flagged and left out of the totals\n(decision 22). The cart never reserves stock: only the checkout does.",
+        "operationId": "get_cart",
+        "parameters": [
+          {
+            "name": "fragancia_cart",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fragancia Cart"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CartView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cart/lines/{presentation_id}": {
+      "put": {
+        "tags": [
+          "orders · cart"
+        ],
+        "summary": "Set Cart Line",
+        "description": "Set the quantity of a presentation (1 to 10 units, decision 14), creating the cart and\nits cookie when there is none. Changing the quantity acknowledges the current price\n(decision 23). 409 `ORDERS_CART_PRESENTATION_UNAVAILABLE` (unknown or hidden) or\n`ORDERS_CART_STOCK_UNAVAILABLE` (`details.available`, decision 21; in-stock only: made to\norder has no such limit); 422 `ORDERS_CART_QUANTITY_INVALID` or\n`ORDERS_CART_TOO_MANY_LINES`. The cart never reserves stock.",
+        "operationId": "set_cart_line",
+        "parameters": [
+          {
+            "name": "presentation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Presentation Id"
+            }
+          },
+          {
+            "name": "fragancia_cart",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fragancia Cart"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetCartLineRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CartView"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "orders · cart"
+        ],
+        "summary": "Remove Cart Line",
+        "description": "Remove a line; removing an absent line changes nothing.",
+        "operationId": "remove_cart_line",
+        "parameters": [
+          {
+            "name": "presentation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Presentation Id"
+            }
+          },
+          {
+            "name": "fragancia_cart",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fragancia Cart"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CartView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cart/acknowledge-prices": {
+      "post": {
+        "tags": [
+          "orders · cart"
+        ],
+        "summary": "Acknowledge Cart Prices",
+        "description": "The buyer confirms the current prices (\"Entendido\", decision 23): every line's\n`price_changed_from_cents` clears.",
+        "operationId": "acknowledge_cart_prices",
+        "parameters": [
+          {
+            "name": "fragancia_cart",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fragancia Cart"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CartView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5905,6 +6143,217 @@
           "created_at"
         ],
         "title": "AdminUser"
+      },
+      "CartLineView": {
+        "properties": {
+          "presentation_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Presentation Id"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unavailable",
+              "sold_out",
+              "insufficient_stock"
+            ],
+            "title": "Status"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "perfume_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Perfume Slug"
+          },
+          "card_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Url"
+          },
+          "ml": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ml"
+          },
+          "availability": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "in_stock",
+                  "made_to_order"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability"
+          },
+          "lead_time_min_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Min Days"
+          },
+          "lead_time_max_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Max Days"
+          },
+          "available_units": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Units"
+          },
+          "unit_price_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price Cents"
+          },
+          "line_total_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Total Cents"
+          },
+          "price_changed_from_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Changed From Cents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "presentation_id",
+          "quantity",
+          "status",
+          "label",
+          "perfume_slug",
+          "card_url",
+          "ml",
+          "availability",
+          "lead_time_min_days",
+          "lead_time_max_days",
+          "available_units",
+          "unit_price_cents",
+          "line_total_cents",
+          "price_changed_from_cents"
+        ],
+        "title": "CartLineView",
+        "description": "A cart line as the buyer sees it now. `status` is `ok`, `unavailable` (the presentation is\nhidden or archived, which keeps its catalog fields and price, or no longer exists, which\nleaves them `null`), `sold_out` or `insufficient_stock`. Only `ok`\nlines count in the cart's totals. `price_changed_from_cents` is the price the buyer last\nacknowledged when it differs from `unit_price_cents`."
+      },
+      "CartView": {
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/CartLineView"
+            },
+            "type": "array",
+            "title": "Lines"
+          },
+          "subtotal_cents": {
+            "type": "integer",
+            "title": "Subtotal Cents"
+          },
+          "item_count": {
+            "type": "integer",
+            "title": "Item Count"
+          },
+          "has_problems": {
+            "type": "boolean",
+            "title": "Has Problems"
+          },
+          "lead_time_max_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Max Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lines",
+          "subtotal_cents",
+          "item_count",
+          "has_problems",
+          "lead_time_max_days"
+        ],
+        "title": "CartView",
+        "description": "The cart with current prices and availability. It never reserves stock.\n`lead_time_max_days` is the longest lead time over the `ok` made-to-order lines."
       },
       "CatalogImportIssue": {
         "properties": {
@@ -7650,6 +8099,25 @@
           "new_password"
         ],
         "title": "ResetPasswordRequest"
+      },
+      "SetCartLineRequest": {
+        "properties": {
+          "quantity": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "title": "Quantity",
+            "examples": [
+              2
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "quantity"
+        ],
+        "title": "SetCartLineRequest",
+        "description": "The quantity bounds (1 to 10) are a domain rule; the payload is only kept sane."
       },
       "StockLine": {
         "properties": {
