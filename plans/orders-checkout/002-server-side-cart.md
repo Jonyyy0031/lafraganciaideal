@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: orders
 min_implementer: mid
 depends_on: ["001"]
@@ -607,6 +607,12 @@ The lock is harmless because it is released at its own commit.
 
 No out-of-scope findings were filed.
 
+**Closed (2026-10-16, main session).** Low 1 is resolved: the tester added the three
+acknowledge-window tests and updated `## Test coverage` (repair-round subsection). Info 2 is
+resolved: the purge regression test now waits until `pg_stat_activity` shows the `DELETE`
+blocked on a lock. Info 3 is left as is (retry is safe; `RemoveCartLine` already behaves so).
+The new changes are tests and plan text only, so no further review round; moved to `verify`.
+
 ## Repair log
 
 Repair round 2026-10-16, requested by the main session for the three review findings above.
@@ -634,3 +640,44 @@ Commands: `uv run just check` green (2787 passed, 3 skipped; harness 685 passed)
 `uv run just test-integration` green (802 passed, 5 skipped).
 
 ## Verification
+
+2026-10-16, main session, live against the development database (API on :8100 and the arq
+worker running, at migration 0018). QA script: `scratchpad/qa_inv/qa_cart.py`. It used the QA
+perfume `qa-versace-qa-confirma-edp`: 50 ml in stock (6 available), 100 ml (1), 75 ml (0) and
+200 ml made to order (10 days). Every catalog value it changed was restored afterwards and
+checked by SQL.
+
+- [x] **Empty.** `GET /cart` without a cookie: 200, `lines []`, `subtotal_cents 0`, no
+  `Set-Cookie`.
+- [x] **Add.** `PUT /cart/lines/{50 ml}` with 2: 200, line `ok`, unit 189950, total 379900.
+  `Set-Cookie: fragancia_cart=…; HttpOnly; Max-Age=2592000; Path=/api/v1; SameSite=lax` (no
+  `Secure` in development, as planned). A following `GET` with the cookie returned the same cart.
+- [x] **Limits.**
+  - Made-to-order quantity 11 and quantity 0: 422 `ORDERS_CART_QUANTITY_INVALID`,
+    `{"min": 1, "max": 10}`. Made-to-order quantity 10 with 0 stock: 200 `ok`.
+  - 100 ml × 2 with 1 available: 409 `ORDERS_CART_STOCK_UNAVAILABLE`, `{"available": 1}`;
+    75 ml × 1 with 0 available: 409, `{"available": 0}`.
+  - Unknown presentation: 409 `ORDERS_CART_PRESENTATION_UNAVAILABLE`. A hidden perfume takes the
+    same path (the facade reports it not visible).
+  - Observed: 50 ml × 11 with 6 available answers 409 `ORDERS_CART_STOCK_UNAVAILABLE`
+    (`{"available": 6}`), not 422, because the stock check runs before the quantity bound. Both
+    refuse, and the stock message is the more useful one. Quantity 11 answers 422 whenever the
+    stock does not already refuse it.
+- [x] **Price change.** The 100 ml price raised by 10000: `GET` showed unit 259900 and
+  `price_changed_from_cents` 249900. `POST /acknowledge-prices` cleared it. Raised again: flagged
+  259900 → 269900; setting the quantity again cleared it. Restoring the price flags it again
+  (seen 269900), as expected.
+- [x] **Line goes bad.** 50 ml stock copy set to 0: the line was `sold_out`, the subtotal dropped
+  it (3629800 → 3249900) and `has_problems` was true; with the stock back it was `ok` and the
+  subtotal 3629800 again. The perfume unpublished: every line `unavailable`, subtotal 0,
+  `has_problems` true, and the lines kept `perfume_slug` and `label`; published again, all `ok`.
+- [x] **Lead time.** With the made-to-order line, `lead_time_max_days` was 10; after removing it,
+  `null`.
+- [x] **Remove.** `DELETE` of the made-to-order line: 200 without it; deleting it again: 200,
+  unchanged.
+- [x] **Purge.** The cart's `updated_at` set 31 days back (2 lines): within one minute the
+  worker's `orders_purge_carts` deleted the cart and its lines (0 and 0 rows). A `GET` with the
+  old cookie then answered an empty cart.
+
+NOT VERIFIED live: the `Secure` cookie flag behind HTTPS in production; pool behaviour under
+concurrent load (covered only by the unit test of the call order).
