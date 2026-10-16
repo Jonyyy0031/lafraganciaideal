@@ -4,7 +4,7 @@ from uuid import UUID
 from fragancia_api.modules.orders.application.ports import CartTokens, CatalogOffers
 from fragancia_api.modules.orders.application.queries.cart import EMPTY_CART, to_contract
 from fragancia_api.modules.orders.contracts import CartView
-from fragancia_api.modules.orders.domain.cart import CART_LIFETIME, Cart, Offer, cart_view
+from fragancia_api.modules.orders.domain.cart import CART_LIFETIME, Cart, cart_view
 from fragancia_api.modules.orders.domain.errors import (
     CartPresentationUnavailable,
     CartStockUnavailable,
@@ -49,8 +49,26 @@ class SetCartLine:
     async def execute(
         self, token: str | None, presentation_id: UUID, quantity: int
     ) -> Result[CartOutcome, DomainError]:
-        async def work() -> Result[tuple[Cart, str, dict[UUID, Offer]], DomainError]:
-            now = self._clock.now()
+        now = self._clock.now()
+        # The offer is read BEFORE the transaction: the catalog adapter takes its own pooled
+        # connection, and doing that while the cart's row lock holds another one could starve
+        # the pool under load.
+        offer = (await self._offers.offers([presentation_id], now)).get(presentation_id)
+        if offer is None or not offer.is_visible:
+            return Err(CartPresentationUnavailable())
+        if (
+            offer.availability == "in_stock"
+            and offer.available_units is not None
+            and quantity > offer.available_units
+        ):
+            return Err(
+                CartStockUnavailable(
+                    message=f"Solo hay {max(offer.available_units, 0)} disponibles",
+                    details={"available": max(offer.available_units, 0)},
+                )
+            )
+
+        async def work() -> Result[tuple[Cart, str], DomainError]:
             existing = None
             if token is not None:
                 existing = await self._carts.get_by_token_for_update(self._tokens.digest(token))
@@ -60,24 +78,6 @@ class SetCartLine:
                 active_token = self._tokens.new()
                 cart = Cart.create(new_id(), self._tokens.digest(active_token), now)
                 is_new = True
-            ids = [line.presentation_id for line in cart.lines]
-            if presentation_id not in ids:
-                ids.append(presentation_id)
-            offers = await self._offers.offers(ids, now)
-            offer = offers.get(presentation_id)
-            if offer is None or not offer.is_visible:
-                return Err(CartPresentationUnavailable())
-            if (
-                offer.availability == "in_stock"
-                and offer.available_units is not None
-                and quantity > offer.available_units
-            ):
-                return Err(
-                    CartStockUnavailable(
-                        message=f"Solo hay {max(offer.available_units, 0)} disponibles",
-                        details={"available": max(offer.available_units, 0)},
-                    )
-                )
             match cart.set_line(presentation_id, quantity, offer.price_cents, now):
                 case Err(invalid):
                     return Err(invalid)
@@ -87,13 +87,17 @@ class SetCartLine:
                 await self._carts.add(cart)
             else:
                 await self._carts.save(cart)
-            return Ok((cart, active_token, offers))
+            return Ok((cart, active_token))
 
         match await self._transactions.run(work):
             case Err(error):
                 return Err(error)
-            case Ok((cart, active_token, offers)):
-                view = cart_view(cart, offers, self._clock.now())
+            case Ok((cart, active_token)):
+                view_now = self._clock.now()
+                offers = await self._offers.offers(
+                    [line.presentation_id for line in cart.lines], view_now
+                )
+                view = cart_view(cart, offers, view_now)
                 return Ok(CartOutcome(to_contract(view), active_token))
 
 
@@ -165,24 +169,43 @@ class AcknowledgeCartPrices:
         if token is None:
             return Ok(CartOutcome(EMPTY_CART, None))
 
-        async def work() -> Result[tuple[Cart, dict[UUID, Offer]] | None, DomainError]:
+        # Offers are read outside any transaction (see SetCartLine): first learn which
+        # presentations the cart holds, then fetch their prices, then lock and acknowledge.
+        async def ids_work() -> Result[list[UUID] | None, DomainError]:
             cart = await self._carts.get_by_token_for_update(self._tokens.digest(token))
             if cart is None:
                 return Ok(None)
-            now = self._clock.now()
-            offers = await self._offers.offers([line.presentation_id for line in cart.lines], now)
+            return Ok([line.presentation_id for line in cart.lines])
+
+        match await self._transactions.run(ids_work):
+            case Err(error):
+                return Err(error)
+            case Ok(found_ids):
+                if found_ids is None:
+                    return Ok(CartOutcome(EMPTY_CART, None))
+                ids = found_ids
+        now = self._clock.now()
+        offers = await self._offers.offers(ids, now)
+
+        async def work() -> Result[Cart | None, DomainError]:
+            cart = await self._carts.get_by_token_for_update(self._tokens.digest(token))
+            if cart is None:
+                return Ok(None)
             cart.acknowledge_prices({pid: offer.price_cents for pid, offer in offers.items()}, now)
             await self._carts.save(cart)
-            return Ok((cart, offers))
+            return Ok(cart)
 
         match await self._transactions.run(work):
             case Err(error):
                 return Err(error)
-            case Ok(found):
-                if found is None:
+            case Ok(cart):
+                if cart is None:
                     return Ok(CartOutcome(EMPTY_CART, None))
-                cart, offers = found
-                view = cart_view(cart, offers, self._clock.now())
+                view_now = self._clock.now()
+                view_offers = await self._offers.offers(
+                    [line.presentation_id for line in cart.lines], view_now
+                )
+                view = cart_view(cart, view_offers, view_now)
                 return Ok(CartOutcome(to_contract(view), token))
 
 

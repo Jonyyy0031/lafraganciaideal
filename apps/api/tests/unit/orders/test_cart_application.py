@@ -1,6 +1,7 @@
 """Cart use cases over the in-memory adapters: new cart and token, unknown token, refusals,
 price acknowledgement, the read query and the purge job."""
 
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -14,7 +15,7 @@ from fragancia_api.modules.orders.application.commands.cart import (
     SetCartLine,
 )
 from fragancia_api.modules.orders.application.queries.cart import EMPTY_CART, GetCart
-from fragancia_api.modules.orders.domain.cart import CART_LIFETIME, Cart, CartLine
+from fragancia_api.modules.orders.domain.cart import CART_LIFETIME, Cart, CartLine, Offer
 from fragancia_api.modules.orders.domain.errors import (
     CartPresentationUnavailable,
     CartQuantityInvalid,
@@ -532,3 +533,62 @@ async def test_the_purge_stops_at_its_batch_size_and_a_second_run_takes_the_rest
 
     assert (first, second) == (PURGE_BATCH, 3)
     assert world.carts.by_id == {}
+
+
+# --- no catalog read while the cart's row lock is held --------------------------------------------
+
+
+class LockWindowRunner(InMemoryTransactionRunner):
+    """Marks the span of each transaction, standing in for the pooled connection holding a lock."""
+
+    def __init__(self) -> None:
+        self.open = False
+
+    async def run[T, E](self, work: Callable[[], Awaitable[Result[T, E]]]) -> Result[T, E]:
+        self.open = True
+        try:
+            return await work()
+        finally:
+            self.open = False
+
+
+class WatchedOffers(InMemoryCatalogOffers):
+    """Records whether each catalog read happened inside a transaction."""
+
+    def __init__(self, runner: LockWindowRunner, *offers: Offer) -> None:
+        super().__init__(*offers)
+        self.runner = runner
+        self.reads_inside_a_transaction = 0
+
+    async def offers(self, ids: Sequence[UUID], now: datetime) -> dict[UUID, Offer]:
+        if self.runner.open:
+            self.reads_inside_a_transaction += 1
+        return await super().offers(ids, now)
+
+
+def watched_world(*offers: Offer) -> tuple[World, WatchedOffers]:
+    runner = LockWindowRunner()
+    watched = WatchedOffers(runner, *offers)
+    world = World(offers=watched)
+    world.transactions = runner
+    return world, watched
+
+
+async def test_setting_a_line_reads_the_catalog_outside_the_transaction() -> None:
+    world, watched = watched_world(make_offer(1), make_offer(2))
+    world.seed_cart("t", (2, 1, 250_000))
+
+    ok(await world.set_line().execute("t", presentation_id(1), 2))
+
+    assert watched.reads_inside_a_transaction == 0
+
+
+async def test_acknowledging_reads_the_catalog_outside_the_transaction() -> None:
+    world, watched = watched_world(make_offer(1, price_cents=280_000))
+    world.seed_cart("t", (1, 1, 250_000))
+
+    outcome = ok(await world.acknowledge().execute("t"))
+
+    assert watched.reads_inside_a_transaction == 0
+    assert [line.price_changed_from_cents for line in outcome.view.lines] == [None]
+    assert world.stored("t").lines[0].seen_price_cents == 280_000

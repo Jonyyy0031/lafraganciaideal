@@ -470,3 +470,15 @@ def test_the_cart_routes_are_public_not_admin(harness: Harness) -> None:
     paths = harness.build().openapi()["paths"]
 
     assert all("/admin/" not in path for path in paths if path.startswith(CART))
+
+
+def test_the_line_contract_describes_hidden_lines_as_keeping_their_catalog_fields(
+    harness: Harness,
+) -> None:
+    # `cart_view` keeps label, price and the rest for a hidden or archived presentation and
+    # leaves them null only when it no longer exists; the published text must say the same.
+    schemas = harness.build().openapi()["components"]["schemas"]
+    flat = " ".join(schemas["CartLineView"]["description"].split())
+
+    assert "hidden or archived, which keeps its catalog fields and price" in flat
+    assert "no longer exists, which leaves them `null`" in flat

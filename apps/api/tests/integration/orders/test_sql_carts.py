@@ -519,3 +519,50 @@ async def test_the_scheduled_orders_job_runs_the_purge_against_the_database(
 
     assert await job.run(container.services) == 1
     assert await count(container, "carts") == 0
+
+
+async def test_a_purge_waiting_on_a_cart_that_is_touched_meanwhile_keeps_it(
+    container: Container,
+) -> None:
+    # The purge picks the stale cart, then waits on the row a buyer's write holds; once that
+    # write commits, PostgreSQL re-checks the outer WHERE only, so it must repeat the age test.
+    digest = "r" * 64
+    cutoff = T0
+    await store(container, make_cart(digest, line(1), updated_at=cutoff - timedelta(days=1)))
+    repo = SqlCartRepository(container.database)
+    runner = SqlTransactionRunner(container.database)
+    holding = asyncio.Event()
+    release = asyncio.Event()
+
+    async def touch() -> Result[None, DomainError]:
+        cart = await repo.get_by_token_for_update(digest)
+        assert cart is not None
+        holding.set()
+        await asyncio.wait_for(release.wait(), TIMEOUT)
+        cart.set_line(new_id(), 1, 100, cutoff + timedelta(days=1))
+        await repo.save(cart)
+        return Ok(None)
+
+    async def purge() -> Result[int, DomainError]:
+        return Ok(await repo.delete_untouched_before(cutoff, 500))
+
+    touch_task = asyncio.create_task(runner.run(touch))
+    purge_task: asyncio.Task[Result[int, DomainError]] | None = None
+    try:
+        await asyncio.wait_for(holding.wait(), TIMEOUT)
+        purge_task = asyncio.create_task(runner.run(purge))
+        await asyncio.sleep(WAIT)
+        assert not purge_task.done(), "the purge did not wait for the row lock"
+        release.set()
+        assert isinstance(await asyncio.wait_for(touch_task, TIMEOUT), Ok)
+        purged = await asyncio.wait_for(purge_task, TIMEOUT)
+    finally:
+        release.set()
+        for task in (touch_task, purge_task):
+            if task is not None and not task.done():
+                task.cancel()
+
+    assert purged == Ok(0)
+    survivor = await SqlCartReader(container.database).by_token(digest)
+    assert survivor is not None
+    assert len(survivor.lines) == 2

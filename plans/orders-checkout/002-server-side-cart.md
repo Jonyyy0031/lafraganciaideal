@@ -1,5 +1,5 @@
 ---
-status: review
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["001"]
@@ -256,6 +256,16 @@ A guest builds a cart before checkout (plan 003). It applies README decisions 1,
        the new tables before and after each test.
    - Observable result: `uv run just check` and `uv run just test-integration` are green.
 
+6. **Repair round (review findings 1 to 3)**
+   - Files: `apps/api/src/fragancia_api/modules/orders/application/commands/cart.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/sql_cart_repository.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/contracts.py` (modify),
+     `apps/api/openapi.json` (modify),
+     `apps/api/tests/unit/orders/test_cart_application.py` (modify),
+     `apps/api/tests/unit/orders/test_cart_http.py` (modify),
+     `apps/api/tests/integration/orders/test_sql_carts.py` (modify)
+   - Do: see `## Repair log`.
+
 ## Acceptance criteria
 
 Run with the API on the development database, using the QA perfumes from the inventory plans.
@@ -455,5 +465,31 @@ Reviewed 2026-10-16, diff `main..HEAD` on `feat/orders-cart` (clean worktree).
      the behaviour, if nulls were intended), then run `uv run just openapi`.
 
 No out-of-scope findings were filed.
+
+## Repair log
+
+Repair round 2026-10-16, requested by the main session for the three review findings above.
+The plan was in `review` when dispatched (the main session had not moved it to `implementing`);
+I treated the explicit repair instruction as that transition. The review and any earlier
+verification above are superseded for the touched code and must be repeated.
+
+1. **Pool starvation (Medium), fixed.** `SetCartLine` now reads the one offer it validates
+   before the transaction, and reads the view's offers after the commit. `AcknowledgeCartPrices`
+   runs three steps: a short transaction that lists the cart's presentation ids, the catalog
+   read outside any transaction, then a transaction that locks and acknowledges. A line added in
+   between simply keeps its seen price. No catalog read now happens while the row lock is held.
+   Regression: `test_cart_application.py::test_setting_a_line_reads_the_catalog_outside_the_transaction`
+   and `::test_acknowledging_reads_the_catalog_outside_the_transaction`.
+2. **Purge deleting a just-written cart (Low), fixed.** The outer DELETE repeats
+   `updated_at < cutoff`. Regression: `test_sql_carts.py::test_a_purge_waiting_on_a_cart_that_is_touched_meanwhile_keeps_it`
+   (two connections). Confirmed it fails without the fix (temporarily removed, then restored) and
+   passes with it.
+3. **Contract text (Low), fixed.** `CartLineView` now says a hidden or archived presentation
+   keeps its catalog fields and price, and only a presentation that no longer exists leaves them
+   `null`; `openapi.json` regenerated with `uv run just openapi`. Regression:
+   `test_cart_http.py::test_the_line_contract_describes_hidden_lines_as_keeping_their_catalog_fields`.
+
+Commands: `uv run just check` green (2787 passed, 3 skipped; harness 685 passed);
+`uv run just test-integration` green (802 passed, 5 skipped).
 
 ## Verification

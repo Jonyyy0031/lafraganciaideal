@@ -68,8 +68,9 @@ class PublicDeliveryOptions(BaseModel):
 
 
 class CartLineView(BaseModel):
-    """A cart line as the buyer sees it now. `status` is `ok`, `unavailable` (unknown, archived
-    or hidden: the catalog fields are `null`), `sold_out` or `insufficient_stock`. Only `ok`
+    """A cart line as the buyer sees it now. `status` is `ok`, `unavailable` (the presentation is
+    hidden or archived, which keeps its catalog fields and price, or no longer exists, which
+    leaves them `null`), `sold_out` or `insufficient_stock`. Only `ok`
     lines count in the cart's totals. `price_changed_from_cents` is the price the buyer last
     acknowledged when it differs from `unit_price_cents`."""
 

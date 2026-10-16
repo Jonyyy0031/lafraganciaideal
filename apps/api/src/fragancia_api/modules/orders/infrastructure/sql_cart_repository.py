@@ -100,7 +100,11 @@ class SqlCartRepository:
             .scalar_subquery()
         )
         result = await self._database.session.execute(
-            delete(carts).where(carts.c.id.in_(stale)).returning(carts.c.id)
+            delete(carts)
+            # Repeated in the outer WHERE: after waiting on a row lock, PostgreSQL re-checks
+            # only this clause, so a cart touched meanwhile must fail it here.
+            .where(carts.c.id.in_(stale), carts.c.updated_at < cutoff)
+            .returning(carts.c.id)
         )
         return len(result.all())
 

@@ -6309,7 +6309,7 @@
           "price_changed_from_cents"
         ],
         "title": "CartLineView",
-        "description": "A cart line as the buyer sees it now. `status` is `ok`, `unavailable` (unknown, archived\nor hidden: the catalog fields are `null`), `sold_out` or `insufficient_stock`. Only `ok`\nlines count in the cart's totals. `price_changed_from_cents` is the price the buyer last\nacknowledged when it differs from `unit_price_cents`."
+        "description": "A cart line as the buyer sees it now. `status` is `ok`, `unavailable` (the presentation is\nhidden or archived, which keeps its catalog fields and price, or no longer exists, which\nleaves them `null`), `sold_out` or `insufficient_stock`. Only `ok`\nlines count in the cart's totals. `price_changed_from_cents` is the price the buyer last\nacknowledged when it differs from `unit_price_cents`."
       },
       "CartView": {
         "properties": {
