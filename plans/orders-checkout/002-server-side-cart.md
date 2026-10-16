@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: orders
 min_implementer: mid
 depends_on: ["001"]
@@ -313,6 +313,50 @@ Run with the API on the development database, using the QA perfumes from the inv
   the layered tests and the verification cover them.
 
 ## Test coverage
+
+Baseline (`uv run just check`, before any test): green (2649 passed, 3 skipped). Closing:
+`uv run just check` green (2784 passed, 3 skipped) and `uv run just test-integration` green
+(801 passed, 5 skipped; none of the skips are mine). Added: 135 unit tests (domain 43,
+application 36, http 31, wiring/adapters 14, catalog facade 11) and 50 integration tests
+(carts and use cases 25, migration 12, catalog SQL facade 13). No GAP and no NOT CONFIRMED:
+every plan behavior has code behind it. Files under `apps/api/tests/`: `unit/orders/`
+`test_cart_domain.py`, `test_cart_application.py`, `test_cart_http.py`, `test_cart_wiring.py`
+(+ builders in `support.py`), `unit/catalog/test_presentation_offers.py`,
+`integration/orders/` `test_sql_carts.py`, `test_migration_0018_orders_carts.py` (+ `conftest.py`
+truncates `orders.carts` and shares the scratch-database fixture),
+`integration/catalog/test_sql_presentation_offers.py`.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| Quantity 1..10 accepted, 0/-1/11/100 refused with `details {min 1, max 10}` | `domain/cart.py` `set_line` | domain | `test_cart_domain.py::test_set_line_accepts_a_quantity_from_1_to_10`, `::test_set_line_rejects_a_quantity_outside_1_to_10` | CONFIRMED |
+| 30 lines allowed, 31st new line refused, existing line still editable when full | `cart.py` `set_line` | domain | `test_set_line_allows_exactly_30_lines`, `test_set_line_refuses_a_new_line_past_30`, `test_a_full_cart_still_accepts_a_quantity_change_on_an_existing_line` | CONFIRMED |
+| Changing quantity acknowledges the price (decision 23); `added_at` kept | `cart.py` `set_line` | domain | `test_changing_a_quantity_acknowledges_the_current_price_and_keeps_the_added_at` | CONFIRMED |
+| `remove_line` drops it; absent line is a no-op (no `updated_at` stamp) | `cart.py` `remove_line` | domain | `test_remove_line_drops_the_line_and_stamps_the_change`, `test_remove_line_of_an_absent_presentation_changes_nothing` | CONFIRMED |
+| `acknowledge_prices` for lines present in the mapping only | `cart.py` `acknowledge_prices` | domain | `test_acknowledge_prices_*` | CONFIRMED |
+| Line status: unknown/invisible = unavailable, 0 = sold_out, < qty = insufficient_stock, = qty ok, made to order always ok | `cart.py` `_status` | domain | `test_an_in_stock_line_is_classified_by_available_units_against_its_quantity` (7 boundary cases) + 4 others | CONFIRMED |
+| Subtotal, item_count and lead time over ok lines only; `has_problems`; price_changed_from | `cart.py` `cart_view` | domain | `test_the_subtotal_and_item_count_add_up_only_the_ok_lines`, `test_the_lead_time_*`, `test_a_changed_price_*` | CONFIRMED |
+| New cart and token, only the digest stored; same token on later writes | `commands/cart.py` `SetCartLine` | application | `test_cart_application.py::test_the_first_line_creates_a_cart_and_a_token_stores_only_its_digest`, `::test_a_second_line_goes_in_the_callers_cart_and_returns_the_same_token` | CONFIRMED |
+| Unknown token gets a new cart | `SetCartLine` | application | `::test_an_unknown_token_gets_a_new_cart_and_a_fresh_token` | CONFIRMED |
+| Unknown/hidden presentation refused; stock refused with `details.available` (negative copy reads 0); exactly-available accepted; made to order up to 10 | `SetCartLine` | application | `::test_an_unknown_presentation_is_refused_*`, `::test_a_hidden_*`, `::test_more_units_than_available_*`, `::test_a_negative_stock_copy_*`, `::test_made_to_order_accepts_up_to_ten_*` | CONFIRMED |
+| Quantity and line-count refusals leave nothing stored | `SetCartLine` | application | `::test_a_quantity_of_eleven_*`, `::test_a_thirty_first_line_is_refused` | CONFIRMED |
+| Remove / acknowledge with no token or unknown token: empty view, no cookie token, no write | `RemoveCartLine`, `AcknowledgeCartPrices` | application | `::test_removing_*`, `::test_acknowledging_*` | CONFIRMED |
+| `GetCart` computes current view; empty without write for no/unknown token | `queries/cart.py` | application | `::test_getting_*` | CONFIRMED |
+| `PurgeCarts`: older than 30 days deleted, exact cutoff kept, batch of 500 | `commands/cart.py` `PurgeCarts` | application | `::test_the_purge_*`, `::test_a_cart_updated_exactly_at_the_cutoff_is_kept` | CONFIRMED |
+| `PresentationOffers`: sale window (start inclusive, end exclusive), visibility (unpublished, archived, inactive presentation, inactive brand), photo, units, made to order None, unknown ids absent | `presentation_offers.py`, `in_memory_perfumes.py` | application | `unit/catalog/test_presentation_offers.py` (11) | CONFIRMED |
+| Cookie `fragancia_cart`: httpOnly, `SameSite=Lax`, path `/api/v1`, max-age 30 days, Secure by setting; refreshed on write; none on empty GET / absent cart / refused PUT | `http/cart_cookie.py`, `http/router.py` | http | `test_cart_http.py::test_creating_a_cart_sets_the_cookie_with_its_attributes`, `::test_a_write_with_the_cookie_refreshes_it`, `::test_an_empty_get_*`, `::test_a_refused_put_sets_no_cookie_*` | CONFIRMED |
+| 200/409/422 per rule with error `code` and `details`; malformed body and bad uuid 422; no session needed | `router.py` | http | `test_cart_http.py::test_a_quantity_of_eleven_answers_422_*`, `::test_more_than_the_available_units_answers_409_*`, `::test_a_hidden_or_unknown_*`, `::test_a_malformed_body_*`, `::test_the_cart_routes_need_no_session` | CONFIRMED |
+| Price change, acknowledge, sold out / hidden, remove through HTTP; OpenAPI declares the operations | `router.py`, `contracts.py` | http | `::test_a_price_change_shows_*`, `::test_a_line_that_sells_out_*`, `::test_delete_removes_*`, `::test_the_openapi_document_declares_the_cart_operations` | CONFIRMED |
+| Container resolves the cart services; cookie Secure only in production; the job is scheduled (60/120) and runs the purge; token and digest (SHA-256); catalog adapter maps every field | `module.py`, `cart_tokens.py`, `catalog_offers.py` | application | `test_cart_wiring.py` (14) | CONFIRMED |
+| `SqlPresentationOffers`: sale window, visibility, first photo URL, stock copy, made to order None, unknown/empty ids | `sql_presentation_offers.py` | integration | `integration/catalog/test_sql_presentation_offers.py` (13) | CONFIRMED |
+| Cart repository and reader: round trip, line order, save replaces lines, rollback keeps nothing, row lock serializes writers | `sql_cart_repository.py` | integration | `integration/orders/test_sql_carts.py` | CONFIRMED |
+| Unique token digest, quantity check 0/-1/11 refused and 1/10 accepted, PK per cart+presentation, FK cascade | `tables.py`, migration 0018 | integration | `test_sql_carts.py::test_the_database_rejects_*`, `::test_deleting_a_cart_cascades_*` | CONFIRMED |
+| Purge: cutoff, oldest first up to limit, lines cascade; job runs it (31-day cart deleted, 29-day kept) | `delete_untouched_before`, `module.py` job | integration | `test_sql_carts.py::test_delete_untouched_before_*`, `::test_the_purge_job_*`, `::test_the_scheduled_orders_job_*` | CONFIRMED |
+| Full flow on real adapters and real catalog: add, over-stock refusal with `available`, made to order lead time, price change then acknowledge, sold out then back | `commands/cart.py` over SQL | integration | `test_sql_carts.py::test_the_whole_cart_flow_*`, `::test_a_price_change_shows_*`, `::test_a_line_that_sells_out_*` | CONFIRMED |
+| Migration 0018 round trip on a scratch database: absent before, columns/types/lengths, `updated_at` index, constraints, downgrade drops only the cart tables | `migrations/versions/0018_orders_carts.py` | integration | `test_migration_0018_orders_carts.py` (12) | CONFIRMED |
+
+Not exercised by tests: the SQL `Secure` cookie flag behind a real HTTPS proxy, and behavior on
+a multi-process race beyond the single-cart row lock (the lock test covers one cart). Neither is
+promised by the plan.
 
 ## Review findings
 
