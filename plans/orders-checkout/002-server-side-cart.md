@@ -360,4 +360,100 @@ promised by the plan.
 
 ## Review findings
 
+Reviewed 2026-10-16, diff `main..HEAD` on `feat/orders-cart` (clean worktree).
+
+**Checklist: 14/15 passed, 1 not applicable, 0 failed.**
+
+- [x] `plans-scope`: every change is inside the plan. Hot file `.importlinter`: append-only (the
+  two planned ignore lines at the end). `container.py` and `docs/modules.json` are untouched.
+- [x] `uv run just check` green (2784 passed, 3 skipped; harness 685 passed; OpenAPI drift test
+  green).
+- [x] `uv run just test-integration` green (801 passed, 5 skipped).
+- [x] Business rules are in `domain/cart.py` (bounds, line statuses, totals). The visibility
+  and stock refusals live in `SetCartLine`, as step 3 prescribes. Routers, mappers and adapters
+  hold no rules.
+- [x] CQRS-lite: the commands run in `transactions.run` and return `Result`. `GetCart` reads
+  through `CartReader` (`Database.reader()`) and returns the contract. The repository has no
+  screen-specific methods.
+- [x] Contracts live in `orders/contracts.py`; `openapi.json` matches the generator
+  (`test_committed_document_is_up_to_date`).
+- [x] Errors are `Err(DomainError)` with codes `ORDERS_CART_*`; the messages are in Spanish.
+- [x] Money is integer cents with no `float`. The cart domain uses raw `int` cents rather than
+  `Money`, as the plan's field names prescribe; the only arithmetic is a multiply and a sum.
+  Time comes from `Clock` and ids from `new_id()`.
+- [x] Migration 0018 is new. It has no drops, no cross-schema FK (`presentation_id` has no FK,
+  with a comment), the schema already exists, and the downgrade works (12 round-trip tests).
+- [x] Routes use `public_router(prefix="/cart")`; there is no bare `APIRouter` and no admin route.
+- [x] Wiring resolves (`test_container.py`, `test_cart_wiring.py`). Adapters are created only
+  in `module.py`. The catalog is registered before orders (`services.get(PresentationOffers)`
+  works).
+- [x] No secrets or personal data in code, tests or the plan.
+- [x] `## Deviations` is honest. Spot check: `Offer` really lives in `domain/cart.py:20-35`, and
+  `application/ports.py` imports it from there.
+- [x] Docs: `docs/architecture.md` rows updated. `apps/api/README.md`, the recipes and
+  `docs/modules.json` have nothing stale.
+- [ ] N/A: the PR body. No PR exists yet for `feat/orders-cart` (`gh pr list` is empty), so
+  check it when the PR opens.
+
+**Findings: 0 high, 1 medium, 2 low.** Each needs a code change, so the status stays `review`.
+
+### Medium
+
+1. **Pool starvation: a second connection is taken while a row lock is held.**
+   - Where: `apps/api/src/fragancia_api/modules/orders/application/commands/cart.py:56-66`
+     (`SetCartLine`) and `:169-173` (`AcknowledgeCartPrices`).
+   - What fails: inside `transactions.run`, the command first locks the cart
+     (`get_by_token_for_update`, on the unit-of-work connection). It then calls
+     `self._offers.offers(...)`. That reaches `SqlPresentationOffers.offers`, which opens
+     `Database.reader()`
+     (`modules/catalog/infrastructure/sql_presentation_offers.py:85`), a **second** pooled
+     connection, while the first one stays checked out with the lock held. The engine uses
+     SQLAlchemy's default pool (`shared/infrastructure/database.py:22`: 5 connections plus 10
+     overflow, 30 s timeout).
+   - Scenario: 15 buyers with existing carts each press "+" on the same page during a promotion.
+     Every request holds one connection and waits for a second. The pool is empty, so all of them
+     (and every other API request) block for 30 s and then fail with `TimeoutError` / 500.
+   - Precedent: inventory's in-transaction path avoids this with `find_for_update` on the active
+     session (`sql_presentation_directory.py:65-72`).
+   - Fix options, for the implementer to choose:
+     - read the offers before opening the transaction. `RemoveCartLine` already computes its
+       view after the commit;
+     - or make the catalog adapter join the active session when there is one.
+   - Confidence: high on the mechanism. Not reproduced under load.
+
+### Low
+
+2. **The purge can delete a cart that was just written.**
+   - Where: `apps/api/src/fragancia_api/modules/orders/infrastructure/sql_cart_repository.py:95-104`.
+   - What fails: `DELETE FROM carts WHERE id IN (SELECT id … WHERE updated_at < cutoff … LIMIT
+     500)` puts the age condition only in the subquery. Under READ COMMITTED, when the DELETE
+     waits on a row that a concurrent `SetCartLine` holds `FOR UPDATE`, PostgreSQL's re-check
+     after that commit re-evaluates the outer WHERE only (`id IN (<ids already computed>)`). It
+     does not re-check the new `updated_at`, so the cart that was just touched is deleted anyway.
+   - Scenario: a buyer comes back on day 30 and adds a line while the minute's purge runs. The
+     PUT answers 200 with the line and refreshes the cookie, and the next `GET` shows an empty
+     cart.
+   - Fix: repeat `carts.c.updated_at < cutoff` in the outer DELETE's WHERE, or use
+     `FOR UPDATE SKIP LOCKED` in the subquery.
+   - Confidence: medium. This is PostgreSQL EvalPlanQual behaviour for a target row joined to an
+     already-evaluated subquery. It is not reproduced; a two-connection integration test would
+     confirm it.
+
+3. **The contract text says the opposite of what the code does for hidden lines.**
+   - Where: `apps/api/src/fragancia_api/modules/orders/contracts.py:70-74` (and its copy in
+     `apps/api/openapi.json`, the `CartLineView` description).
+   - What fails: the text says that for `unavailable` lines ("unknown, archived or hidden") "the
+     catalog fields are `null`". But `cart_view` (`domain/cart.py`) fills label, slug, photo,
+     price and line total for any line whose offer exists but is not visible. Only lines with no
+     offer get nulls. `test_cart_domain.py:246`
+     (`test_an_invisible_offer_is_unavailable_but_keeps_its_facts_and_price`) asserts the code's
+     behaviour.
+   - Scenario: the phase-3 web client trusts the published contract. It renders an archived
+     perfume's line as "producto desconocido" with no name, or it skips the null checks only for
+     unknown lines and shows a price where it expected none.
+   - Fix: correct the docstring to "null only when the presentation no longer exists" (or change
+     the behaviour, if nulls were intended), then run `uv run just openapi`.
+
+No out-of-scope findings were filed.
+
 ## Verification
