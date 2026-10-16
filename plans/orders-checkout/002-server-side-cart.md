@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: orders
 min_implementer: mid
 depends_on: ["001"]
@@ -463,6 +463,126 @@ Reviewed 2026-10-16, diff `main..HEAD` on `feat/orders-cart` (clean worktree).
      unknown lines and shows a price where it expected none.
    - Fix: correct the docstring to "null only when the presentation no longer exists" (or change
      the behaviour, if nulls were intended), then run `uv run just openapi`.
+
+No out-of-scope findings were filed.
+
+### Re-review after the repair round (2026-10-16)
+
+The first review above is superseded for `application/commands/cart.py`,
+`infrastructure/sql_cart_repository.py` and `contracts.py`. This round covers the repair commit
+`d2527b6` on `feat/orders-cart` (clean worktree). It also re-runs the whole checklist.
+
+**Checklist: 14/15 passed, 1 not applicable, 0 failed.**
+
+- [x] `plans-scope`: every change is inside the plan. `.importlinter` is still append-only (the
+  repair did not touch it).
+- [x] `uv run just check` green (2787 passed, 3 skipped; harness 685 passed).
+- [x] `uv run just test-integration` green (802 passed, 5 skipped).
+- [x] Rules stay in `domain/cart.py`. The visibility and stock refusals moved out of
+  `work()` but stay in `SetCartLine`, as step 3 prescribes.
+- [x] CQRS-lite holds: the writes run in `transactions.run` and return `Result`.
+- [x] Contracts: `openapi.json` was regenerated (drift test green). The new text matches
+  `cart_view`.
+- [x] Error codes are unchanged, and so is the refusal order (unavailable, then stock, then
+  quantity or line count).
+- [x] Money, time and ids: no change.
+- [x] Migrations: none in the repair.
+- [x] Routes: no change.
+- [x] Wiring: no change; `test_container.py` is green.
+- [x] No secrets.
+- [x] Deviations and the repair log are honest. Spot check: no `self._offers.offers` call is
+  left inside a `work()` closure (`commands/cart.py:56`, `:97`, `:188`, `:205`).
+- [x] Docs: nothing stale. The architecture rows do not describe the transaction boundary.
+- [ ] N/A: the PR body. There is still no PR for `feat/orders-cart`.
+
+**The three earlier findings are fixed:**
+
+1. **Pool starvation (Medium): fixed.** `SetCartLine` and `AcknowledgeCartPrices` no longer read
+   the catalog while the unit-of-work connection is checked out. `GetCart` and `RemoveCartLine`
+   were already sequential, and `SqlPresentationOffers` releases its reader before returning.
+   The regression tests are `test_cart_application.py:577` and `:586`. They count catalog reads
+   made while the runner's window is open. The pre-repair code called `offers()` inside
+   `work()`, so both would fail on it (checked by reading the old code, not by re-running it).
+2. **Purge (Low): fixed.** The outer `DELETE … WHERE` now repeats `updated_at < cutoff`. The
+   regression test is `test_sql_carts.py:524`. It uses two connections and asserts
+   `purged == Ok(0)` with the cart kept with two lines. Without the fix, the EvalPlanQual
+   re-check would delete the cart, so the test would fail. The implementer reports running it
+   red without the fix; I did not re-run that.
+3. **Contract text (Low): fixed.** `contracts.py:71-75` and `openapi.json` agree with
+   `cart_view`. The regression test is `test_cart_http.py`
+   (`test_the_line_contract_describes_hidden_lines_as_keeping_their_catalog_fields`), which
+   asserts phrases the old text did not contain.
+
+**Checking the repair for new defects** (stale offers, races, lock order):
+
+- `SetCartLine`: the offer is read before the lock. A price change in that window stores the
+  old seen price, and the after-commit view then flags `price_changed_from`. That is visible
+  and safe. The window already existed, because catalog rows are never locked. Stock is still
+  not reserved, as planned.
+- `AcknowledgeCartPrices`:
+  - A line added between step 1 and step 3 is left alone (`acknowledge_prices` uses
+    `.get(pid, seen)`).
+  - A line removed in between is ignored.
+  - A cart purged in between returns the empty cart with no cookie.
+  - The step-2 offers can be older than a concurrent `SetCartLine`'s price. In that case the
+    acknowledgement writes the older price back, and the view flags the change again. That is
+    a benign extra flag; a change is never hidden.
+- Lock order: each command locks at most one cart row and never two at once (step 1's lock is
+  released at its commit). No new deadlock path.
+
+**New findings: 0 high, 0 medium, 1 low, 2 info.** The low finding is test-only, so it goes to
+the tester, not the implementer. The status goes to `review` and stays there until it is
+closed.
+
+#### Low
+
+1. **The testing phase for the repaired code is incomplete.**
+   - Where: `## Test coverage` in this plan, and `test_cart_application.py`.
+   - What fails, part 1: `## Test coverage` was not updated for the repair.
+     - It still cites 2784/801 passing.
+     - It has no rows for the four regression tests.
+     - Its "Not exercised" note still says no multi-connection race is covered, which is no
+       longer true.
+     - It does not mark the old evidence as superseded for the touched code.
+
+     The workflow requires `## Test coverage` to be filled before `review`. The plan reached
+     this review in `testing`.
+   - What fails, part 2: a behaviour the repair log asserts has no test. "A line added in
+     between simply keeps its seen price" is the new step-1/step-3 interleaving of
+     `AcknowledgeCartPrices`. A line removed or a cart purged in that window is not tested
+     either.
+   - Scenario: a later change gives `acknowledge_prices` an explicit-mapping overwrite. A line
+     added in the window would then get a price nobody read for it, and no test would catch it.
+     The in-memory fakes make this easy to test, for example with a `WatchedOffers` that
+     mutates the stored cart during `offers()`.
+   - To close it, the tester should:
+     - add those cases;
+     - update `## Test coverage`, keeping the dated baseline and marking it superseded for the
+       touched code;
+     - move the plan on.
+
+#### Info (no action required)
+
+2. **The purge regression test can pass without the fix on a slow host.**
+   - Where: `test_sql_carts.py:554`.
+   - It sleeps `WAIT` (0.5 s) and then checks only that the purge is not done. It does not
+     check that the purge is waiting on the row lock. If the purge's `DELETE` has not started
+     before `release`, it runs after the touch commits, and it passes with or without the
+     outer clause. It can give a false pass but never a false failure. The pattern is the same
+     as the existing lock test at `:360`.
+   - Optional hardening: poll `pg_stat_activity.wait_event_type = 'Lock'` before releasing.
+3. **A failure after commit is now a 500 after a stored write.**
+   - Where: `commands/cart.py:96-101` and `:204-208`.
+   - If the view's catalog read raises after the commit, the write is kept but the response is
+     a 500. For a new cart, the cookie is never sent, so the cart is orphaned until the 30-day
+     purge. A retry is harmless because setting a quantity is idempotent, and `RemoveCartLine`
+     already worked this way.
+   - Uncertain whether it matters: a database read failing right after a commit on the same
+     database is improbable.
+
+Also noted, with no action: step 1 of `AcknowledgeCartPrices` (`commands/cart.py:174-178`)
+takes a `FOR UPDATE` lock only to list ids. `CartReader.by_token` would do without the lock.
+The lock is harmless because it is released at its own commit.
 
 No out-of-scope findings were filed.
 
