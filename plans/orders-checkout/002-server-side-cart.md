@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["001"]
@@ -299,6 +299,18 @@ Run with the API on the development database, using the QA perfumes from the inv
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+- **Step 3, `Offer` placement (cosmetic).** The plan puts orders' frozen `Offer` in
+  `application/ports.py`. `cart_view` is a domain function that takes offers, and the domain
+  cannot import the application layer, so `Offer` lives in `domain/cart.py` and the ports
+  import it from there.
+- **Step 3, outcome type (cosmetic).** The commands return `Result[CartOutcome, DomainError]`,
+  where `CartOutcome(view, token)` carries the `CartView` contract and the token of the cart
+  that exists (new or the caller's), `None` when there is no cart. The router sets the cookie
+  whenever `token` is set, which gives the "refreshed on every write" behaviour.
+- **Not exercised against the database.** The SQL adapters (`SqlPresentationOffers`,
+  `SqlCartRepository`, `SqlCartReader`) ran only through the migration and the existing suites;
+  the layered tests and the verification cover them.
 
 ## Test coverage
 

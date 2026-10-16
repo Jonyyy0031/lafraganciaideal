@@ -1,5 +1,7 @@
+from datetime import datetime
 from typing import Protocol
 
+from fragancia_api.modules.orders.domain.cart import Cart
 from fragancia_api.modules.orders.domain.delivery import DeliverySettings
 
 
@@ -17,3 +19,22 @@ class DeliverySettingsRepository(Protocol):
         ...
 
     async def save(self, settings: DeliverySettings) -> None: ...
+
+
+class CartRepository(Protocol):
+    """Write side of carts. Joins the active transaction."""
+
+    async def get_by_token_for_update(self, token_digest: str) -> Cart | None:
+        """The cart with that token digest, its row locked `FOR UPDATE`; None when unknown."""
+        ...
+
+    async def add(self, cart: Cart) -> None: ...
+
+    async def save(self, cart: Cart) -> None:
+        """Persist the cart's header and replace its lines."""
+        ...
+
+    async def delete_untouched_before(self, cutoff: datetime, limit: int) -> int:
+        """Delete up to `limit` carts with `updated_at < cutoff` (their lines go with them);
+        returns how many."""
+        ...

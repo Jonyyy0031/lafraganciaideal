@@ -1,6 +1,7 @@
 """HTTP contracts of orders (source of truth for OpenAPI and the generated web client)."""
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -64,6 +65,45 @@ class PublicDeliveryOptions(BaseModel):
     home: PublicHomeDelivery | None
     local: PublicLocalDelivery | None
     pickup: PublicPickup | None
+
+
+class CartLineView(BaseModel):
+    """A cart line as the buyer sees it now. `status` is `ok`, `unavailable` (unknown, archived
+    or hidden: the catalog fields are `null`), `sold_out` or `insufficient_stock`. Only `ok`
+    lines count in the cart's totals. `price_changed_from_cents` is the price the buyer last
+    acknowledged when it differs from `unit_price_cents`."""
+
+    presentation_id: UUID
+    quantity: int
+    status: Literal["ok", "unavailable", "sold_out", "insufficient_stock"]
+    label: str | None
+    perfume_slug: str | None
+    card_url: str | None
+    ml: int | None
+    availability: Literal["in_stock", "made_to_order"] | None
+    lead_time_min_days: int | None
+    lead_time_max_days: int | None
+    available_units: int | None
+    unit_price_cents: int | None
+    line_total_cents: int | None
+    price_changed_from_cents: int | None
+
+
+class CartView(BaseModel):
+    """The cart with current prices and availability. It never reserves stock.
+    `lead_time_max_days` is the longest lead time over the `ok` made-to-order lines."""
+
+    lines: list[CartLineView]
+    subtotal_cents: int
+    item_count: int
+    has_problems: bool
+    lead_time_max_days: int | None
+
+
+class SetCartLineRequest(BaseModel):
+    """The quantity bounds (1 to 10) are a domain rule; the payload is only kept sane."""
+
+    quantity: int = Field(ge=-_CENTS_BOUND, le=_CENTS_BOUND, examples=[2])
 
 
 class DeliveryQuoteLine(BaseModel):
