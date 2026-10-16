@@ -5,6 +5,7 @@ import pytest
 from fragancia_api.modules.identity.domain.errors import EmailInvalid, NameInvalid, PasswordTooWeak
 from fragancia_api.modules.identity.domain.user import (
     CATALOG_MANAGE,
+    DELIVERY_MANAGE,
     INVENTORY_MANAGE,
     OUTBOX_MANAGE,
     ROLE_PERMISSIONS,
@@ -102,6 +103,7 @@ def test_the_owner_has_every_permission_and_staff_only_catalog_and_inventory() -
         INVENTORY_MANAGE,
         USERS_MANAGE,
         OUTBOX_MANAGE,
+        DELIVERY_MANAGE,
     }
     assert ROLE_PERMISSIONS[Role.STAFF] == {CATALOG_MANAGE, INVENTORY_MANAGE}
     assert (CATALOG_MANAGE, INVENTORY_MANAGE, USERS_MANAGE) == (
@@ -133,6 +135,7 @@ def test_a_user_gets_the_permissions_of_the_role() -> None:
         INVENTORY_MANAGE,
         USERS_MANAGE,
         OUTBOX_MANAGE,
+        DELIVERY_MANAGE,
     }
     assert _user(Role.STAFF).permissions == {CATALOG_MANAGE, INVENTORY_MANAGE}
 

@@ -143,5 +143,5 @@ async def test_an_owner_session_resolves_with_the_users_manage_permission(
 
     assert actor is not None
     assert actor.permissions == frozenset(
-        {"catalog:manage", "inventory:manage", "outbox:manage", "users:manage"}
+        {"catalog:manage", "delivery:manage", "inventory:manage", "outbox:manage", "users:manage"}
     )

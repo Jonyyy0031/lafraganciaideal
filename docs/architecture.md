@@ -61,7 +61,7 @@ Modules (✔ = built; `catalog` is the **reference module** — see [recipes/new
 | --------------- | ------------------------------------------------------------------------------------- |
 | `catalog`       | ✔ Brands, olfactory families, concentrations, perfumes and presentations (back office), public catalog (filters, search, sort, detail by slug), perfume photos (S3, WebP), Excel import (template, validation in the worker, confirm) |
 | `inventory`     | ✔ Back-office stock ledger: units per in-stock presentation, append-only movements (restock, adjustment, loss, return, count), low-stock thresholds and list, stock reservations (reserve, extend, commit, release, expiry job) for checkout and payment. Emails the owners when a presentation drops to its low-stock threshold |
-| `orders`        | Cart → order; the `Order` aggregate and its state machine                             |
+| `orders`        | ✔ Delivery options (home, local, pickup; quote). Next: cart → order; the `Order` aggregate and its state machine |
 | `payments`      | `PaymentGateway` port → Mercado Pago adapter (Checkout Pro); idempotent webhooks      |
 | `identity`      | ✔ Back-office users (owner, staff), opaque sessions in a cookie, login throttle, invitations, password reset by email, deactivation, `OwnerDirectory` facade (active owners, for other modules) |
 | `notifications` | Order emails first; WhatsApp (Cloud API) later; driven by events                      |
