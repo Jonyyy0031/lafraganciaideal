@@ -1,12 +1,13 @@
 """Read-side ports of the orders module (queries run outside any transaction)."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
 from fragancia_api.modules.orders.domain.cart import Cart, Offer
 from fragancia_api.modules.orders.domain.delivery import DeliverySettings
+from fragancia_api.shared.kernel import DomainError, Result
 
 
 class DeliverySettingsReader(Protocol):
@@ -33,6 +34,25 @@ class CartTokens(Protocol):
     def new(self) -> str: ...
 
     def digest(self, token: str) -> str: ...
+
+
+class OrderAccessTokens(Protocol):
+    """The order's private-link token: random, with only its digest stored."""
+
+    def new(self) -> str: ...
+
+    def digest(self, token: str) -> str: ...
+
+
+class StockHolds(Protocol):
+    """Reserve units for an order, implemented over inventory's `StockReservations`. Joins the
+    caller's transaction; all or nothing."""
+
+    async def hold(
+        self, reference: str, quantities: Mapping[UUID, int], expires_at: datetime
+    ) -> Result[UUID, DomainError]:
+        """The reservation id; a shortage comes back as `CheckoutStockUnavailable`."""
+        ...
 
 
 class CartReader(Protocol):

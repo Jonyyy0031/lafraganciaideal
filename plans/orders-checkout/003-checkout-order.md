@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["002"]
@@ -432,6 +432,8 @@ free from 250000; local 9000 for 77500; pickup on), and the QA perfume from plan
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+None. (Notes: `CustomerDataInvalid` fields for `PostalCode` failures are re-wrapped in `customer.py`; `Subtotal` errors pass through as `ORDERS_DELIVERY_OPTIONS_INVALID`, documented in the route. The migration downgrade was not run on a scratch database by the implementer; it belongs to the integration tests.)
 
 ## Test coverage
 

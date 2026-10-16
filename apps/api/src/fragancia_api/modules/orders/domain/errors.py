@@ -45,3 +45,55 @@ class CartStockUnavailable(ConflictError):
 
     code: str = "ORDERS_CART_STOCK_UNAVAILABLE"
     message: str = "No hay suficientes unidades disponibles"
+
+
+@dataclass(frozen=True)
+class CustomerDataInvalid(InvalidValueError):
+    """`details`: `{"field": "<path>"}`, e.g. `contact.phone` or `address.state`."""
+
+    code: str = "ORDERS_CUSTOMER_DATA_INVALID"
+    message: str = "Revisa los datos del pedido"
+
+
+@dataclass(frozen=True)
+class CheckoutCartEmpty(ConflictError):
+    code: str = "ORDERS_CHECKOUT_CART_EMPTY"
+    message: str = "Tu carrito está vacío"
+
+
+@dataclass(frozen=True)
+class CheckoutCartHasProblems(ConflictError):
+    """`details`: `{"lines": [{"presentation_id", "status"}]}` for every line that is not ok."""
+
+    code: str = "ORDERS_CHECKOUT_CART_HAS_PROBLEMS"
+    message: str = "Revisa tu carrito: hay productos agotados o no disponibles"
+
+
+@dataclass(frozen=True)
+class CheckoutCartChanged(ConflictError):
+    code: str = "ORDERS_CHECKOUT_CART_CHANGED"
+    message: str = "Tu carrito cambió; revísalo e intenta de nuevo"
+
+
+@dataclass(frozen=True)
+class CheckoutDeliveryUnavailable(ConflictError):
+    """`details`: `{"method"}`."""
+
+    code: str = "ORDERS_CHECKOUT_DELIVERY_UNAVAILABLE"
+    message: str = "Ese método de entrega no está disponible para tu pedido"
+
+
+@dataclass(frozen=True)
+class CheckoutTotalChanged(ConflictError):
+    """`details`: `{"subtotal_cents", "delivery_cents", "total_cents"}` (decision 26)."""
+
+    code: str = "ORDERS_CHECKOUT_TOTAL_CHANGED"
+    message: str = "El total de tu pedido cambió"
+
+
+@dataclass(frozen=True)
+class CheckoutStockUnavailable(ConflictError):
+    """`details`: inventory's `{"lines": [{"presentation_id", "requested", "available"}]}`."""
+
+    code: str = "ORDERS_CHECKOUT_STOCK_UNAVAILABLE"
+    message: str = "Ya no hay suficientes unidades de algunos productos"

@@ -3,6 +3,7 @@ from typing import Protocol
 
 from fragancia_api.modules.orders.domain.cart import Cart
 from fragancia_api.modules.orders.domain.delivery import DeliverySettings
+from fragancia_api.modules.orders.domain.order import Order
 
 
 class DeliverySettingsRepository(Protocol):
@@ -21,6 +22,18 @@ class DeliverySettingsRepository(Protocol):
     async def save(self, settings: DeliverySettings) -> None: ...
 
 
+class OrderRepository(Protocol):
+    """Write side of orders. Joins the active transaction."""
+
+    async def next_number(self) -> int:
+        """Take the next gapless order number; it rolls back with the transaction."""
+        ...
+
+    async def add(self, order: Order) -> None:
+        """Insert the order and its lines."""
+        ...
+
+
 class CartRepository(Protocol):
     """Write side of carts. Joins the active transaction."""
 
@@ -32,6 +45,10 @@ class CartRepository(Protocol):
 
     async def save(self, cart: Cart) -> None:
         """Persist the cart's header and replace its lines."""
+        ...
+
+    async def delete(self, cart: Cart) -> None:
+        """Delete the cart (its lines go with it)."""
         ...
 
     async def delete_untouched_before(self, cutoff: datetime, limit: int) -> int:

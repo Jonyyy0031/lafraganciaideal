@@ -1,5 +1,6 @@
 """HTTP contracts of orders (source of truth for OpenAPI and the generated web client)."""
 
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -105,6 +106,64 @@ class SetCartLineRequest(BaseModel):
     """The quantity bounds (1 to 10) are a domain rule; the payload is only kept sane."""
 
     quantity: int = Field(ge=-_CENTS_BOUND, le=_CENTS_BOUND, examples=[2])
+
+
+class CheckoutContact(BaseModel):
+    """Who is buying (decisions 1 and 29). The phone is 10 digits once spaces, dashes and a
+    leading +52 are ignored."""
+
+    name: str = Field(max_length=500, examples=["Ana López"])
+    email: str = Field(max_length=500, examples=["ana@example.com"])
+    phone: str = Field(max_length=500, examples=["+52 998 123 4567"])
+
+
+class CheckoutAddress(BaseModel):
+    """A Mexican address (decision 28). `state` is the ISO 3166-2:MX code, e.g. `CMX`."""
+
+    street: str = Field(max_length=500)
+    exterior_number: str = Field(max_length=500)
+    interior_number: str | None = Field(default=None, max_length=500)
+    neighborhood: str = Field(max_length=500)
+    postal_code: str = Field(max_length=500, examples=["01000"])
+    municipality: str = Field(max_length=500)
+    state: str = Field(max_length=500, examples=["CMX"])
+    references: str | None = Field(default=None, max_length=1000)
+
+
+class CheckoutInvoice(BaseModel):
+    """Invoice (CFDI) data, checked against the SAT catalogs (decision 27)."""
+
+    rfc: str = Field(max_length=500, examples=["XAXX010101000"])
+    business_name: str = Field(max_length=500)
+    tax_regime: str = Field(max_length=500, examples=["601"])
+    cfdi_use: str = Field(max_length=500, examples=["G03"])
+    postal_code: str = Field(max_length=500, examples=["01000"])
+
+
+class CheckoutRequest(BaseModel):
+    """`address` is required for `home` and `local`, and must be absent for `pickup`.
+    `expected_total_cents` is the total the customer saw; a different real total refuses the
+    checkout (decision 26)."""
+
+    contact: CheckoutContact
+    delivery_method: Literal["home", "local", "pickup"]
+    address: CheckoutAddress | None = None
+    invoice: CheckoutInvoice | None = None
+    expected_total_cents: int = Field(ge=-_CENTS_BOUND, le=_CENTS_BOUND)
+
+
+class PlacedOrder(BaseModel):
+    """The new order. `access_token` is the private-link token (decision 13), shown only here.
+    The order waits for payment until `payment_due_at` (decisions 18 and 24)."""
+
+    number: str = Field(examples=["LFI-1001"])
+    access_token: str
+    status: Literal["pending_payment"]
+    subtotal_cents: int
+    delivery_cents: int
+    total_cents: int
+    payment_due_at: datetime
+    lead_time_max_days: int | None
 
 
 class DeliveryQuoteLine(BaseModel):

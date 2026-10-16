@@ -5333,6 +5333,76 @@
           }
         }
       }
+    },
+    "/api/v1/checkout": {
+      "post": {
+        "tags": [
+          "orders · checkout"
+        ],
+        "summary": "Place Order",
+        "description": "Turn the cart behind the `fragancia_cart` cookie into an order. The units in stock are\nreserved for 30 minutes (made-to-order lines reserve nothing, decision 18), the order gets\nthe next gapless number `LFI-n` (decision 30) and the cart is emptied and its cookie cleared\n(decision 25). The order waits for payment; if it is not paid in time it is cancelled\n(decision 24). `expected_total_cents` must equal the real total, or nothing is created\n(decision 26). 409: `ORDERS_CHECKOUT_CART_EMPTY`, `ORDERS_CHECKOUT_CART_HAS_PROBLEMS`\n(`details.lines`), `ORDERS_CHECKOUT_CART_CHANGED`, `ORDERS_CHECKOUT_DELIVERY_UNAVAILABLE`\n(`details.method`), `ORDERS_CHECKOUT_TOTAL_CHANGED` (the real figures in `details`) or\n`ORDERS_CHECKOUT_STOCK_UNAVAILABLE` (`details.lines`). 422 `ORDERS_CUSTOMER_DATA_INVALID`\nwith `details.field` naming the broken field, or `ORDERS_DELIVERY_OPTIONS_INVALID`.",
+        "operationId": "place_order",
+        "parameters": [
+          {
+            "name": "fragancia_cart",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fragancia Cart"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlacedOrder"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid input or a broken business rule"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6581,6 +6651,218 @@
         ],
         "title": "ChangePasswordRequest"
       },
+      "CheckoutAddress": {
+        "properties": {
+          "street": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Street"
+          },
+          "exterior_number": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Exterior Number"
+          },
+          "interior_number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interior Number"
+          },
+          "neighborhood": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Neighborhood"
+          },
+          "postal_code": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Postal Code",
+            "examples": [
+              "01000"
+            ]
+          },
+          "municipality": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Municipality"
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "State",
+            "examples": [
+              "CMX"
+            ]
+          },
+          "references": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "References"
+          }
+        },
+        "type": "object",
+        "required": [
+          "street",
+          "exterior_number",
+          "neighborhood",
+          "postal_code",
+          "municipality",
+          "state"
+        ],
+        "title": "CheckoutAddress",
+        "description": "A Mexican address (decision 28). `state` is the ISO 3166-2:MX code, e.g. `CMX`."
+      },
+      "CheckoutContact": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Name",
+            "examples": [
+              "Ana López"
+            ]
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Email",
+            "examples": [
+              "ana@example.com"
+            ]
+          },
+          "phone": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Phone",
+            "examples": [
+              "+52 998 123 4567"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "email",
+          "phone"
+        ],
+        "title": "CheckoutContact",
+        "description": "Who is buying (decisions 1 and 29). The phone is 10 digits once spaces, dashes and a\nleading +52 are ignored."
+      },
+      "CheckoutInvoice": {
+        "properties": {
+          "rfc": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Rfc",
+            "examples": [
+              "XAXX010101000"
+            ]
+          },
+          "business_name": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Business Name"
+          },
+          "tax_regime": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Tax Regime",
+            "examples": [
+              "601"
+            ]
+          },
+          "cfdi_use": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Cfdi Use",
+            "examples": [
+              "G03"
+            ]
+          },
+          "postal_code": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Postal Code",
+            "examples": [
+              "01000"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "rfc",
+          "business_name",
+          "tax_regime",
+          "cfdi_use",
+          "postal_code"
+        ],
+        "title": "CheckoutInvoice",
+        "description": "Invoice (CFDI) data, checked against the SAT catalogs (decision 27)."
+      },
+      "CheckoutRequest": {
+        "properties": {
+          "contact": {
+            "$ref": "#/components/schemas/CheckoutContact"
+          },
+          "delivery_method": {
+            "type": "string",
+            "enum": [
+              "home",
+              "local",
+              "pickup"
+            ],
+            "title": "Delivery Method"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckoutAddress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invoice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckoutInvoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_total_cents": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "title": "Expected Total Cents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "contact",
+          "delivery_method",
+          "expected_total_cents"
+        ],
+        "title": "CheckoutRequest",
+        "description": "`address` is required for `home` and `local`, and must be absent for `pickup`.\n`expected_total_cents` is the total the customer saw; a different real total refuses the\ncheckout (decision 26)."
+      },
       "CreateBrandRequest": {
         "properties": {
           "name": {
@@ -7274,6 +7556,67 @@
         ],
         "title": "PickupOptions",
         "description": "Pickup at one point. Always free."
+      },
+      "PlacedOrder": {
+        "properties": {
+          "number": {
+            "type": "string",
+            "title": "Number",
+            "examples": [
+              "LFI-1001"
+            ]
+          },
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "status": {
+            "type": "string",
+            "const": "pending_payment",
+            "title": "Status"
+          },
+          "subtotal_cents": {
+            "type": "integer",
+            "title": "Subtotal Cents"
+          },
+          "delivery_cents": {
+            "type": "integer",
+            "title": "Delivery Cents"
+          },
+          "total_cents": {
+            "type": "integer",
+            "title": "Total Cents"
+          },
+          "payment_due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Payment Due At"
+          },
+          "lead_time_max_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Max Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "number",
+          "access_token",
+          "status",
+          "subtotal_cents",
+          "delivery_cents",
+          "total_cents",
+          "payment_due_at",
+          "lead_time_max_days"
+        ],
+        "title": "PlacedOrder",
+        "description": "The new order. `access_token` is the private-link token (decision 13), shown only here.\nThe order waits for payment until `payment_due_at` (decisions 18 and 24)."
       },
       "PresentationRequest": {
         "properties": {

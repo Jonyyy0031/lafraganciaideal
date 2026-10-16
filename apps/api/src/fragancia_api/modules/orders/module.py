@@ -1,12 +1,14 @@
 """Wiring of the orders module for the composition root."""
 
 from fragancia_api.modules.catalog import PresentationOffers
+from fragancia_api.modules.inventory import StockReservations
 from fragancia_api.modules.orders.application.commands.cart import (
     AcknowledgeCartPrices,
     PurgeCarts,
     RemoveCartLine,
     SetCartLine,
 )
+from fragancia_api.modules.orders.application.commands.checkout import PlaceOrder
 from fragancia_api.modules.orders.application.commands.delivery import UpdateDeliveryOptions
 from fragancia_api.modules.orders.application.queries.cart import GetCart
 from fragancia_api.modules.orders.application.queries.delivery import (
@@ -27,6 +29,8 @@ from fragancia_api.modules.orders.infrastructure.sql_delivery_settings_repositor
     SqlDeliverySettingsReader,
     SqlDeliverySettingsRepository,
 )
+from fragancia_api.modules.orders.infrastructure.sql_order_repository import SqlOrderRepository
+from fragancia_api.modules.orders.infrastructure.stock_holds import StockHoldsAdapter
 from fragancia_api.shared.http.services import ServiceRegistry
 from fragancia_api.shared.module import AppModule, Platform, ScheduledJob
 
@@ -84,6 +88,22 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     services.add(
         PurgeCarts,
         PurgeCarts(carts=carts, transactions=platform.transactions, clock=platform.clock),
+    )
+    services.add(
+        PlaceOrder,
+        PlaceOrder(
+            carts=carts,
+            cart_reader=cart_reader,
+            cart_tokens=tokens,
+            access_tokens=tokens,
+            offers=catalog,
+            delivery_settings=reader,
+            orders=SqlOrderRepository(platform.database),
+            stocks=StockHoldsAdapter(services.get(StockReservations)),
+            transactions=platform.transactions,
+            events=platform.events,
+            clock=platform.clock,
+        ),
     )
     services.add(
         CartCookie,

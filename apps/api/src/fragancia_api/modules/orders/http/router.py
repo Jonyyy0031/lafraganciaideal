@@ -9,6 +9,7 @@ from fragancia_api.modules.orders.application.commands.cart import (
     RemoveCartLine,
     SetCartLine,
 )
+from fragancia_api.modules.orders.application.commands.checkout import PlaceOrder
 from fragancia_api.modules.orders.application.commands.delivery import UpdateDeliveryOptions
 from fragancia_api.modules.orders.application.queries.cart import GetCart
 from fragancia_api.modules.orders.application.queries.delivery import (
@@ -18,8 +19,10 @@ from fragancia_api.modules.orders.application.queries.delivery import (
 )
 from fragancia_api.modules.orders.contracts import (
     CartView,
+    CheckoutRequest,
     DeliveryOptions,
     DeliveryQuoteResponse,
+    PlacedOrder,
     PublicDeliveryOptions,
     SetCartLineRequest,
 )
@@ -157,4 +160,34 @@ async def acknowledge_cart_prices(
     return _respond(outcome, response, cookie)
 
 
-routers = (admin, public, cart)
+checkout = public_router(prefix="/checkout", tags=["orders · checkout"])
+
+
+@checkout.post(
+    "",
+    status_code=201,
+    responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+async def place_order(
+    body: CheckoutRequest,
+    response: Response,
+    use_case: Annotated[PlaceOrder, Depends(provide(PlaceOrder))],
+    cookie: Annotated[CartCookie, Depends(provide(CartCookie))],
+    token: _CartToken = None,
+) -> PlacedOrder:
+    """Turn the cart behind the `fragancia_cart` cookie into an order. The units in stock are
+    reserved for 30 minutes (made-to-order lines reserve nothing, decision 18), the order gets
+    the next gapless number `LFI-n` (decision 30) and the cart is emptied and its cookie cleared
+    (decision 25). The order waits for payment; if it is not paid in time it is cancelled
+    (decision 24). `expected_total_cents` must equal the real total, or nothing is created
+    (decision 26). 409: `ORDERS_CHECKOUT_CART_EMPTY`, `ORDERS_CHECKOUT_CART_HAS_PROBLEMS`
+    (`details.lines`), `ORDERS_CHECKOUT_CART_CHANGED`, `ORDERS_CHECKOUT_DELIVERY_UNAVAILABLE`
+    (`details.method`), `ORDERS_CHECKOUT_TOTAL_CHANGED` (the real figures in `details`) or
+    `ORDERS_CHECKOUT_STOCK_UNAVAILABLE` (`details.lines`). 422 `ORDERS_CUSTOMER_DATA_INVALID`
+    with `details.field` naming the broken field, or `ORDERS_DELIVERY_OPTIONS_INVALID`."""
+    placed = unwrap(await use_case.execute(token, body))
+    cookie.clear(response)
+    return placed
+
+
+routers = (admin, public, cart, checkout)

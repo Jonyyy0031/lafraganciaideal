@@ -91,6 +91,9 @@ class SqlCartRepository:
         await session.execute(delete(cart_lines).where(cart_lines.c.cart_id == cart.id))
         await _insert_lines(session, cart)
 
+    async def delete(self, cart: Cart) -> None:
+        await self._database.session.execute(delete(carts).where(carts.c.id == cart.id))
+
     async def delete_untouched_before(self, cutoff: datetime, limit: int) -> int:
         stale = (
             select(carts.c.id)
