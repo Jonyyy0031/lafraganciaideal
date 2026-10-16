@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: orders
 min_implementer: mid
 depends_on: ["platform-api-foundation/004"]
@@ -468,5 +468,25 @@ prices 0, `{}`, empty strings); 0 `fragancia_mig_*` databases left.
 Observation (not a finding): enabling home or local delivery at price 0 is accepted. The plan
 bounds the price at 0..1,000,000 and decision 20 does not require a positive price, so this
 matches the plan.
+
+### Re-review after repair round 1 (2026-10-16, main session, inline)
+
+The repair is small, so the main session read the product diff `c8bc226..f66b528` against the
+repair spec instead of dispatching the reviewer.
+- **L1, fixed.** `DeliverySettingsReader` moved unchanged to `application/ports.py`, with a
+  docstring, and was removed from `domain/repositories.py`. The adapters satisfy it
+  structurally.
+- **L2, fixed.**
+  - `Subtotal.create` bounds 0..`QUOTE_SUBTOTAL_MAX_CENTS`, with the same details as before.
+  - `quote()` takes a `Subtotal` and compares `subtotal.money >= free_from`, which keeps the
+    boundary.
+  - `QuoteDelivery` delegates the check.
+- **L3, fixed.** The first invalid postal code reports `index` (its position in the request)
+  and `value` (cut to 20 characters).
+- **No new defect seen.** The regression tests (`aa50176`) cover each point.
+- **Suites:** `check` green (2650 unit, 685 harness; `just test` 3334 counts both) and
+  `test-integration` 751 passed, 5 skipped, as reported by the tester.
+
+Status → `verify`.
 
 ## Verification
