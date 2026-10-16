@@ -105,6 +105,19 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
     - The new `orders:manage` (plan 004) is for owners and staff.
 20. (2026-10-15) **The three delivery methods start switched off.** An owner switches each one
     on after setting its price. With none on, the checkout refuses to place an order.
+21. (2026-10-16) **Adding more units than are available is refused, with a message.** For
+    example: "solo hay 2 disponibles".
+    - The customer chooses how many to put in the cart.
+    - Made-to-order presentations have no such limit, only the maximum of 10.
+22. (2026-10-16) **A cart line whose presentation sells out, is archived or is hidden stays in
+    the cart.**
+    - It is marked "Agotado" or "Ya no disponible", and does not count in the subtotal.
+    - The checkout asks for it to be removed or adjusted.
+    - It becomes available again on its own when the stock comes back.
+23. (2026-10-16) **A changed price stays flagged until the customer confirms it.** The flag shows
+    "antes $X, ahora $Y".
+    - It clears when the customer taps "Entendido" or changes the quantity.
+    - The checkout requires nothing more, because its total already uses the new price.
 
 ## Delivered
 
