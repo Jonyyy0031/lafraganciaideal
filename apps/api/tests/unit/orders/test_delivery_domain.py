@@ -8,6 +8,7 @@ from fragancia_api.modules.orders.domain.delivery import (
     PICKUP_ADDRESS_MAX,
     PICKUP_HOURS_MAX,
     POSTAL_CODES_MAX,
+    QUOTE_SUBTOTAL_MAX_CENTS,
     DeliveryMethod,
     DeliveryPrice,
     DeliveryQuote,
@@ -72,6 +73,28 @@ def test_rejects_a_postal_code_that_is_not_five_ascii_digits(raw: str) -> None:
 def test_a_postal_code_keeps_its_leading_zero() -> None:
     assert PostalCode.create("01000") == Ok(PostalCode("01000"))
     assert PostalCode("01000") != PostalCode("1000")
+
+
+# --- Subtotal ----------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cents", [0, 1, QUOTE_SUBTOTAL_MAX_CENTS])
+def test_a_subtotal_accepts_zero_up_to_the_sanity_bound(cents: int) -> None:
+    assert Subtotal.create(cents) == Ok(Subtotal(Money(cents)))
+
+
+@pytest.mark.parametrize("cents", [-1, QUOTE_SUBTOTAL_MAX_CENTS + 1])
+def test_rejects_a_subtotal_outside_the_bounds_naming_the_field(cents: int) -> None:
+    result = Subtotal.create(cents)
+
+    assert isinstance(result, Err)
+    assert isinstance(result.error, DeliveryOptionsInvalid)
+    assert result.error.code == "ORDERS_DELIVERY_OPTIONS_INVALID"
+    assert result.error.details == {"field": "subtotal_cents", "min": 0, "max": 100_000_000}
+
+
+def test_the_subtotal_bound_is_the_plan_value() -> None:
+    assert QUOTE_SUBTOTAL_MAX_CENTS == 100_000_000
 
 
 # --- DeliveryPrice -----------------------------------------------------------------------------
@@ -191,6 +214,36 @@ def test_local_delivery_off_may_have_no_postal_codes() -> None:
 @pytest.mark.parametrize("bad", ["7750", "abcde", "", "775000"])
 def test_rejects_a_malformed_postal_code_in_the_list(bad: str) -> None:
     assert invalid_field(local_postal_codes=["77500", bad])["field"] == "local.postal_codes"
+
+
+def test_an_invalid_postal_code_is_named_by_index_and_value() -> None:
+    details = invalid_field(local_postal_codes=["77500", "7750", "77505"])
+
+    assert details == {"field": "local.postal_codes", "index": 1, "value": "7750"}
+
+
+def test_the_first_invalid_postal_code_is_the_one_reported() -> None:
+    details = invalid_field(local_postal_codes=["abcde", "77500", "7750"])
+
+    assert details["index"] == 0
+    assert details["value"] == "abcde"
+
+
+def test_the_postal_code_index_is_the_position_in_the_request() -> None:
+    details = invalid_field(local_postal_codes=[" 77500", "77500 ", "bad"])
+
+    assert details["index"] == 2
+
+
+def test_the_reported_postal_code_value_is_truncated_to_twenty_characters() -> None:
+    details = invalid_field(local_postal_codes=["x" * 25])
+
+    assert details["value"] == "x" * 20
+    assert details["index"] == 0
+
+
+def test_a_postal_code_value_of_exactly_twenty_characters_is_kept_whole() -> None:
+    assert invalid_field(local_postal_codes=["y" * 20])["value"] == "y" * 20
 
 
 def test_postal_codes_are_stripped_and_deduplicated() -> None:
@@ -324,6 +377,15 @@ def test_quotes_every_method_in_the_order_home_local_pickup() -> None:
 
 def test_home_is_free_when_the_subtotal_equals_free_from() -> None:
     lines = quote(build_settings(), CODE, Subtotal(Money(250000)))
+
+    assert costs(lines)[DeliveryMethod.HOME] == 0
+
+
+def test_quote_prices_against_a_validated_subtotal() -> None:
+    subtotal = Subtotal.create(250000)
+    assert isinstance(subtotal, Ok)
+
+    lines = quote(build_settings(), CODE, subtotal.value)
 
     assert costs(lines)[DeliveryMethod.HOME] == 0
 

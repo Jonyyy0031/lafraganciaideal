@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: orders
 min_implementer: mid
 depends_on: ["platform-api-foundation/004"]
@@ -367,6 +367,24 @@ permission list were updated by the implementer (Deviations) and pass; the owner
 | Migration 0017 on a scratch database: nothing of orders at 0016; upgrade creates schema, table, columns (types, nullability, lengths), PK and the default row; downgrade drops table and schema; a round trip restores the default row and discards edits; upgrade to head again | `migrations/versions/0017_orders_delivery_settings.py` | integration | `test_migration_0017_delivery_settings.py` (7 tests) | CONFIRMED |
 | `fragancia_test` holds only the seeded default row after the suite | `tests/integration/orders/conftest.py` | integration | autouse `clean_orders`; `::test_leaves_only_the_seeded_default_row_between_tests`; checked with `just psql` after the closing run (1 row, all off; 0 `fragancia_mig_*` databases left) | CONFIRMED |
 | Acceptance "Default", "Configure", "Quote", "Validation", "Permission", "Switch off" | plan criteria | http + integration | covered by the rows above; the running-app proof is the verifier's | CONFIRMED (tests) |
+
+### Repair round 1 regression tests (tester, 2026-10-16)
+
+Baseline: `uv run just check` green (2633 unit passed, 3 skipped; 685 harness). Closing:
+`uv run just check` green (685 harness; the unit step passed) and `uv run just
+test-integration` green (751 passed, 5 skipped). A later `uv run just test` run reported 3334
+passed, 3 skipped. New: 17 unit tests (domain 13 counting parametrized cases, http 2 plus one
+tightened assertion, ports 2), no integration, no xfail, no skip, no GAP. After the run
+`fragancia_test` holds one `orders.delivery_settings` row, all methods off.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| `Subtotal.create` accepts 0, 1 and `QUOTE_SUBTOTAL_MAX_CENTS`; rejects -1 and max+1 with `details == {field: subtotal_cents, min: 0, max: 100_000_000}` and code `ORDERS_DELIVERY_OPTIONS_INVALID` | `domain/delivery.py:44-52` | domain | `test_delivery_domain.py::test_a_subtotal_accepts_zero_up_to_the_sanity_bound`, `::test_rejects_a_subtotal_outside_the_bounds_naming_the_field`, `::test_the_subtotal_bound_is_the_plan_value` | CONFIRMED |
+| `quote()` takes a `Subtotal` (all existing quote tests build one; one uses `Subtotal.create`) | `domain/delivery.py:226` | domain | `::test_quote_prices_against_a_validated_subtotal` and the `quote` section | CONFIRMED |
+| `QuoteDelivery` answers 422 with `field: subtotal_cents` and full details for -1 and max+1 | `application/queries/delivery.py:105` | application, http | `test_delivery_application.py::test_rejects_a_subtotal_outside_the_bounds_naming_the_field`; `test_delivery_http.py::test_a_subtotal_out_of_range_answers_422_naming_the_field` (assertion tightened to the whole `details`) | CONFIRMED |
+| Invalid postal code details: `index` (position in the request, from 0, unstripped list), `value`, first invalid entry reported, value truncated to 20 chars (20 kept whole, 25 and 30 cut) | `domain/delivery.py:124-136` | domain | `::test_an_invalid_postal_code_is_named_by_index_and_value`, `::test_the_first_invalid_postal_code_is_the_one_reported`, `::test_the_postal_code_index_is_the_position_in_the_request`, `::test_the_reported_postal_code_value_is_truncated_to_twenty_characters`, `::test_a_postal_code_value_of_exactly_twenty_characters_is_kept_whole` | CONFIRMED |
+| Same details through `PUT` (422, index 1 value `7750`; 30-char value cut to 20) | `http/router.py` | http | `test_delivery_http.py::test_an_invalid_postal_code_in_the_put_is_named_by_index_and_value`, `::test_the_reported_postal_code_value_is_truncated_to_twenty_characters` | CONFIRMED |
+| `DeliverySettingsReader` is defined in and importable from `application/ports.py`; the in-memory adapter satisfies it | `application/ports.py:8` | application | `test_delivery_ports.py` (2 tests) | CONFIRMED |
 
 Observations (not gaps): the admin payload accepts prices up to 1e9 and the domain narrows to
 1,000,000, so a price between them is a 422 `ORDERS_DELIVERY_OPTIONS_INVALID`, not

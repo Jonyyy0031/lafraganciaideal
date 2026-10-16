@@ -241,6 +241,36 @@ async def test_a_broken_rule_answers_422_naming_the_field(
     assert payload["details"]["field"] == field
 
 
+async def test_an_invalid_postal_code_in_the_put_is_named_by_index_and_value(
+    client: AsyncClient,
+) -> None:
+    body = valid_body(
+        local={"enabled": True, "price_cents": 9000, "postal_codes": ["77500", "7750", "bad"]}
+    )
+
+    response = await client.put(ADMIN, json=body, headers=OWNER)
+
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["code"] == "ORDERS_DELIVERY_OPTIONS_INVALID"
+    assert payload["details"] == {"field": "local.postal_codes", "index": 1, "value": "7750"}
+
+
+async def test_the_reported_postal_code_value_is_truncated_to_twenty_characters(
+    client: AsyncClient,
+) -> None:
+    body = valid_body(local={"enabled": True, "price_cents": 9000, "postal_codes": ["z" * 30]})
+
+    response = await client.put(ADMIN, json=body, headers=OWNER)
+
+    assert response.status_code == 422
+    assert response.json()["details"] == {
+        "field": "local.postal_codes",
+        "index": 0,
+        "value": "z" * 20,
+    }
+
+
 async def test_a_rejected_put_keeps_the_previous_configuration(client: AsyncClient) -> None:
     await configure(client)
     broken = valid_body(local={"enabled": True, "price_cents": 9000, "postal_codes": []})
@@ -444,7 +474,7 @@ async def test_a_subtotal_out_of_range_answers_422_naming_the_field(
     assert response.status_code == 422
     payload = response.json()
     assert payload["code"] == "ORDERS_DELIVERY_OPTIONS_INVALID"
-    assert payload["details"]["field"] == "subtotal_cents"
+    assert payload["details"] == {"field": "subtotal_cents", "min": 0, "max": 100_000_000}
 
 
 async def test_a_missing_subtotal_answers_the_generic_validation_error(
