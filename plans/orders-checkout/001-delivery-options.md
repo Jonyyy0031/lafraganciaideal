@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: orders
 min_implementer: mid
 depends_on: ["platform-api-foundation/004"]
