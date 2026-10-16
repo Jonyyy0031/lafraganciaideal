@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: orders
 min_implementer: mid
 depends_on: ["002"]
@@ -376,7 +376,82 @@ applies README decisions 1, 3, 4, 8, 11, 13, 14, 16, 18, 20, 22 and the new 24�
      - Add the event to the orders `__init__.py` docstring, in the inventory style
        (`modules/inventory/__init__.py:1-20`).
      - The tester writes the layered tests (see the table below).
+   - Files (tests): `apps/api/tests/unit/orders/` (modify), `apps/api/tests/integration/orders/` (modify)
    - Observable result: `uv run just check` and `uv run just test-integration` pass.
+
+7. **Review repair (added 2026-10-16 after the first review; decision 31)**
+   - Files: `apps/api/src/fragancia_api/config.py` (modify),
+     `apps/api/.env.example` (modify),
+     `apps/api/src/fragancia_api/modules/orders/application/ports.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/application/commands/checkout.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/domain/order.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/domain/repositories.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/order_links.py` (create),
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/stock_holds.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/sql_order_repository.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/tables.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/in_memory.py` (modify),
+     `apps/api/migrations/versions/0020_orders_cart_token.py` (create),
+     `apps/api/src/fragancia_api/modules/orders/module.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/http/router.py` (modify),
+     `apps/api/openapi.json` (modify),
+     `docs/architecture.md` (modify),
+     `apps/api/tests/unit/orders/` (modify), `apps/api/tests/integration/orders/` (modify)
+   - Do:
+     - **B1 (scope):** the test directories are now listed on step 6's `Files (tests):` line.
+       Nothing to do in code.
+     - **L2, a lost response (decision 31).**
+       - **Settings.** Add `order_link_secret: SecretStr | None = None` to `Settings`
+         (`config.py`), next to the session settings.
+         - A `model_validator` requires it in production, with at least 32 characters.
+         - Outside production, when it is unset, the module uses the fixed development value
+           `"dev-order-link-secret-not-for-production"`.
+         - Add `ORDER_LINK_SECRET=` with a comment to `.env.example`. The comment says: never
+           rotate it, because rotating breaks every private link already sent.
+       - **Tokens derived, not random.** Replace the `OrderAccessTokens` port with
+         `OrderLinks`, which has `token(order_id) -> str` and `digest(token) -> str`.
+         - `HmacOrderLinks(secret)` (`infrastructure/order_links.py`) computes the token as
+           base64url, without padding, of HMAC-SHA256(secret, `b"order-link:" + order_id.bytes`).
+         - `digest` is SHA-256 hex, as before.
+         - The order still stores only `access_token_digest`, and plan 004 looks orders up by
+           it. Plan 005 regenerates the link from the order id.
+       - **The cart a retry used.** `Order` gains `cart_token_digest: str`, the digest of the
+         cart cookie it was placed from. Migration `0020_orders_cart_token` adds
+         `orders.orders.cart_token_digest` (varchar 64, nullable for existing rows, indexed).
+         `SqlOrderRepository` writes it.
+       - **Replay.** Add `OrderRepository.placed_from_cart(cart_token_digest, since) -> Order | None`
+         (or a reader-port method with the same shape). It returns the newest order with that
+         cart digest, `status = pending_payment` and `created_at >= since`.
+         - In `PlaceOrder`, when there is a token but the cart is missing or empty, call it with
+           `since = now - PAYMENT_WINDOW` before refusing `ORDERS_CHECKOUT_CART_EMPTY`.
+         - When an order is found, return its `PlacedOrder` again, with
+           `access_token = links.token(order.id)`. This happens before input validation is
+           checked against it: a replay ignores the request body.
+         - Document the replay in the route docstring. The router still clears the cookie.
+     - **L1, inventory refusals.** In `StockHoldsAdapter`, also translate
+       `INVENTORY_PRESENTATION_NOT_STOCKED` and `INVENTORY_PRESENTATION_NOT_FOUND` into
+       `CheckoutCartChanged`. This happens when the owner switches a presentation to made to
+       order, or removes it, during the checkout. Other errors still pass through.
+     - **L3, business rules in the domain.**
+       - Move the rule "address required for home and local, forbidden for pickup" into the
+         domain, as `Delivery.create(method, cost_cents, address, pickup)` returning
+         `Result[Delivery, CustomerDataInvalid]` with field `address`.
+       - Compute an `OrderLine`'s `line_total_cents` in a factory `OrderLine.create(...)` from
+         the unit price and quantity, instead of in `checkout.py`.
+     - **L4.** `PlacedOrder.status` takes `order.status.value`.
+     - Update `docs/architecture.md` (orders row: the order-link secret) and regenerate
+       `openapi.json`.
+   - Observable result:
+     - Unit and integration tests cover:
+       - the derived token: stable for one id, different across ids, its digest stored;
+       - the replay within 30 minutes (same number and token, no second order or reservation);
+       - no replay after 30 minutes or for another cart;
+       - the two new inventory translations;
+       - `Delivery.create`;
+       - `OrderLine.create`;
+       - the production validator for the secret;
+       - migration 0020 round trip.
+     - `uv run just plans-scope` is clean.
 
 ## Acceptance criteria
 
@@ -481,5 +556,105 @@ promised behavior exists in the code and was confirmed by a run. The integration
 | e2e | n/a | e2e | not applicable (no e2e infrastructure) | n/a |
 
 ## Review findings
+
+Reviewed 2026-10-16 (reviewer subagent) against `main...HEAD` (commits `018a0cd`, `c7f6221`,
+`76cbd52`; worktree clean).
+
+### Pass 1 — Checklist: 13/15 passed, 1 FAILED, 1 not applicable
+
+- [ ] **FAILED: `uv run just plans-scope`** exits 1. Nine test files are out of scope because
+      no step declares a test path: `apps/api/tests/integration/orders/{conftest.py,
+      test_checkout_flow.py, test_migration_0019_orders_orders.py, test_sql_orders.py}` and
+      `apps/api/tests/unit/orders/{test_checkout.py, test_checkout_http.py,
+      test_customer_domain.py, test_order_domain.py, test_stock_holds_adapter.py}`. The hot file
+      `apps/api/.importlinter` is genuinely append-only (two ignore lines at the end, exactly the
+      two the plan names).
+- [x] `uv run just check` green: ruff clean, mypy 410 files clean, import-linter 7 kept / 0
+      broken, plans OK, harness-check up to date, 3061 passed / 3 skipped, hook tests 685 passed.
+      `python -m fragancia_api.main.openapi --check`: up to date.
+- [x] `uv run just test-integration` green: 870 passed, 5 skipped (live run, 185 s).
+- [x] Business rules in `domain/` (customer fields, SAT catalogs, `Order.place` totals and lead
+      time). See Low finding L3 on two small rules left in the application layer.
+- [x] CQRS-lite: `PlaceOrder` reads outside, then one `transactions.run(work)` going aggregate →
+      `OrderRepository` / `CartRepository`, returning `Result`; no screen-specific repository
+      methods.
+- [x] Contracts in `contracts.py`; `openapi.json` regenerated (drift check passes).
+- [x] Errors: `Err(DomainError)` subclasses with `ORDERS_CHECKOUT_*` /
+      `ORDERS_CUSTOMER_DATA_INVALID` codes (409 / 422 via `shared/http/errors.py:54-55`). See L1
+      on inventory codes that can pass through.
+- [x] Money as integer cents (same raw-int style as the cart and delivery), datetimes from
+      `Clock`, ids from `new_id()`.
+- [x] Migration `0019`: new file, only `orders` schema, no cross-schema FKs (`reservation_id`,
+      `presentation_id`, `perfume_id` unconstrained by design), seed row, reversible downgrade
+      (exercised by `test_migration_0019_orders_orders.py` on a scratch database).
+- [x] Route in `public_router(prefix="/checkout")`; no bare `APIRouter`; no admin route added.
+- [x] Wiring: `PlaceOrder` registered in `module.py`; `StockReservations` resolved from the
+      registry (inventory precedes orders in `MODULES`); `test_container.py` green.
+- [x] No secrets, `.env` content or real personal data (fixtures use `XAXX010101000`,
+      `ana@example.com`).
+- [x] `## Deviations` honest on the claim spot-checked: `Subtotal` errors do pass through as
+      `ORDERS_DELIVERY_OPTIONS_INVALID` and the route docstring says so (`router.py`
+      `place_order`). It does not mention the undeclared test paths (see B1).
+- [x] Docs: `docs/architecture.md` orders row and the orders `__init__.py` docstring updated;
+      `docs/modules.json` description still accurate; `apps/api/README.md` has no orders section.
+- [ ] N/A: no PR exists yet for `feat/orders-checkout` (`gh pr list --head` empty); the six
+      sections must be checked when it is opened.
+
+### Findings
+
+**Blocking (checklist)**
+
+- **B1 — plan scope: test files undeclared.** `plans/orders-checkout/003-checkout-order.md:371`
+  (step 6 `Files:`) lists only `docs/architecture.md` and the orders `__init__.py`, although the
+  step says "the tester writes the layered tests". `plans-scope` therefore fails on the nine test
+  files above. Plan 002 declared `apps/api/tests/unit/orders/` and
+  `apps/api/tests/integration/orders/` (002 lines 249-251). The tests themselves are in place and
+  appropriate; the defect is the plan's file list. Repair (plan-only, no code): the main session
+  records a deviation and adds `apps/api/tests/unit/orders/` (modify) and
+  `apps/api/tests/integration/orders/` (modify) to a `Files:` line, then re-runs
+  `uv run just plans-scope plans/orders-checkout/003-checkout-order.md`. Note that the
+  integration conftest now also `TRUNCATE`s inventory's tables (`fragancia_test` only); that
+  cross-module test fixture belongs in the declared list too.
+
+**High / Medium:** none found.
+
+**Low (no code change required to pass; for the main session / plan 004 to decide)**
+
+- **L1 — inventory codes can reach the storefront.** `infrastructure/stock_holds.py:25` passes
+  every non-`INVENTORY_STOCK_UNAVAILABLE` error through unchanged (as the plan specifies).
+  Scenario: the owner switches a presentation from in stock to made to order (or hides/deletes
+  it) between the offers read (`checkout.py`, outside the transaction) and the hold;
+  `ReserveStock` returns `INVENTORY_PRESENTATION_NOT_STOCKED` / `_NOT_FOUND`
+  (`inventory/application/commands/stock.py:37-41`) and the storefront receives an inventory
+  code the route docstring does not list. Rollback is correct (nothing is written); only the
+  error contract is affected. Mapping these to `ORDERS_CHECKOUT_CART_CHANGED` would keep the
+  public contract closed. Plan-sanctioned, so not a defect against this plan.
+- **L2 — lost response leaves an order without its private link.** If the 201 response is lost
+  (network drop), the cart is already deleted and the access token was shown only in that
+  response (`PlacedOrder.access_token`). A retry gets `ORDERS_CHECKOUT_CART_EMPTY`; the order
+  holds stock until expiry and the customer cannot open it. No duplicate order can be created
+  (verified: a concurrent retry gets `CART_CHANGED` after the lock, a later one `CART_EMPTY`).
+  Mitigated by plan 004's lookup by number and email and plan 005's confirmation email;
+  recorded so those plans keep it in mind.
+- **L3 — two small rules live in the application layer.** "Address required for home/local,
+  forbidden for pickup" (`checkout.py:84-96`) and `line_total_cents = price * quantity`
+  (`checkout.py:316`) are business rules outside `domain/`. The plan placed the first in the
+  application step explicitly; both are covered by tests. Optional move to the domain later.
+- **L4 — response status hard-coded.** `checkout.py:293` returns `status="pending_payment"`
+  instead of `order.status.value`; harmless today (one status) but will drift when plan 004
+  adds statuses.
+
+Bug hunt traced: request validation → contact/address/invoice → cart read and offers outside
+the transaction → `cart_view` problems → quote and total check → lock + pairs comparison →
+hold (in-stock only, `order:<id>`, expiry = `payment_due_at`) → gapless counter (row lock held
+to commit) → insert with frozen prices → cart delete (lines cascade) → outbox event in the same
+transaction → 201 + cookie cleared with the cart cookie's attributes. Money: subtotal equals
+the sum of line totals from the same offers used by `cart_view`; total check constraint
+matches. Concurrency: double submission cannot create two orders; competing carts for the last
+units resolve in inventory (integration-tested); lock order cart → inventory → counter has no
+cycle with existing writers. No state can be reached that the (single-state) lifecycle forbids.
+
+**Result:** the code is correct as far as reviewed, but the checklist failed on B1, so the
+status stays `review`. B1 needs a plan edit (and a re-run of `plans-scope`), not a code change.
 
 ## Verification

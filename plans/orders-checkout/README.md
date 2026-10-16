@@ -144,6 +144,11 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
     leading +52 are ignored.
 30. (2026-10-16) **Orders are numbered from LFI-1001, without gaps.** A refused checkout does not
     use up a number, and a cancelled order keeps its own.
+31. (2026-10-16) **The private link is derived, and a retried checkout gets its order back.**
+    - The link token is an HMAC of the order id with a server secret. It is not stored, so the
+      confirmation email (plan 005) can include it.
+    - If the checkout response is lost, retrying with the same cart cookie within 30 minutes
+      answers the same order instead of "carrito vacío".
 
 ## Delivered
 
