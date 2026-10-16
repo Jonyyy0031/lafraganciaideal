@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: orders
 min_implementer: mid
 depends_on: ["002"]
@@ -436,6 +436,49 @@ free from 250000; local 9000 for 77500; pickup on), and the QA perfume from plan
 None. (Notes: `CustomerDataInvalid` fields for `PostalCode` failures are re-wrapped in `customer.py`; `Subtotal` errors pass through as `ORDERS_DELIVERY_OPTIONS_INVALID`, documented in the route. The migration downgrade was not run on a scratch database by the implementer; it belongs to the integration tests.)
 
 ## Test coverage
+
+Baseline (before any test): `uv run just check` green (2790 passed, 3 skipped; harness 685
+passed) and `uv run just test-integration` green (802 passed, 5 skipped). Tests added: 339 (domain
+194, application 47, http 30, integration 68). No GAP and no NOT CONFIRMED were found: every
+promised behavior exists in the code and was confirmed by a run. The integration conftest
+(`tests/integration/orders/conftest.py`) now also empties `orders.orders`, resets the counter to
+1000 and empties inventory's stock and reservation tables.
+
+| Behavior (plan / code) | Source | Layer | Test | State |
+| ---------------------- | ------ | ----- | ---- | ----- |
+| Name 1/2/120/121 characters, whitespace collapsed | `customer.py:41-45` | domain | `test_customer_domain.py::test_a_name_*` | CONFIRMED |
+| Email rule (strip, lowercase, one `@`, dot in domain, 254) | `customer.py:53-66` | domain | `test_customer_domain.py::test_a_malformed_email_is_refused`, `test_an_email_of_254_*` | CONFIRMED |
+| Phone: `+52 998-123-4567` -> `9981234567`; `52` only with 12 digits; 9/11 digits, letters, non-ASCII refused | `customer.py:77-85` | domain | `test_customer_domain.py::test_every_phone_form_*`, `test_a_phone_that_is_not_ten_digits_*`, `test_a_ten_digit_number_starting_with_52_*` | CONFIRMED |
+| 32 state codes accepted, others refused, code trimmed | `customer.py:88-121,256-258` | domain | `test_customer_domain.py::test_every_state_code_is_accepted`, `test_an_unknown_state_is_refused` | CONFIRMED |
+| Address fields at their bounds, optional empty -> None, postal code re-wrapped, first error in form order | `customer.py:175-275` | domain | `test_customer_domain.py::test_an_address_field_*`, `test_an_empty_optional_field_*`, `test_the_first_broken_address_field_*` | CONFIRMED |
+| SAT catalogs: 19 regimes, 22 uses, CP01/CN01 refused, every code accepted | `customer.py:124-172` | domain | `test_customer_domain.py::test_every_tax_regime_*`, `test_every_cfdi_use_*`, `test_a_cfdi_use_that_does_not_apply_*` | CONFIRMED |
+| RFC 12/13 characters, `XAXX010101000`, `ABC123` refused; business name 1/254/255; invoice field order | `customer.py:286-315` | domain | `test_customer_domain.py::test_an_rfc_*`, `test_a_malformed_rfc_is_refused`, `test_a_business_name_*`, `test_the_first_broken_invoice_field_*` | CONFIRMED |
+| `Order.place`: totals, lead time over made-to-order only, status, stamps, one `OrderPlaced`, `format_order_number` | `order.py:108-151` | domain | `test_order_domain.py` (13 tests) | CONFIRMED |
+| Validation precedes the cart; contact, then address, then invoice; address required for home/local, forbidden for pickup | `checkout.py:84-132,181-185` | application | `test_checkout.py::test_each_contact_field_*`, `test_the_contact_is_checked_before_*`, `test_home_and_local_require_an_address`, `test_pickup_refuses_an_address`, `test_an_invalid_invoice_*` | CONFIRMED |
+| Empty cart: no token, unknown token, no lines | `checkout.py:187-192` | application | `test_checkout.py::test_no_cookie_*`, `test_an_unknown_token_*`, `test_a_cart_without_lines_is_empty` | CONFIRMED |
+| Cart with problems lists the lines (sold out, insufficient, unavailable, vanished) and wins over delivery and total | `checkout.py:196-208` | application | `test_checkout.py::test_a_cart_with_problems_*`, `test_a_line_whose_presentation_*`, `test_the_cart_problems_win_*` | CONFIRMED |
+| Delivery unavailable (off-list code, switched-off method) wins over a wrong total; `Subtotal` error passes through | `checkout.py:210-225` | application | `test_checkout.py::test_local_delivery_off_*`, `test_a_switched_off_method_*`, `test_an_unavailable_delivery_wins_*`, `test_a_subtotal_over_the_quote_limit_*` | CONFIRMED |
+| Total compared with `expected_total_cents`, real figures returned | `checkout.py:226-236` | application | `test_checkout.py::test_a_wrong_expected_total_*`, `test_an_expected_total_one_cent_off_*` | CONFIRMED |
+| Cart changed between the read and the lock (gone, quantity, added line); a price acknowledgement is not a change | `checkout.py:255-257` | application | `test_checkout.py::test_a_cart_deleted_before_the_lock_*`, `test_a_quantity_changed_*`, `test_a_line_added_*`, `test_a_price_acknowledgement_*` | CONFIRMED |
+| Hold only the in-stock lines, reference `order:<id>`, expiry now + 30 min; none when all made to order | `checkout.py:241-263` | application | `test_checkout.py::test_one_reservation_holds_only_*`, `test_a_cart_of_only_made_to_order_lines_*` | CONFIRMED |
+| Stock refusal: inventory's lines, no order, cart kept, number not consumed, no event | `checkout.py:259-264` | application | `test_checkout.py::test_a_stock_refusal_*`, `test_a_refused_checkout_does_not_burn_a_number` | CONFIRMED (order of steps with fakes; the real rollback is in integration) |
+| Happy path: number 1001 then 1002, token, totals, frozen lines, cart deleted, one event, pickup + invoice, free/local delivery | `checkout.py:238-300` | application | `test_checkout.py::test_a_home_order_*`, `test_the_lines_freeze_*`, `test_the_second_order_*`, `test_a_pickup_order_*`, `test_a_local_order_*` | CONFIRMED |
+| Step order: reads outside the transaction, then lock, hold, number, add, delete | `checkout.py:187-283`, plan lock order | application | `test_checkout.py::test_the_steps_run_in_the_documented_order_*` | CONFIRMED |
+| `StockHoldsAdapter` translates only `INVENTORY_STOCK_UNAVAILABLE`, keeps details | `stock_holds.py:21-27` | application | `test_stock_holds_adapter.py` (3 tests) | CONFIRMED |
+| 201 shape, cookie cleared with the cart cookie's attributes (and Secure), kept on every refusal | `router.py:166-190` | http | `test_checkout_http.py::test_a_valid_checkout_*`, `test_success_clears_*`, `test_a_refused_checkout_keeps_the_cookie_*` | CONFIRMED |
+| Every 409 code (`CART_EMPTY`, `HAS_PROBLEMS`, `CART_CHANGED`, `DELIVERY_UNAVAILABLE`, `TOTAL_CHANGED`, `STOCK_UNAVAILABLE`) with its details | `errors.py`, `router.py` | http | `test_checkout_http.py` (409 section) | CONFIRMED |
+| 422 `ORDERS_CUSTOMER_DATA_INVALID` per field, and `VALIDATION_ERROR` for a malformed payload | `router.py`, `contracts.py:111-152` | http | `test_checkout_http.py::test_invalid_customer_data_*`, `test_a_malformed_payload_*` | CONFIRMED |
+| OpenAPI: operation, 201/409/422, schemas, enums, error codes in the description | `router.py` | http | `test_checkout_http.py::test_the_openapi_*`, `test_the_documented_error_codes_*` | CONFIRMED |
+| Gapless counter: seed 1001, consecutive, rollback gives the number back, a second transaction waits for the row | `sql_order_repository.py:12-22` | integration | `test_sql_orders.py::test_the_migration_seeds_*`, `test_a_rolled_back_transaction_gives_*`, `test_a_second_transaction_waits_*` | CONFIRMED |
+| Order and lines stored as rows with every column; pickup/invoice nulls; no FK on `reservation_id`; rollback stores nothing | `sql_order_repository.py:24-83` | integration | `test_sql_orders.py::test_a_home_order_is_stored_*`, `test_the_lines_are_stored_*`, `test_a_pickup_order_*`, `test_a_rolled_back_add_*` | CONFIRMED |
+| Constraints: unique number and digest, total check, method check, quantity 1-10, line total, position key, FK + cascade, email index | `tables.py`, migration 0019 | integration | `test_sql_orders.py` (constraints section) | CONFIRMED |
+| `SqlCartRepository.delete` cascades its lines only, and rolls back | `sql_cart_repository.py` | integration | `test_sql_orders.py::test_deleting_a_cart_*`, `test_a_rolled_back_delete_*` | CONFIRMED |
+| `StockHoldsAdapter` on the real inventory: reserved count, all or nothing, reference taken, made to order refused, joins the caller's transaction | `stock_holds.py`, inventory facade | integration | `test_sql_orders.py::test_a_hold_*`, `test_holding_the_same_reference_twice_*`, `test_a_made_to_order_presentation_*` | CONFIRMED |
+| Full `PlaceOrder` on real adapters: order, lines, reservation of the in-stock lines only, cart gone, outbox event, numbers 1001/1002, made-to-order only, pickup + invoice, frozen price | `checkout.py` | integration | `test_checkout_flow.py` (happy-path section) | CONFIRMED |
+| Refusals leave no rows (stock short, another order's hold, empty, total, delivery, phone, sold out) and a failure after the hold rolls back the reservation, the number and the cart | `checkout.py:254-283` | integration | `test_checkout_flow.py::test_a_stock_refusal_*`, `test_the_other_refusals_*`, `test_a_failure_after_the_hold_*` | CONFIRMED |
+| Concurrency: two checkouts for the last units, one wins; five concurrent checkouts get 1001-1005 with no gap | counter row + inventory locks | integration | `test_checkout_flow.py::test_two_checkouts_*`, `test_concurrent_checkouts_*` | CONFIRMED |
+| Migration 0019 on a scratch database: absent before, columns/seed/constraints/index, downgrade (also with data), re-upgrade reseeds the counter | `0019_orders_orders.py` | integration | `test_migration_0019_orders_orders.py` (20 tests) | CONFIRMED (upgrade and downgrade both run) |
+| e2e | n/a | e2e | not applicable (no e2e infrastructure) | n/a |
 
 ## Review findings
 
