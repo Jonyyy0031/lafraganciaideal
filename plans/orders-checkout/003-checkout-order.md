@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: orders
 min_implementer: mid
 depends_on: ["002"]
@@ -781,6 +781,12 @@ stays in `testing` (unchanged): T1–T3 are test and evidence work for the teste
 review repeats on the refreshed coverage (or the main session decides T2/T3 are not required and
 records it). Not moved to `verify`.
 
+**Closed (2026-10-17, main session).** R1 fixed in product code (see `## Repair log`). T1–T3
+and the R1 regression tests were added by the tester ("Re-test after the step 7 repair" in
+`## Test coverage`); closing `check` 3097 passed, `test-integration` 883 passed. R2 is accepted
+with decision 31 (noted for plan 004); R3 is deviation 3. The changes after the re-review are one
+`match` arm and tests, so no further review round; moved to `verify`.
+
 ### First review 2026-10-16 (superseded by the step 7 repair)
 
 Reviewed 2026-10-16 (reviewer subagent) against `main...HEAD` (commits `018a0cd`, `c7f6221`,
@@ -884,3 +890,61 @@ cycle with existing writers. No state can be reached that the (single-state) lif
 status stays `review`. B1 needs a plan edit (and a re-run of `plans-scope`), not a code change.
 
 ## Verification
+
+2026-10-17, main session, live against the development database (API on :8100 and the arq
+worker running, at migration 0020, `ORDER_LINK_SECRET` unset so the development value applied).
+QA script: `scratchpad/qa_inv/qa_checkout.py`. An owner set the delivery options for the run
+(home 18000, free from 250000; local 9000 for 77500; pickup on), and they were restored to their
+previous value afterwards. The QA perfume from plan 002 was used (50 ml: 6 in stock; 100 ml: 1;
+200 ml made to order, 10 days). The counter started at 1000. The four orders placed stay in the
+development database; their reservations expire with the inventory job after 30 minutes.
+
+- [x] **Happy path, home delivery.** Cart: 50 ml ×2 plus 200 ml ×1, subtotal 679900, so home
+  delivery is free (from 250000). The result was 201 `LFI-1001`, `pending_payment`, totals
+  679900/0/679900, `payment_due_at` 30 minutes ahead, `lead_time_max_days` 10.
+  - `Set-Cookie: fragancia_cart=""; Max-Age=0; Path=/api/v1`, and `GET /cart` with the old
+    cookie answered empty.
+  - The row stored name `Ana López` (whitespace collapsed), email `ana@example.com`, phone
+    `9981234567` (sent as `+52 (998) 123-4567`), state `CMX`, postal code 01000, and
+    `payment_due_at - created_at` = 1800 s.
+  - Two lines with frozen prices: 50 ml 2 × 189950 = 379900 (in stock) and 200 ml 1 × 300000
+    (made to order).
+  - One active reservation, `order:<id>`, holds only the 50 ml ×2; stock went 6/0 → 6/2.
+  - One `orders.order.placed` outbox row, `{"number": 1001, "order_id": …}`, which the relay
+    published (0 attempts, not failed).
+- [x] **Numbers.** The next orders were `LFI-1002`, `LFI-1003` and `LFI-1004`. The stock refusal
+  in between left the counter unchanged.
+- [x] **Refusals (409).**
+  - No cookie gave `ORDERS_CHECKOUT_CART_EMPTY`.
+  - 50 ml sold out (catalog copy set to 0, then restored) gave `CART_HAS_PROBLEMS` with
+    `[{presentation_id: …474c, status: sold_out}]`.
+  - `local` for postal code 01000 gave `DELIVERY_UNAVAILABLE` `{method: local}`.
+  - A total off by 100 gave `TOTAL_CHANGED` `{subtotal_cents: 679900, delivery_cents: 0,
+    total_cents: 679900}`.
+  - Stock: two carts each took the 50 ml ×4 while 4 were available. The first placed `LFI-1003`
+    (local 77500, delivery 9000, total 768800). The second, right after, got
+    `ORDERS_CHECKOUT_STOCK_UNAVAILABLE` with
+    `{lines: [{presentation_id: …474c, requested: 4, available: 0}]}`. Its cart still had its
+    line, and the counter did not move.
+  - After every refusal on the first cart, it kept both lines, with no order row and the
+    counter at 1000.
+- [x] **Validation (422 `ORDERS_CUSTOMER_DATA_INVALID`).**
+  - A 9-digit phone gave `contact.phone`, and `ana@nodot` gave `contact.email`.
+  - State `XXX` gave `address.state`.
+  - `home` without an address, and `pickup` with one, both gave `address`.
+  - Invoices with RFC `ABC123` gave `invoice.rfc`, regime `999` gave `invoice.tax_regime`, and
+    use `CP01` gave `invoice.cfdi_use`.
+- [x] **Pickup and invoice.** `LFI-1002` for the 100 ml ×1 with RFC `gode561231gr8`, 612, G03 and
+  fiscal postal code 77500. It stored no address, the pickup point "Av. Tulum 123, Cancún" /
+  "Lun-Sáb 10:00-19:00", RFC `GODE561231GR8` (uppercased), business name `Ana López` (collapsed)
+  and `delivery_cents` 0. Its reservation holds the 100 ml ×1 (stock 1/1).
+- [x] **Made to order only.** `LFI-1004` for the 200 ml ×2 has `reservation_id` null, no
+  reservation rows, and `lead_time_max_days` 10.
+- [x] **Replay (decision 31).** A retry with the first cart's old cookie and an invalid body
+  (phone `1`, total 1) answered 201 with `LFI-1001` and the same `access_token`. Still one order
+  with that number, and the counter unchanged.
+
+NOT VERIFIED live:
+- the production secret validator (this run is development), which unit tests cover;
+- the retry that waits on the cart lock, which only the integration test covers;
+- the automatic cancellation on expiry, which is plan 004.
