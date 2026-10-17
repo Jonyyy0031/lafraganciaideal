@@ -599,6 +599,138 @@ promised behavior exists in the code and was confirmed by a run. The integration
 
 ## Review findings
 
+### Re-review 2026-10-17 (after the step 7 repair)
+
+Reviewer subagent, against `main...HEAD` with the repair commits `ee4c7ba` (fix) and `2dbb822`
+(tests); worktree clean. The plan's status on arrival was `testing`.
+
+#### Pass 1 — Checklist: 13/15 passed, 0 failed, 1 not applicable, 1 partial
+
+- [x] `uv run just plans-scope` passes (28 declared, 41 changed, every change inside the plan).
+      `apps/api/.importlinter` is append-only (the same two ignore lines as before).
+- [x] `uv run just check` green: ruff clean, mypy 414 files clean, import-linter 7 kept / 0
+      broken, plans OK, harness-check up to date, 3081 passed / 3 skipped, hook tests 685 passed.
+- [x] Integration: the main session's full run after the repair (882 passed, 5 skipped) is
+      taken as given; the reviewer re-ran `tests/integration/orders` live: 153 passed.
+- [x] Business rules in `domain/`: `Delivery.create` (address required / forbidden by method)
+      and `OrderLine.create` (line total) now live in `domain/order.py` (L3 resolved).
+- [x] CQRS-lite: the replay lookup is a read port (`OrderReader.placed_from_cart`,
+      `SqlOrderReader` over `Database.reader()`); the write side is unchanged.
+- [x] Contracts unchanged; `openapi.json` regenerated (only the route description changed; drift
+      check green).
+- [x] Errors: `INVENTORY_PRESENTATION_NOT_STOCKED` / `_NOT_FOUND` now become
+      `ORDERS_CHECKOUT_CART_CHANGED` (`stock_holds.py:13-16,30-31`, L1 resolved).
+- [x] Money / time / ids: unchanged rules; replay window from `Clock`.
+- [x] Migration `0020`: new file, only adds a nullable `varchar(64)` and a non-unique index in
+      `orders`; index name `ix_orders_cart_token_digest` matches the metadata naming convention
+      (`ix_%(table_name)s_%(column_0_N_name)s`) and `tables.py:76`; downgrade drops index then
+      column; round trip proven on a scratch database (`test_migration_0020_orders_cart_token.py`).
+- [x] Routes: unchanged (`public_router`).
+- [x] Wiring: `PlaceOrder` gets `HmacOrderLinks` and `SqlOrderReader` in `module.py:60-65,111-112`;
+      `test_container.py` green.
+- [x] No secrets: the only secret literal is the documented development fallback
+      (`module.py:42`, `# noqa: S105`); `.env.example` has an empty `ORDER_LINK_SECRET=`; tests
+      use obvious dummy secrets.
+- [x] `## Deviations` honest: spot-checked "`domain/repositories.py` therefore did not change"
+      (`git diff c7f6221 HEAD` on it is empty) and "a pickup request with an INVALID address now
+      reports the address field's own error" (`checkout.py:_validate_address` runs
+      `Address.create` before `Delivery.create`).
+- [~] **Partial — evidence:** `docs/architecture.md` orders row updated (secret, replay). But the
+      `## Test coverage` section was declared superseded by the repair and not rewritten: rows
+      are now stale (e.g. "`StockHoldsAdapter` translates only `INVENTORY_STOCK_UNAVAILABLE`",
+      "Empty cart: ... unknown token" with no replay, line references into the old
+      `checkout.py`). See T1.
+- [ ] N/A: no PR exists for `feat/orders-checkout` yet (`gh pr list --head` empty).
+
+#### Previous findings
+
+- **B1 resolved.** `plans-scope` clean; the test directories are declared (step 6
+  `Files (tests):` and step 7).
+- **L1 resolved, with regression tests that fail without the fix:** unit
+  `test_stock_holds_adapter.py::test_a_presentation_that_stopped_being_stocked_or_vanished_means_the_cart_changed`
+  (both codes) and integration `test_sql_orders.py::test_a_made_to_order_presentation_means_the_cart_changed`,
+  `::test_a_presentation_that_does_not_exist_means_the_cart_changed` against the real inventory.
+- **L2 resolved, with regression tests that fail without the fix:** replay within 30 minutes
+  (unit `test_checkout.py::test_a_retry_within_30_minutes_*`, http
+  `test_after_a_success_the_same_cookie_gets_the_same_order_back`, integration
+  `test_a_retry_after_a_lost_response_gets_the_same_order_and_link`: same body, one order, one
+  reservation, one event, counter 1001); no replay after 30 minutes or for another cart (unit and
+  integration); status filter, inclusive `since`, newest-first (integration `SqlOrderReader`
+  tests); derived token (`test_order_links.py`); production validator (`test_settings.py`).
+- **L3 resolved:** `Delivery.create` and `OrderLine.create` unit-tested in
+  `test_order_domain.py`; the existing checkout tests pin the observable rule through them.
+- **L4 resolved in code** (`checkout.py:_placed_order` uses `order.status.value`). It cannot be
+  pinned by a test that fails without the fix while `OrderStatus` has one value; acceptable until
+  plan 004 adds statuses.
+
+#### Findings
+
+**Blocking / High:** none.
+
+**Medium (tests and evidence; no product code change)**
+
+- **T1 — the testing phase for the repaired code is incomplete.** The repair's tests are real
+  regression tests and cover every bullet of step 7's observable result, but they were written
+  by the implementer and `## Test coverage` was not rewritten (only marked superseded), so the
+  plan has no CONFIRMED/GAP mapping for the touched code and several rows contradict it now.
+  Needed from the tester: refresh the table for `checkout.py` (replay, new precedence),
+  `stock_holds.py`, `order.py` (`Delivery.create`, `OrderLine.create`), `order_links.py`,
+  `sql_order_repository.py` (`SqlOrderReader`), `config.py` and migration 0020, and close T2/T3.
+- **T2 — the configured secret's wiring is untested** (`modules/orders/module.py:60-65`). No test
+  asserts that `ORDER_LINK_SECRET` is what `HmacOrderLinks` receives, or that the development
+  constant is used only when it is unset/empty (`test_cart_wiring.py:42` and
+  `test_http_platform.py:214` pass a secret but assert nothing about links; the integration
+  flow builds its own `HmacOrderLinks`). Failure scenario: a refactor that always passes
+  `_DEV_ORDER_LINK_SECRET` keeps every test green, and production then issues private links
+  derived from a secret that is committed in the repo — anyone with an order id could compute its
+  link. (Reasoned from the test inventory; not proven by a mutation run.)
+- **T3 — "replay before validation" is not pinned** (`checkout.py:194-207`). The replay tests'
+  bodies are schema- and domain-valid (only `expected_total_cents` is wrong, which is checked
+  after validation anyway). Moving the replay after `_validate(...)` would keep every test green,
+  although the Deviations and the route docstring promise "the request body is ignored". Failure
+  scenario: a retry whose body now fails domain validation (e.g. the storefront re-sends with a
+  phone the customer edited to 9 digits) gets 422 instead of its order. Needed: a replay test
+  with a body that fails `ORDERS_CUSTOMER_DATA_INVALID`.
+
+**Low (for the main session / plan 004 to decide; no change required to pass)**
+
+- **R1 — a retry that races the in-flight first checkout gets `CART_CHANGED`, not the replay**
+  (`checkout.py:270-272`). Scenario: double submit with the same cookie. Request B reads the cart
+  outside the transaction while A holds the row lock (MVCC: B sees the cart with lines, so no
+  replay), then B blocks on `get_by_token_for_update`, A commits and deletes the cart, B gets
+  None → 409 `ORDERS_CHECKOUT_CART_CHANGED`. No duplicate order is possible (correct), and a
+  further retry replays. If the storefront shows B's answer (A's was abandoned), the customer is
+  told the cart changed although the order exists. Option: when the locked cart is gone, try
+  `placed_from_cart` once after the rollback before refusing. Plan-conformant as written (step 3:
+  "when it is gone ... refuse CART_CHANGED"); not tested either way.
+- **R2 — the cart cookie is now a bearer for the order's private link for 30 minutes.** Whoever
+  holds the cart token (same browser in practice; the cookie is cleared on success) gets the
+  order's `access_token` via the replay. Inherent to decision 31; recorded for plan 004's
+  threat notes. No action.
+- **R3 — a pickup request with an invalid address reports the inner field** (e.g.
+  `address.state`) instead of `address`; documented in Deviations; acceptance criterion
+  "pickup with an address → `address`" still holds for a valid address. No action.
+
+Bug hunt traced: token → cart digest → reader read → replay lookup (digest, `pending_payment`,
+`created_at >= now - 30 min`, newest by `created_at`, `number`) → validation → cart/offers/quote
+/total → `Delivery.create` (real cost and pickup point) → lock + pairs → hold (new inventory
+translations roll everything back) → counter → `Order.place` with derived link digest and cart
+digest → insert (new column) → cart delete → outbox → `PlacedOrder` (token regenerated from the
+id, status from the aggregate). HMAC: key `secret.encode()`, message `b"order-link:" + 16 id
+bytes`, 43-char base64url token, SHA-256 hex digest stored under the existing unique constraint;
+production refuses a missing, empty or <32-character secret at startup; `development`/`test`
+fall back to the documented constant (`AppEnv` has no other value). A new cart never reuses an
+old token (`SetCartLine` mints a fresh token for an unknown one, `cart.py:73-79`), so a replay
+cannot shadow a new cart. Replays read only committed rows: A's order insert and cart delete
+commit together, so there is no window where the cart is gone and the order invisible.
+
+**Result:** no product-code defect found; the repair is correct as far as reviewed. The plan
+stays in `testing` (unchanged): T1–T3 are test and evidence work for the tester, after which
+review repeats on the refreshed coverage (or the main session decides T2/T3 are not required and
+records it). Not moved to `verify`.
+
+### First review 2026-10-16 (superseded by the step 7 repair)
+
 Reviewed 2026-10-16 (reviewer subagent) against `main...HEAD` (commits `018a0cd`, `c7f6221`,
 `76cbd52`; worktree clean).
 
