@@ -3,6 +3,8 @@ from pydantic import ValidationError
 
 from tests.support import make_settings
 
+PROD_SECRET = "p" * 32
+
 
 def test_valid_settings() -> None:
     settings = make_settings(cors_origins="http://a.test, http://b.test,")
@@ -12,7 +14,22 @@ def test_valid_settings() -> None:
 
 
 def test_production_settings_are_valid() -> None:
-    assert make_settings(app_env="production").is_production
+    assert make_settings(app_env="production", order_link_secret=PROD_SECRET).is_production
+
+
+@pytest.mark.parametrize("secret", [None, "", "s" * 31])
+def test_production_requires_an_order_link_secret_of_32_characters(secret: str | None) -> None:
+    with pytest.raises(ValidationError, match="ORDER_LINK_SECRET must have at least 32"):
+        make_settings(app_env="production", order_link_secret=secret)
+
+
+def test_a_32_character_order_link_secret_is_accepted_in_production() -> None:
+    assert make_settings(app_env="production", order_link_secret="s" * 32).is_production
+
+
+def test_the_order_link_secret_is_optional_outside_production() -> None:
+    assert make_settings().order_link_secret is None
+    assert make_settings(app_env="test").order_link_secret is None
 
 
 def test_test_database_name_must_end_in_test() -> None:

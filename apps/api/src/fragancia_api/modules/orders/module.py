@@ -1,12 +1,14 @@
 """Wiring of the orders module for the composition root."""
 
 from fragancia_api.modules.catalog import PresentationOffers
+from fragancia_api.modules.inventory import StockReservations
 from fragancia_api.modules.orders.application.commands.cart import (
     AcknowledgeCartPrices,
     PurgeCarts,
     RemoveCartLine,
     SetCartLine,
 )
+from fragancia_api.modules.orders.application.commands.checkout import PlaceOrder
 from fragancia_api.modules.orders.application.commands.delivery import UpdateDeliveryOptions
 from fragancia_api.modules.orders.application.queries.cart import GetCart
 from fragancia_api.modules.orders.application.queries.delivery import (
@@ -19,6 +21,7 @@ from fragancia_api.modules.orders.http.cart_cookie import CartCookie
 from fragancia_api.modules.orders.http.router import routers
 from fragancia_api.modules.orders.infrastructure.cart_tokens import SecureCartTokens
 from fragancia_api.modules.orders.infrastructure.catalog_offers import CatalogOffersAdapter
+from fragancia_api.modules.orders.infrastructure.order_links import HmacOrderLinks
 from fragancia_api.modules.orders.infrastructure.sql_cart_repository import (
     SqlCartReader,
     SqlCartRepository,
@@ -27,8 +30,16 @@ from fragancia_api.modules.orders.infrastructure.sql_delivery_settings_repositor
     SqlDeliverySettingsReader,
     SqlDeliverySettingsRepository,
 )
+from fragancia_api.modules.orders.infrastructure.sql_order_repository import (
+    SqlOrderReader,
+    SqlOrderRepository,
+)
+from fragancia_api.modules.orders.infrastructure.stock_holds import StockHoldsAdapter
 from fragancia_api.shared.http.services import ServiceRegistry
 from fragancia_api.shared.module import AppModule, Platform, ScheduledJob
+
+# Development and test only: production requires ORDER_LINK_SECRET (see `Settings`).
+_DEV_ORDER_LINK_SECRET = "dev-order-link-secret-not-for-production"  # noqa: S105
 
 
 def register(platform: Platform, services: ServiceRegistry) -> None:
@@ -46,6 +57,12 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     carts = SqlCartRepository(platform.database)
     cart_reader = SqlCartReader(platform.database)
     tokens = SecureCartTokens()
+    secret = platform.settings.order_link_secret
+    links = HmacOrderLinks(
+        secret.get_secret_value()
+        if secret is not None and secret.get_secret_value()
+        else _DEV_ORDER_LINK_SECRET
+    )
     catalog = CatalogOffersAdapter(services.get(PresentationOffers))
     services.add(
         SetCartLine,
@@ -84,6 +101,23 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     services.add(
         PurgeCarts,
         PurgeCarts(carts=carts, transactions=platform.transactions, clock=platform.clock),
+    )
+    services.add(
+        PlaceOrder,
+        PlaceOrder(
+            carts=carts,
+            cart_reader=cart_reader,
+            cart_tokens=tokens,
+            links=links,
+            order_reader=SqlOrderReader(platform.database),
+            offers=catalog,
+            delivery_settings=reader,
+            orders=SqlOrderRepository(platform.database),
+            stocks=StockHoldsAdapter(services.get(StockReservations)),
+            transactions=platform.transactions,
+            events=platform.events,
+            clock=platform.clock,
+        ),
     )
     services.add(
         CartCookie,

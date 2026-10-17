@@ -1,12 +1,15 @@
 """In-memory adapters for unit tests. They honor the same contracts as the SQL ones."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
 from uuid import UUID
 
 from fragancia_api.modules.orders.domain.cart import Cart, Offer
 from fragancia_api.modules.orders.domain.delivery import DeliverySettings
+from fragancia_api.modules.orders.domain.errors import CheckoutStockUnavailable
+from fragancia_api.modules.orders.domain.order import Order, OrderStatus
+from fragancia_api.shared.kernel import DomainError, Err, Ok, Result, new_id
 
 
 class InMemoryDeliverySettings:
@@ -48,6 +51,9 @@ class InMemoryCarts:
     async def save(self, cart: Cart) -> None:
         self.by_id[cart.id] = deepcopy(cart)
 
+    async def delete(self, cart: Cart) -> None:
+        self.by_id.pop(cart.id, None)
+
     async def delete_untouched_before(self, cutoff: datetime, limit: int) -> int:
         stale = sorted(
             (c for c in self.by_id.values() if c.updated_at < cutoff), key=lambda c: c.updated_at
@@ -58,6 +64,48 @@ class InMemoryCarts:
 
     async def by_token(self, token_digest: str) -> Cart | None:
         return self._find(token_digest)
+
+
+class InMemoryOrders:
+    """The `OrderRepository` over a list; the counter starts at 1000 like the migration's seed."""
+
+    def __init__(self, last_number: int = 1000) -> None:
+        self.last_number = last_number
+        self.orders: list[Order] = []
+
+    async def next_number(self) -> int:
+        self.last_number += 1
+        return self.last_number
+
+    async def add(self, order: Order) -> None:
+        self.orders.append(deepcopy(order))
+
+    async def placed_from_cart(self, cart_token_digest: str, since: datetime) -> Order | None:
+        found = [
+            order
+            for order in self.orders
+            if order.cart_token_digest == cart_token_digest
+            and order.status == OrderStatus.PENDING_PAYMENT
+            and order.created_at >= since
+        ]
+        return deepcopy(max(found, key=lambda o: (o.created_at, o.number))) if found else None
+
+
+class InMemoryStockHolds:
+    """The `StockHolds` port: holds succeed with a fresh id, or refuse with the given short
+    lines. Every call is recorded as (reference, quantities, expires_at)."""
+
+    def __init__(self, short_lines: list[dict[str, object]] | None = None) -> None:
+        self.short_lines = short_lines
+        self.calls: list[tuple[str, dict[UUID, int], datetime]] = []
+
+    async def hold(
+        self, reference: str, quantities: Mapping[UUID, int], expires_at: datetime
+    ) -> Result[UUID, DomainError]:
+        self.calls.append((reference, dict(quantities), expires_at))
+        if self.short_lines is not None:
+            return Err(CheckoutStockUnavailable(details={"lines": self.short_lines}))
+        return Ok(new_id())
 
 
 class InMemoryCatalogOffers:

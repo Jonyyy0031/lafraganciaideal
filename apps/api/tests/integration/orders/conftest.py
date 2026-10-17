@@ -22,13 +22,25 @@ _DEFAULT_ROW = text(
 
 @pytest.fixture(autouse=True)
 async def clean_orders(container: Container) -> AsyncIterator[None]:
-    """The seeded default row and no carts before and after each test."""
+    """The seeded default row, no carts, no orders, the order counter at 1000 and an empty stock
+    ledger before and after each test."""
 
     async def reset() -> None:
         async with container.database.engine.begin() as connection:
             await connection.execute(text("TRUNCATE orders.delivery_settings"))
             await connection.execute(_DEFAULT_ROW)
             await connection.execute(text("TRUNCATE orders.carts CASCADE"))
+            # Plan 003: no orders, the gapless counter back at its seed, and an empty stock ledger.
+            await connection.execute(text("TRUNCATE orders.orders CASCADE"))
+            await connection.execute(
+                text("UPDATE orders.order_numbers SET last_number = 1000 WHERE id = 1")
+            )
+            await connection.execute(
+                text(
+                    "TRUNCATE inventory.stock_items, inventory.stock_movements, "
+                    "inventory.reservations, inventory.reservation_lines"
+                )
+            )
 
     await reset()
     yield

@@ -14,6 +14,15 @@ class CartCookie:
     secure: bool
     max_age_seconds: int
 
+    def clear(self, response: Response) -> None:
+        response.delete_cookie(
+            CART_COOKIE,
+            path=COOKIE_PATH,
+            httponly=True,
+            samesite="lax",
+            secure=self.secure,
+        )
+
     def set(self, response: Response, token: str) -> None:
         response.set_cookie(
             CART_COOKIE,

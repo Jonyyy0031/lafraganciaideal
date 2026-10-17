@@ -59,6 +59,9 @@ class Settings(DatabaseSettings):
     login_email_max_attempts: int = Field(default=5, ge=1)
     login_ip_max_attempts: int = Field(default=50, ge=1)
     login_window_minutes: int = Field(default=15, ge=1)
+    # Secret behind the private order links (orders, decision 31). Never rotate it: rotating
+    # breaks every link already sent.
+    order_link_secret: SecretStr | None = None
     # Account emails (identity) and SMTP.
     invitation_ttl_hours: int = Field(default=72, ge=1)
     password_reset_ttl_minutes: int = Field(default=60, ge=1)
@@ -85,6 +88,14 @@ class Settings(DatabaseSettings):
     catalog_import_image_allow_private_hosts: bool = False
     # Largest accepted JSON, form or text request body (binary uploads have their own limit).
     request_max_bytes: int = Field(default=1_048_576, ge=1)
+
+    @model_validator(mode="after")
+    def _check_order_link_secret(self) -> Self:
+        if self.is_production:
+            secret = self.order_link_secret
+            if secret is None or len(secret.get_secret_value()) < 32:
+                raise ValueError("ORDER_LINK_SECRET must have at least 32 characters in production")
+        return self
 
     @model_validator(mode="after")
     def _check_admin_web_url(self) -> Self:

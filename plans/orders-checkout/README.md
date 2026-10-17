@@ -26,7 +26,7 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
 | 001  | Delivery options | — | New `orders` module. The owners configure home delivery (flat rate, free from an amount), local delivery (postal codes and a price) and one pickup point. A public quote says which methods apply to a postal code and subtotal, and at what cost |
 | 002  | Server-side cart | 001 | A cart identified by a cookie: add, change and remove lines, at most 10 units per presentation. It shows current prices and availability, flags changed prices, and is purged after 30 days |
 | 003  | Checkout → order | 002 | Guest details, address, delivery method and cost, optional invoice data, totals and an `LFI-` number. A private link; units reserved for 30 minutes; the order starts "pending payment" |
-| 004  | Order lifecycle | 003 | The panel moves the order through its states; cancelling before payment releases the stock. The customer's order page, by private link or by number and email |
+| 004  | Order lifecycle | 003 | The panel moves the order through its states; cancelling before payment releases the stock, and an unpaid order cancels itself when its reservation expires. The customer's order page, by private link or by number and email |
 | 005  | Order emails | 004 | The customer gets a confirmation and every state change; the owners get every paid order |
 
 ## Dependency notes
@@ -118,6 +118,37 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
     "antes $X, ahora $Y".
     - It clears when the customer taps "Entendido" or changes the quantity.
     - The checkout requires nothing more, because its total already uses the new price.
+24. (2026-10-16) **An unpaid order cancels itself when its reservation expires.**
+    - A job moves it to Cancelado with the reason "no pagado a tiempo" and releases the
+      reservation; the customer cannot pay it afterwards.
+    - The payments initiative extends the reservation for OXXO and SPEI (decision 18), so only
+      genuinely abandoned orders expire. The job belongs to plan 004, with the other state
+      changes.
+25. (2026-10-16) **Placing the order empties the cart.** If the payment fails, the customer
+    retries from the order, not from the cart.
+26. (2026-10-16) **The checkout refuses a total that changed.** The customer sends the total they
+    saw; when the real total (prices plus delivery) differs, the checkout answers with the new
+    figures and creates no order.
+27. (2026-10-16) **Invoice data is checked against the SAT catalogs.**
+    - The RFC must have a valid format (12 characters for a company, 13 for a person).
+    - The tax regime and the CFDI use are chosen from the SAT lists, and the fiscal postal code
+      has 5 digits.
+    - Whether a regime fits the RFC type or the CFDI use is not checked: the shop reviews it
+      when it invoices by hand.
+28. (2026-10-16) **Addresses use the Mexican format:**
+    - street, exterior number, optional interior number;
+    - colonia, postal code, municipality or alcaldía;
+    - state, chosen from the 32;
+    - optional references.
+29. (2026-10-16) **One full-name field and a 10-digit Mexican phone.** Spaces, dashes and a
+    leading +52 are ignored.
+30. (2026-10-16) **Orders are numbered from LFI-1001, without gaps.** A refused checkout does not
+    use up a number, and a cancelled order keeps its own.
+31. (2026-10-16) **The private link is derived, and a retried checkout gets its order back.**
+    - The link token is an HMAC of the order id with a server secret. It is not stored, so the
+      confirmation email (plan 005) can include it.
+    - If the checkout response is lost, retrying with the same cart cookie within 30 minutes
+      answers the same order instead of "carrito vacío".
 
 ## Delivered
 

@@ -68,3 +68,14 @@ def build_settings(**overrides: object) -> DeliverySettings:
             return settings
         case Err(error):
             raise AssertionError(f"the test settings are invalid: {error}")
+
+
+class FakeOrderLinks:
+    """The `OrderLinks` port without a secret: the token is `link:<order id>` and the digest is
+    `digest:<token>`."""
+
+    def token(self, order_id: UUID) -> str:
+        return f"link:{order_id}"
+
+    def digest(self, token: str) -> str:
+        return f"digest:{token}"
