@@ -19,6 +19,7 @@ from fragancia_api.modules.orders.contracts import CheckoutInvoice, PlacedOrder
 from fragancia_api.modules.orders.domain.order import Order
 from fragancia_api.modules.orders.infrastructure.cart_tokens import SecureCartTokens
 from fragancia_api.modules.orders.infrastructure.catalog_offers import CatalogOffersAdapter
+from fragancia_api.modules.orders.infrastructure.order_links import HmacOrderLinks
 from fragancia_api.modules.orders.infrastructure.sql_cart_repository import (
     SqlCartReader,
     SqlCartRepository,
@@ -26,7 +27,10 @@ from fragancia_api.modules.orders.infrastructure.sql_cart_repository import (
 from fragancia_api.modules.orders.infrastructure.sql_delivery_settings_repository import (
     SqlDeliverySettingsReader,
 )
-from fragancia_api.modules.orders.infrastructure.sql_order_repository import SqlOrderRepository
+from fragancia_api.modules.orders.infrastructure.sql_order_repository import (
+    SqlOrderReader,
+    SqlOrderRepository,
+)
 from fragancia_api.modules.orders.infrastructure.stock_holds import StockHoldsAdapter
 from fragancia_api.shared.infrastructure.clock import SystemClock
 from fragancia_api.shared.infrastructure.database import SqlTransactionRunner
@@ -81,12 +85,13 @@ def real_place_order(container: Container, orders: Any = None) -> PlaceOrder:
     """`PlaceOrder` over the real adapters; `orders` may replace the order repository."""
     database = container.database
     carts = SqlCartRepository(database)
-    tokens = SecureCartTokens()
+    links = HmacOrderLinks("integration-order-link-secret-0123456789")
     return PlaceOrder(
         carts=carts,
         cart_reader=SqlCartReader(database),
-        cart_tokens=tokens,
-        access_tokens=tokens,
+        cart_tokens=SecureCartTokens(),
+        links=links,
+        order_reader=SqlOrderReader(database),
         offers=CatalogOffersAdapter(container.services.get(PresentationOffers)),
         delivery_settings=SqlDeliverySettingsReader(database),
         orders=orders or SqlOrderRepository(database),
@@ -216,6 +221,50 @@ async def test_the_second_order_takes_the_next_number(
     assert first.access_token != second.access_token
     assert await last_number(container) == 1002
     assert await item_row(container, stock) == (9, 2)
+
+
+async def test_a_retry_after_a_lost_response_gets_the_same_order_and_link(
+    container: Container, catalog_rows: CatalogRows
+) -> None:
+    await configure_delivery(container)
+    _, [stock] = await catalog_rows.perfume("Retry", sizes=({"stock_available": 9},))
+    await restock(container, stock, 9)
+    token = await add_to_cart(container, [(stock, 2)])
+    use_case = real_place_order(container)
+
+    first = placed(await use_case.execute(token, request("home", 518_000)))
+    again = placed(await use_case.execute(token, request("home", 1)))  # body ignored
+
+    assert again == first
+    assert first.access_token == HmacOrderLinks("integration-order-link-secret-0123456789").token(
+        (await rows(container, "SELECT id FROM orders.orders"))[0]["id"],
+    )
+    assert await count(container, "orders") == 1
+    assert await table_count(container, "reservations") == 1
+    assert await item_row(container, stock) == (9, 2)
+    assert await last_number(container) == 1001
+    assert len(await order_placed_rows(container)) == 1
+
+
+async def test_no_replay_after_the_payment_window_or_for_another_cart(
+    container: Container, catalog_rows: CatalogRows
+) -> None:
+    await configure_delivery(container)
+    _, [stock] = await catalog_rows.perfume("NoRetry", sizes=({"stock_available": 9},))
+    await restock(container, stock, 9)
+    token = await add_to_cart(container, [(stock, 1)])
+    use_case = real_place_order(container)
+    placed(await use_case.execute(token, request("home", 268_000)))
+
+    other = refusal(await use_case.execute("another-cookie", request("home", 268_000)))
+    async with container.database.engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE orders.orders SET created_at = now() - interval '31 minutes'")
+        )
+    late = refusal(await use_case.execute(token, request("home", 268_000)))
+
+    assert other.code == late.code == "ORDERS_CHECKOUT_CART_EMPTY"
+    assert await count(container, "orders") == 1
 
 
 async def test_a_cart_of_only_made_to_order_lines_creates_no_reservation(

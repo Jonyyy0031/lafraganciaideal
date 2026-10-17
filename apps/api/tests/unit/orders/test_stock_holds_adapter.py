@@ -7,6 +7,8 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
+import pytest
+
 from fragancia_api.modules.orders.infrastructure.stock_holds import StockHoldsAdapter
 from fragancia_api.shared.kernel import ConflictError, DomainError, Err, Ok, Result
 from tests.unit.orders.support import NOW, presentation_id
@@ -56,8 +58,23 @@ async def test_inventorys_stock_refusal_becomes_the_checkout_stock_refusal_with_
     assert result.error.details == {"lines": lines}
 
 
+@pytest.mark.parametrize(
+    "code", ["INVENTORY_PRESENTATION_NOT_STOCKED", "INVENTORY_PRESENTATION_NOT_FOUND"]
+)
+async def test_a_presentation_that_stopped_being_stocked_or_vanished_means_the_cart_changed(
+    code: str,
+) -> None:
+    fake = FakeReservations(Err(InventoryError(code=code, message="inventory's own message")))
+
+    result = await StockHoldsAdapter(fake).hold("r", {presentation_id(1): 1}, NOW)  # type: ignore[arg-type]
+
+    assert isinstance(result, Err)
+    assert result.error.code == "ORDERS_CHECKOUT_CART_CHANGED"
+    assert result.error.details is None or result.error.details == {}
+
+
 async def test_any_other_inventory_error_passes_through_unchanged() -> None:
-    other = InventoryError(code="INVENTORY_PRESENTATION_NOT_STOCKED", message="not stocked")
+    other = InventoryError(code="INVENTORY_SOMETHING_ELSE", message="other")
     fake = FakeReservations(Err(other))
 
     result = await StockHoldsAdapter(fake).hold("r", {presentation_id(1): 1}, NOW)  # type: ignore[arg-type]

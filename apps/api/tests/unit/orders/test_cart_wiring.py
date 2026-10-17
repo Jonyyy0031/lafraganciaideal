@@ -39,7 +39,7 @@ async def test_the_container_resolves_every_cart_service(service: type) -> None:
 async def test_the_registered_cookie_is_secure_only_in_production(
     environment: str, secure: bool
 ) -> None:
-    container = build_container(make_settings(app_env=environment))
+    container = build_container(make_settings(app_env=environment, order_link_secret="x" * 32))
 
     cookie = container.services.get(CartCookie)
 

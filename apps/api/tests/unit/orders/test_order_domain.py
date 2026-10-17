@@ -10,7 +10,7 @@ from fragancia_api.modules.orders.domain.customer import (
     Invoice,
     Phone,
 )
-from fragancia_api.modules.orders.domain.delivery import DeliveryMethod
+from fragancia_api.modules.orders.domain.delivery import DeliveryMethod, Pickup
 from fragancia_api.modules.orders.domain.order import (
     FIRST_ORDER_NUMBER,
     ORDER_NUMBER_PREFIX,
@@ -22,7 +22,7 @@ from fragancia_api.modules.orders.domain.order import (
     OrderStatus,
     format_order_number,
 )
-from fragancia_api.shared.kernel import Ok, Result
+from fragancia_api.shared.kernel import Err, Ok, Result
 from tests.unit.orders.support import NOW, presentation_id
 
 ORDER_ID = UUID(int=900)
@@ -71,6 +71,7 @@ def place(*lines: OrderLine, cost: int = 0, invoice: Invoice | None = None) -> O
         id=ORDER_ID,
         number=1001,
         access_token_digest="d" * 64,
+        cart_token_digest="c" * 64,
         name=unwrap(CustomerName.create("Ana López")),
         email=unwrap(CustomerEmail.create("ana@example.com")),
         phone=unwrap(Phone.create("9981234567")),
@@ -197,6 +198,7 @@ def test_the_invoice_and_the_delivery_address_are_kept_as_given() -> None:
         id=ORDER_ID,
         number=1002,
         access_token_digest="e" * 64,
+        cart_token_digest="c" * 64,
         name=unwrap(CustomerName.create("Ana López")),
         email=unwrap(CustomerEmail.create("ana@example.com")),
         phone=unwrap(Phone.create("9981234567")),
@@ -211,3 +213,72 @@ def test_the_invoice_and_the_delivery_address_are_kept_as_given() -> None:
     assert order.invoice == invoice
     assert order.delivery.address == address
     assert order.reservation_id is None
+
+
+# --- Delivery.create and OrderLine.create (review repair, decision 31) --------------------------
+
+
+def an_address() -> Address:
+    return unwrap(
+        Address.create(
+            street="Reforma",
+            exterior_number="1",
+            interior_number=None,
+            neighborhood="Centro",
+            postal_code="01000",
+            municipality="Cuauhtémoc",
+            state="CMX",
+            references=None,
+        )
+    )
+
+
+def test_home_and_local_delivery_need_an_address() -> None:
+    for method in (DeliveryMethod.HOME, DeliveryMethod.LOCAL):
+        result = Delivery.create(method, 100, None, None)
+        assert isinstance(result, Err)
+        assert result.error.code == "ORDERS_CUSTOMER_DATA_INVALID"
+        assert result.error.details == {"field": "address"}
+
+
+def test_home_and_local_delivery_keep_the_address_and_no_pickup_point() -> None:
+    address = an_address()
+    pickup = Pickup(True, "Calle 1", "10-18")
+
+    for method in (DeliveryMethod.HOME, DeliveryMethod.LOCAL):
+        created = unwrap(Delivery.create(method, 18_000, address, pickup))
+        assert created == Delivery(method, 18_000, address, None, None)
+
+
+def test_pickup_must_not_carry_an_address() -> None:
+    result = Delivery.create(DeliveryMethod.PICKUP, 0, an_address(), Pickup(True, "a", "h"))
+
+    assert isinstance(result, Err)
+    assert result.error.details == {"field": "address"}
+
+
+def test_pickup_copies_the_pickup_point_and_has_no_address() -> None:
+    created = unwrap(
+        Delivery.create(DeliveryMethod.PICKUP, 0, None, Pickup(True, "Calle 1", "10-18"))
+    )
+
+    assert created == Delivery(DeliveryMethod.PICKUP, 0, None, "Calle 1", "10-18")
+
+
+def test_an_order_line_total_is_the_unit_price_times_the_quantity() -> None:
+    created = OrderLine.create(
+        presentation_id=presentation_id(1),
+        perfume_id=UUID(int=1001),
+        label="Perfume 1",
+        ml=100,
+        availability="in_stock",
+        lead_time_min_days=None,
+        lead_time_max_days=None,
+        quantity=3,
+        unit_price_cents=250_000,
+        regular_price_cents=300_000,
+    )
+
+    assert created.line_total_cents == 750_000
+    assert (created.quantity, created.unit_price_cents) == (3, 250_000)
+    assert created.regular_price_cents == 300_000

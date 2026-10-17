@@ -97,13 +97,15 @@ def cleared_cart_cookie(header: str) -> bool:
 # --- success ------------------------------------------------------------------------------------
 
 
-async def test_a_valid_checkout_answers_201_with_the_placed_order(client: AsyncClient) -> None:
+async def test_a_valid_checkout_answers_201_with_the_placed_order(
+    client: AsyncClient, harness: Harness
+) -> None:
     response = await client.post(CHECKOUT, json=body(), headers=COOKIE)
 
     assert response.status_code == 201
     assert response.json() == {
         "number": "LFI-1001",
-        "access_token": "token-1",
+        "access_token": f"link:{harness.world.orders.orders[0].id}",
         "status": "pending_payment",
         "subtotal_cents": 600_000,
         "delivery_cents": HOME_COST,
@@ -132,15 +134,17 @@ async def test_a_secure_cookie_service_clears_the_cookie_as_secure() -> None:
     assert "secure" in response.headers["set-cookie"].lower()
 
 
-async def test_after_a_success_the_same_cookie_finds_no_cart(
+async def test_after_a_success_the_same_cookie_gets_the_same_order_back(
     harness: Harness, client: AsyncClient
 ) -> None:
-    await client.post(CHECKOUT, json=body(), headers=COOKIE)
+    first = await client.post(CHECKOUT, json=body(), headers=COOKIE)
 
     again = await client.post(CHECKOUT, json=body(), headers=COOKIE)
 
-    assert again.status_code == 409
-    assert again.json()["code"] == "ORDERS_CHECKOUT_CART_EMPTY"
+    assert again.status_code == 201
+    assert again.json() == first.json()
+    assert cleared_cart_cookie(again.headers["set-cookie"])
+    assert len(harness.world.orders.orders) == 1
     assert harness.world.carts.by_id == {}
 
 

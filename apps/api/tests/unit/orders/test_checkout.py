@@ -36,6 +36,7 @@ from fragancia_api.shared.infrastructure.in_memory import (
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 from tests.unit.orders.support import (
     NOW,
+    FakeOrderLinks,
     build_settings,
     made_to_order_offer,
     make_offer,
@@ -158,14 +159,15 @@ class World:
         self.events = RecordingEventPublisher()
         self.clock = FixedClock()
         self.cart_tokens = SequenceTokens()
-        self.access_tokens = SequenceTokens()
+        self.links = FakeOrderLinks()
 
     def place_order(self) -> PlaceOrder:
         return PlaceOrder(
             carts=self.carts,
             cart_reader=self.carts,
             cart_tokens=self.cart_tokens,
-            access_tokens=self.access_tokens,
+            links=self.links,
+            order_reader=self.orders,
             offers=self.offers,
             delivery_settings=self.delivery,
             orders=self.orders,
@@ -284,7 +286,7 @@ async def test_a_home_order_returns_the_number_the_token_and_the_totals() -> Non
     placed = ok(await world.place(request("home", subtotal + HOME_COST)))
 
     assert placed.number == "LFI-1001"
-    assert placed.access_token == "token-1"
+    assert placed.access_token == f"link:{world.orders.orders[0].id}"
     assert placed.status == "pending_payment"
     assert (placed.subtotal_cents, placed.delivery_cents, placed.total_cents) == (
         600_000,
@@ -310,7 +312,8 @@ async def test_the_stored_order_has_the_normalized_customer_and_only_the_digest_
         "ana@example.com",
         "9981234567",
     )
-    assert order.access_token_digest == "digest:token-1"
+    assert order.access_token_digest == f"digest:link:{order.id}"
+    assert order.cart_token_digest == f"digest:{CART_TOKEN}"
     assert order.status.value == "pending_payment"
     assert order.invoice is None
     assert (order.created_at, order.payment_due_at) == (NOW, NOW + timedelta(minutes=30))
@@ -404,7 +407,11 @@ async def test_the_second_order_takes_the_next_number() -> None:
     second = ok(await world.place(request("home", IN_STOCK_PRICE + HOME_COST), "second"))
 
     assert (first.number, second.number) == ("LFI-1001", "LFI-1002")
-    assert (first.access_token, second.access_token) == ("token-1", "token-2")
+    first_order, second_order = world.orders.orders
+    assert (first.access_token, second.access_token) == (
+        f"link:{first_order.id}",
+        f"link:{second_order.id}",
+    )
     assert [o.number for o in world.orders.orders] == [1001, 1002]
 
 
@@ -857,3 +864,55 @@ async def test_a_refused_checkout_does_not_burn_a_number() -> None:
     placed = ok(await world.place(request("home", 618_000)))
 
     assert placed.number == "LFI-1001"
+
+
+# --- a retried checkout gets its order back (decision 31) ---------------------------------------
+
+
+async def test_a_retry_within_30_minutes_answers_the_same_order_without_a_second_one() -> None:
+    world = World(build_settings(home_free_from_cents=None))
+    full_cart(world)
+    first = ok(await world.place(request("home", 618_000)))
+    world.clock.current = NOW + timedelta(minutes=29, seconds=59)
+
+    again = ok(await world.place(request("home", 1)))  # the body is ignored
+
+    assert again == first
+    assert len(world.orders.orders) == 1
+    assert len(world.stocks.calls) == 1
+    assert len(world.events.published) == 1
+    assert world.orders.last_number == 1001
+
+
+async def test_no_replay_after_30_minutes() -> None:
+    world = World(build_settings(home_free_from_cents=None))
+    full_cart(world)
+    ok(await world.place(request("home", 618_000)))
+    world.clock.current = NOW + timedelta(minutes=30, seconds=1)
+
+    error = refused(await world.place(request("home", 618_000)))
+
+    assert error.code == "ORDERS_CHECKOUT_CART_EMPTY"
+
+
+async def test_no_replay_for_another_cart() -> None:
+    world = World(build_settings(home_free_from_cents=None))
+    full_cart(world)
+    ok(await world.place(request("home", 618_000)))
+
+    error = refused(await world.place(request("home", 618_000), "another-cart"))
+
+    assert error.code == "ORDERS_CHECKOUT_CART_EMPTY"
+
+
+async def test_the_link_token_is_the_derived_one_and_only_its_digest_is_stored() -> None:
+    world = World(build_settings(home_free_from_cents=None))
+    full_cart(world)
+
+    placed = ok(await world.place(request("home", 618_000)))
+
+    [order] = world.orders.orders
+    assert placed.access_token == world.links.token(order.id)
+    assert order.access_token_digest == world.links.digest(placed.access_token)
+    assert order.cart_token_digest == world.cart_tokens.digest(CART_TOKEN)
+    assert placed.status == order.status.value

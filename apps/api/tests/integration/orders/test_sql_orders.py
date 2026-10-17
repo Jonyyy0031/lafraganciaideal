@@ -27,7 +27,10 @@ from fragancia_api.modules.orders.domain.order import (
     OrderLine,
 )
 from fragancia_api.modules.orders.infrastructure.sql_cart_repository import SqlCartRepository
-from fragancia_api.modules.orders.infrastructure.sql_order_repository import SqlOrderRepository
+from fragancia_api.modules.orders.infrastructure.sql_order_repository import (
+    SqlOrderReader,
+    SqlOrderRepository,
+)
 from fragancia_api.modules.orders.infrastructure.stock_holds import StockHoldsAdapter
 from fragancia_api.shared.infrastructure.database import SqlTransactionRunner
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result, new_id
@@ -78,6 +81,8 @@ def make_order(
     *,
     number: int = 1001,
     digest: str | None = None,
+    cart_digest: str | None = None,
+    at: datetime = T0,
     pickup: bool = False,
     invoice: bool = False,
     lines: tuple[OrderLine, ...] | None = None,
@@ -122,6 +127,7 @@ def make_order(
         id=order_id,
         number=number,
         access_token_digest=digest or order_id.hex.ljust(64, "0"),
+        cart_token_digest=cart_digest or "c" * 64,
         name=unwrap(CustomerName.create("Ana López")),
         email=unwrap(CustomerEmail.create("ana@example.com")),
         phone=unwrap(Phone.create("9981234567")),
@@ -129,8 +135,8 @@ def make_order(
         invoice=the_invoice,
         lines=lines if lines is not None else (order_line(1), order_line(2, 1)),
         reservation_id=reservation_id,
-        payment_due_at=T0 + timedelta(minutes=30),
-        now=T0,
+        payment_due_at=at + timedelta(minutes=30),
+        now=at,
     )
 
 
@@ -527,7 +533,7 @@ async def test_the_customer_email_is_indexed(container: Container) -> None:
         "AND NOT i.indisunique",
     )
 
-    assert {r["name"] for r in indexed} == {"customer_email"}
+    assert {r["name"] for r in indexed} == {"customer_email", "cart_token_digest"}
 
 
 # --- SqlCartRepository.delete -------------------------------------------------------------------
@@ -629,7 +635,7 @@ async def test_holding_the_same_reference_twice_is_refused_by_inventory_unchange
     assert await item_row(container, presentation) == (5, 1)
 
 
-async def test_a_made_to_order_presentation_is_refused_by_inventory_unchanged(
+async def test_a_made_to_order_presentation_means_the_cart_changed(
     container: Container, catalog_rows: CatalogRows
 ) -> None:
     _, [presentation] = await catalog_rows.perfume(
@@ -642,7 +648,7 @@ async def test_a_made_to_order_presentation_is_refused_by_inventory_unchanged(
     result = await adapter(container).hold("order:abc", {presentation: 1}, in_minutes(30))
 
     assert isinstance(result, Err)
-    assert result.error.code == "INVENTORY_PRESENTATION_NOT_STOCKED"
+    assert result.error.code == "ORDERS_CHECKOUT_CART_CHANGED"
 
 
 async def test_a_hold_inside_the_callers_transaction_rolls_back_with_it(
@@ -660,3 +666,89 @@ async def test_a_hold_inside_the_callers_transaction_rolls_back_with_it(
 
     assert await item_row(container, presentation) == (5, 0)
     assert await table_count(container, "reservations") == 0
+
+
+async def test_a_presentation_that_does_not_exist_means_the_cart_changed(
+    container: Container,
+) -> None:
+    result = await adapter(container).hold("order:abc", {new_id(): 1}, in_minutes(30))
+
+    assert isinstance(result, Err)
+    assert result.error.code == "ORDERS_CHECKOUT_CART_CHANGED"
+    assert await table_count(container, "reservations") == 0
+
+
+# --- SqlOrderReader.placed_from_cart (decision 31) ----------------------------------------------
+
+
+async def test_the_cart_digest_is_stored_with_the_order(container: Container) -> None:
+    order = make_order(cart_digest="f" * 64)
+
+    await store_order(container, order)
+
+    stored = await row(container, "SELECT cart_token_digest FROM orders.orders")
+    assert stored["cart_token_digest"] == "f" * 64
+
+
+async def test_placed_from_cart_returns_the_whole_order(container: Container) -> None:
+    order = make_order(pickup=True, invoice=True, cart_digest="f" * 64)
+    await store_order(container, order)
+
+    found = await SqlOrderReader(container.database).placed_from_cart("f" * 64, T0)
+
+    assert found is not None
+    assert found.id == order.id
+    assert found.access_token_digest == order.access_token_digest
+    assert found.cart_token_digest == "f" * 64
+    assert found.status == order.status
+    assert found.number == 1001
+    assert found.delivery == order.delivery
+    assert found.invoice == order.invoice
+    assert found.lines == order.lines
+    assert (found.subtotal_cents, found.total_cents) == (order.subtotal_cents, order.total_cents)
+    assert found.payment_due_at == order.payment_due_at
+    assert found.created_at == order.created_at
+
+
+async def test_placed_from_cart_returns_a_home_order_with_its_address(
+    container: Container,
+) -> None:
+    order = make_order(cart_digest="f" * 64)
+    await store_order(container, order)
+
+    found = await SqlOrderReader(container.database).placed_from_cart("f" * 64, T0)
+
+    assert found is not None
+    assert found.delivery == order.delivery
+    assert found.delivery.address is not None
+
+
+async def test_placed_from_cart_returns_the_newest_order_of_that_cart(
+    container: Container,
+) -> None:
+    older = make_order(number=1001, cart_digest="f" * 64, at=T0)
+    newer = make_order(number=1002, cart_digest="f" * 64, at=T0 + timedelta(minutes=5))
+    await store_order(container, older)
+    await store_order(container, newer)
+
+    found = await SqlOrderReader(container.database).placed_from_cart("f" * 64, T0)
+
+    assert found is not None
+    assert found.id == newer.id
+
+
+async def test_placed_from_cart_ignores_old_orders_other_carts_and_other_statuses(
+    container: Container,
+) -> None:
+    order = make_order(cart_digest="f" * 64, at=T0)
+    await store_order(container, order)
+    reader = SqlOrderReader(container.database)
+
+    assert await reader.placed_from_cart("f" * 64, T0 + timedelta(seconds=1)) is None
+    assert await reader.placed_from_cart("e" * 64, T0) is None
+    async with container.database.engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE orders.orders SET status = 'cancelled' WHERE id = :id"),
+            {"id": order.id},
+        )
+    assert await reader.placed_from_cart("f" * 64, T0) is None
