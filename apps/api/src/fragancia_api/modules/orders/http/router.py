@@ -184,7 +184,12 @@ async def place_order(
     (`details.lines`), `ORDERS_CHECKOUT_CART_CHANGED`, `ORDERS_CHECKOUT_DELIVERY_UNAVAILABLE`
     (`details.method`), `ORDERS_CHECKOUT_TOTAL_CHANGED` (the real figures in `details`) or
     `ORDERS_CHECKOUT_STOCK_UNAVAILABLE` (`details.lines`). 422 `ORDERS_CUSTOMER_DATA_INVALID`
-    with `details.field` naming the broken field, or `ORDERS_DELIVERY_OPTIONS_INVALID`."""
+    with `details.field` naming the broken field, or `ORDERS_DELIVERY_OPTIONS_INVALID`.
+
+    Retrying after a lost response (decision 31): when the cart cookie's cart is gone because an
+    order was placed from it in the last 30 minutes and is still waiting for payment, the same
+    201 is answered again (same number, same `access_token`, no second order or reservation).
+    The request body is ignored in that case."""
     placed = unwrap(await use_case.execute(token, body))
     cookie.clear(response)
     return placed

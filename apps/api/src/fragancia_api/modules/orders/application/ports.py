@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fragancia_api.modules.orders.domain.cart import Cart, Offer
 from fragancia_api.modules.orders.domain.delivery import DeliverySettings
+from fragancia_api.modules.orders.domain.order import Order
 from fragancia_api.shared.kernel import DomainError, Result
 
 
@@ -36,10 +37,11 @@ class CartTokens(Protocol):
     def digest(self, token: str) -> str: ...
 
 
-class OrderAccessTokens(Protocol):
-    """The order's private-link token: random, with only its digest stored."""
+class OrderLinks(Protocol):
+    """The order's private-link token (decision 31): derived from the order id with a server
+    secret, so it can be regenerated and is never stored; only its digest is."""
 
-    def new(self) -> str: ...
+    def token(self, order_id: UUID) -> str: ...
 
     def digest(self, token: str) -> str: ...
 
@@ -52,6 +54,16 @@ class StockHolds(Protocol):
         self, reference: str, quantities: Mapping[UUID, int], expires_at: datetime
     ) -> Result[UUID, DomainError]:
         """The reservation id; a shortage comes back as `CheckoutStockUnavailable`."""
+        ...
+
+
+class OrderReader(Protocol):
+    """Read side: orders outside any transaction (`Database.reader()`)."""
+
+    async def placed_from_cart(self, cart_token_digest: str, since: datetime) -> Order | None:
+        """The newest order placed from the cart with that token digest that is still
+        `pending_payment` and was created at or after `since`; None when there is none. Lets a
+        retried checkout get its order back (decision 31)."""
         ...
 
 

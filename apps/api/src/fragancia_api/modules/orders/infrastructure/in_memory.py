@@ -8,7 +8,7 @@ from uuid import UUID
 from fragancia_api.modules.orders.domain.cart import Cart, Offer
 from fragancia_api.modules.orders.domain.delivery import DeliverySettings
 from fragancia_api.modules.orders.domain.errors import CheckoutStockUnavailable
-from fragancia_api.modules.orders.domain.order import Order
+from fragancia_api.modules.orders.domain.order import Order, OrderStatus
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result, new_id
 
 
@@ -79,6 +79,16 @@ class InMemoryOrders:
 
     async def add(self, order: Order) -> None:
         self.orders.append(deepcopy(order))
+
+    async def placed_from_cart(self, cart_token_digest: str, since: datetime) -> Order | None:
+        found = [
+            order
+            for order in self.orders
+            if order.cart_token_digest == cart_token_digest
+            and order.status == OrderStatus.PENDING_PAYMENT
+            and order.created_at >= since
+        ]
+        return deepcopy(max(found, key=lambda o: (o.created_at, o.number))) if found else None
 
 
 class InMemoryStockHolds:

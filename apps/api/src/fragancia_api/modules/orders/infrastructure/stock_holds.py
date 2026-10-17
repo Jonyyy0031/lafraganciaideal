@@ -5,10 +5,15 @@ from datetime import datetime
 from uuid import UUID
 
 from fragancia_api.modules.inventory import StockReservations
-from fragancia_api.modules.orders.domain.errors import CheckoutStockUnavailable
+from fragancia_api.modules.orders.domain.errors import CheckoutCartChanged, CheckoutStockUnavailable
 from fragancia_api.shared.kernel import DomainError, Err, Result
 
 _INVENTORY_STOCK_UNAVAILABLE = "INVENTORY_STOCK_UNAVAILABLE"
+# The owner switched a presentation to made to order, or removed it, during the checkout: the
+# cart the guest confirmed no longer matches the catalog.
+_CART_CHANGED_CODES = frozenset(
+    {"INVENTORY_PRESENTATION_NOT_STOCKED", "INVENTORY_PRESENTATION_NOT_FOUND"}
+)
 
 
 class StockHoldsAdapter:
@@ -22,5 +27,7 @@ class StockHoldsAdapter:
         match result:
             case Err(error) if error.code == _INVENTORY_STOCK_UNAVAILABLE:
                 return Err(CheckoutStockUnavailable(details=error.details))
+            case Err(error) if error.code in _CART_CHANGED_CODES:
+                return Err(CheckoutCartChanged())
             case _:
                 return result

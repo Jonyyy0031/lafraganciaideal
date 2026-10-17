@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["002"]
@@ -396,6 +396,8 @@ applies README decisions 1, 3, 4, 8, 11, 13, 14, 16, 18, 20, 22 and the new 24â€
      `apps/api/src/fragancia_api/modules/orders/http/router.py` (modify),
      `apps/api/openapi.json` (modify),
      `docs/architecture.md` (modify),
+     `apps/api/tests/unit/test_settings.py` (modify),
+     `apps/api/tests/unit/test_http_platform.py` (modify),
      `apps/api/tests/unit/orders/` (modify), `apps/api/tests/integration/orders/` (modify)
    - Do:
      - **B1 (scope):** the test directories are now listed on step 6's `Files (tests):` line.
@@ -509,6 +511,46 @@ free from 250000; local 9000 for 77500; pickup on), and the QA perfume from plan
 ## Deviations
 
 None. (Notes: `CustomerDataInvalid` fields for `PostalCode` failures are re-wrapped in `customer.py`; `Subtotal` errors pass through as `ORDERS_DELIVERY_OPTIONS_INVALID`, documented in the route. The migration downgrade was not run on a scratch database by the implementer; it belongs to the integration tests.)
+
+Step 7 (2026-10-17): the first review's evidence (Test coverage, Review findings) predates the
+repair and is superseded by it; testing, review and verify repeat. Deviations of the repair:
+
+- The production validator for `ORDER_LINK_SECRET` broke three existing settings tests that
+  build production settings. Their files (`tests/unit/test_settings.py`,
+  `tests/unit/test_http_platform.py`) were added to step 7's file list (cosmetic: they now pass
+  the secret).
+- The replay lookup is a read-side port, `OrderReader.placed_from_cart` (`SqlOrderReader`), not
+  a method of the write-side `OrderRepository`: `Database.session` raises outside a transaction,
+  and the plan allows "a reader-port method with the same shape". `InMemoryOrders` implements
+  both. `domain/repositories.py` therefore did not change.
+- `PlaceOrder` now reads the cart and tries the replay BEFORE validating the body (the replay
+  ignores the body); a cart with a token but no lines and no recent order still validates the
+  body first and then answers `ORDERS_CHECKOUT_CART_EMPTY`, as before. The rule "address
+  required for home/local, forbidden for pickup" is checked in validation through
+  `Delivery.create` with placeholders (to keep the error precedence), and the real
+  `Delivery.create` runs again with the cost and the pickup point. One consequence: a pickup
+  request with an INVALID address now reports the address field's own error instead of `address`.
+
+## Repair log
+
+- 2026-10-17, step 7 (review repair; decision 31), implementer:
+  - **B1:** plan-only; test directories already on step 6's `Files (tests):` line.
+  - **L2:** `Settings.order_link_secret` (+ production validator, `.env.example`);
+    `OrderLinks` port replaces `OrderAccessTokens`; `HmacOrderLinks`; `Order.cart_token_digest`;
+    migration `0020_orders_cart_token`; `OrderReader.placed_from_cart` and the replay in
+    `PlaceOrder`; route docstring.
+  - **L1:** `StockHoldsAdapter` maps `INVENTORY_PRESENTATION_NOT_STOCKED` and
+    `INVENTORY_PRESENTATION_NOT_FOUND` to `ORDERS_CHECKOUT_CART_CHANGED`.
+  - **L3:** `Delivery.create`, `OrderLine.create`. **L4:** `status=order.status.value`.
+  - `docs/architecture.md` and `openapi.json` updated.
+  - Tests updated: unit and integration for the renamed port, `PlaceOrder` arguments and
+    `Order.place(cart_token_digest=...)`; the old "same cookie finds no cart" and "made to order
+    passes through" tests now assert the replay and `CART_CHANGED`; the email-index test now
+    expects two indexes. Tests added: `test_order_links.py`, replay (unit, http, integration),
+    no replay after 30 minutes or for another cart, the two inventory translations,
+    `Delivery.create`, `OrderLine.create`, the settings validator, `SqlOrderReader`, and
+    `test_migration_0020_orders_cart_token.py` (upgrade, downgrade, re-upgrade on a scratch
+    database).
 
 ## Test coverage
 

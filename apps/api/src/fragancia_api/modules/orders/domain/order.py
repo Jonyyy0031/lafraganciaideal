@@ -15,8 +15,9 @@ from fragancia_api.modules.orders.domain.customer import (
     Invoice,
     Phone,
 )
-from fragancia_api.modules.orders.domain.delivery import DeliveryMethod
-from fragancia_api.shared.kernel import AggregateRoot, DomainEvent
+from fragancia_api.modules.orders.domain.delivery import DeliveryMethod, Pickup
+from fragancia_api.modules.orders.domain.errors import CustomerDataInvalid
+from fragancia_api.shared.kernel import AggregateRoot, DomainEvent, Err, Ok, Result
 
 ORDER_NUMBER_PREFIX = "LFI-"
 FIRST_ORDER_NUMBER = 1001
@@ -47,6 +48,36 @@ class OrderLine:
     regular_price_cents: int
     line_total_cents: int
 
+    @classmethod
+    def create(
+        cls,
+        *,
+        presentation_id: UUID,
+        perfume_id: UUID,
+        label: str,
+        ml: int,
+        availability: Literal["in_stock", "made_to_order"],
+        lead_time_min_days: int | None,
+        lead_time_max_days: int | None,
+        quantity: int,
+        unit_price_cents: int,
+        regular_price_cents: int,
+    ) -> OrderLine:
+        """The line total is the unit price times the quantity."""
+        return cls(
+            presentation_id=presentation_id,
+            perfume_id=perfume_id,
+            label=label,
+            ml=ml,
+            availability=availability,
+            lead_time_min_days=lead_time_min_days,
+            lead_time_max_days=lead_time_max_days,
+            quantity=quantity,
+            unit_price_cents=unit_price_cents,
+            regular_price_cents=regular_price_cents,
+            line_total_cents=unit_price_cents * quantity,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class Delivery:
@@ -55,6 +86,22 @@ class Delivery:
     address: Address | None
     pickup_address: str | None
     pickup_hours: str | None
+
+    @classmethod
+    def create(
+        cls,
+        method: DeliveryMethod,
+        cost_cents: int,
+        address: Address | None,
+        pickup: Pickup | None,
+    ) -> Result[Delivery, CustomerDataInvalid]:
+        """Home and local delivery need an address; pickup must not carry one and copies the
+        pickup point as it is at checkout."""
+        if (method == DeliveryMethod.PICKUP) != (address is None):
+            return Err(CustomerDataInvalid(details={"field": "address"}))
+        if method == DeliveryMethod.PICKUP and pickup is not None:
+            return Ok(cls(method, cost_cents, None, pickup.address, pickup.hours))
+        return Ok(cls(method, cost_cents, address, None, None))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -72,6 +119,7 @@ class Order(AggregateRoot):
         number: int,
         status: OrderStatus,
         access_token_digest: str,
+        cart_token_digest: str | None,
         name: CustomerName,
         email: CustomerEmail,
         phone: Phone,
@@ -91,6 +139,9 @@ class Order(AggregateRoot):
         self.number = number
         self.status = status
         self.access_token_digest = access_token_digest
+        # The digest of the cart cookie the order was placed from (None for rows that predate
+        # migration 0020); a retried checkout finds its order through it (decision 31).
+        self.cart_token_digest = cart_token_digest
         self.name = name
         self.email = email
         self.phone = phone
@@ -112,6 +163,7 @@ class Order(AggregateRoot):
         id: UUID,
         number: int,
         access_token_digest: str,
+        cart_token_digest: str,
         name: CustomerName,
         email: CustomerEmail,
         phone: Phone,
@@ -133,6 +185,7 @@ class Order(AggregateRoot):
             number=number,
             status=OrderStatus.PENDING_PAYMENT,
             access_token_digest=access_token_digest,
+            cart_token_digest=cart_token_digest,
             name=name,
             email=email,
             phone=phone,

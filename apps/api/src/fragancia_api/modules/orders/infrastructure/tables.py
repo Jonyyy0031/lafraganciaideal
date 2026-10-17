@@ -73,6 +73,9 @@ orders = Table(
     Column("status", String(30), nullable=False),
     # SHA-256 hex digest of the private-link token; the token itself is never stored.
     Column("access_token_digest", String(64), nullable=False, unique=True),
+    # Digest of the cart cookie the order was placed from; a retried checkout finds its order
+    # through it. Nullable for orders stored before migration 0020.
+    Column("cart_token_digest", String(64), nullable=True, index=True),
     Column("customer_name", String(120), nullable=False),
     Column("customer_email", String(254), nullable=False, index=True),
     Column("customer_phone", String(10), nullable=False),

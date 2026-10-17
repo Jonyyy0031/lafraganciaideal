@@ -6,7 +6,8 @@ from fragancia_api.modules.orders.application.ports import (
     CartTokens,
     CatalogOffers,
     DeliverySettingsReader,
-    OrderAccessTokens,
+    OrderLinks,
+    OrderReader,
     StockHolds,
 )
 from fragancia_api.modules.orders.contracts import (
@@ -82,24 +83,32 @@ def _validate_contact(
 
 
 def _validate_address(
-    method: str, raw: CheckoutAddress | None
+    method: DeliveryMethod, raw: CheckoutAddress | None
 ) -> Result[Address | None, CustomerDataInvalid]:
-    if method == "pickup":
-        if raw is not None:
-            return Err(CustomerDataInvalid(details={"field": "address"}))
-        return Ok(None)
-    if raw is None:
-        return Err(CustomerDataInvalid(details={"field": "address"}))
-    return Address.create(
-        street=raw.street,
-        exterior_number=raw.exterior_number,
-        interior_number=raw.interior_number,
-        neighborhood=raw.neighborhood,
-        postal_code=raw.postal_code,
-        municipality=raw.municipality,
-        state=raw.state,
-        references=raw.references,
-    )
+    address: Address | None = None
+    if raw is not None:
+        match Address.create(
+            street=raw.street,
+            exterior_number=raw.exterior_number,
+            interior_number=raw.interior_number,
+            neighborhood=raw.neighborhood,
+            postal_code=raw.postal_code,
+            municipality=raw.municipality,
+            state=raw.state,
+            references=raw.references,
+        ):
+            case Err(error):
+                return Err(error)
+            case Ok(built):
+                address = built
+    # The rule "address required for home and local, forbidden for pickup" lives in
+    # `Delivery.create`. The cost and the pickup point are not known yet, so it is checked here
+    # with placeholders to keep the order of the first error: contact, address, invoice.
+    match Delivery.create(method, 0, address, None):
+        case Err(error):
+            return Err(error)
+        case Ok(_):
+            return Ok(address)
 
 
 def _validate_invoice(raw: CheckoutInvoice | None) -> Result[Invoice | None, CustomerDataInvalid]:
@@ -120,7 +129,7 @@ def _validate(request: CheckoutRequest) -> Result[_Customer, CustomerDataInvalid
             return Err(error)
         case Ok((name, email, phone)):
             pass
-    match _validate_address(request.delivery_method, request.address):
+    match _validate_address(DeliveryMethod(request.delivery_method), request.address):
         case Err(error):
             return Err(error)
         case Ok(address):
@@ -154,7 +163,8 @@ class PlaceOrder:
         carts: CartRepository,
         cart_reader: CartReader,
         cart_tokens: CartTokens,
-        access_tokens: OrderAccessTokens,
+        links: OrderLinks,
+        order_reader: OrderReader,
         offers: CatalogOffers,
         delivery_settings: DeliverySettingsReader,
         orders: OrderRepository,
@@ -166,7 +176,8 @@ class PlaceOrder:
         self._carts = carts
         self._cart_reader = cart_reader
         self._cart_tokens = cart_tokens
-        self._access_tokens = access_tokens
+        self._links = links
+        self._order_reader = order_reader
         self._offers = offers
         self._delivery_settings = delivery_settings
         self._orders = orders
@@ -178,20 +189,27 @@ class PlaceOrder:
     async def execute(
         self, token: str | None, request: CheckoutRequest
     ) -> Result[PlacedOrder, DomainError]:
+        now = self._clock.now()
+        digest = self._cart_tokens.digest(token) if token is not None else None
+        cart = await self._cart_reader.by_token(digest) if digest is not None else None
+
+        # A retry after a lost response (decision 31): the cart is gone because the order took
+        # it, so answer that order again. The request body is ignored.
+        if digest is not None and (cart is None or not cart.lines):
+            placed = await self._order_reader.placed_from_cart(digest, now - PAYMENT_WINDOW)
+            if placed is not None:
+                return Ok(self._placed_order(placed))
+
         match _validate(request):
             case Err(invalid):
                 return Err(invalid)
             case Ok(customer):
                 pass
 
-        if token is None:
+        if digest is None or cart is None or not cart.lines:
             return Err(CheckoutCartEmpty())
-        digest = self._cart_tokens.digest(token)
-        cart = await self._cart_reader.by_token(digest)
-        if cart is None or not cart.lines:
-            return Err(CheckoutCartEmpty())
+        cart_digest: str = digest
 
-        now = self._clock.now()
         offers = await self._offers.offers([line.presentation_id for line in cart.lines], now)
         view = cart_view(cart, offers, now)
         if view.has_problems:
@@ -236,23 +254,20 @@ class PlaceOrder:
             )
 
         order_id = new_id()
-        access_token = self._access_tokens.new()
         lines = [_order_line(line.presentation_id, line.quantity, offers) for line in cart.lines]
         in_stock = {
             line.presentation_id: line.quantity for line in lines if line.availability == "in_stock"
         }
         pickup = settings.pickup if method == DeliveryMethod.PICKUP else None
-        delivery = Delivery(
-            method=method,
-            cost_cents=delivery_cents,
-            address=customer.address,
-            pickup_address=pickup.address if pickup is not None else None,
-            pickup_hours=pickup.hours if pickup is not None else None,
-        )
+        match Delivery.create(method, delivery_cents, customer.address, pickup):
+            case Err(invalid_delivery):
+                return Err(invalid_delivery)
+            case Ok(delivery):
+                pass
         payment_due_at = now + PAYMENT_WINDOW
 
         async def work() -> Result[Order, DomainError]:
-            locked = await self._carts.get_by_token_for_update(digest)
+            locked = await self._carts.get_by_token_for_update(cart_digest)
             if locked is None or _pairs(locked) != _pairs(cart):
                 return Err(CheckoutCartChanged())
             reservation_id: UUID | None = None
@@ -266,7 +281,8 @@ class PlaceOrder:
             order = Order.place(
                 id=order_id,
                 number=number,
-                access_token_digest=self._access_tokens.digest(access_token),
+                access_token_digest=self._links.digest(self._links.token(order_id)),
+                cart_token_digest=cart_digest,
                 name=customer.name,
                 email=customer.email,
                 phone=customer.phone,
@@ -286,23 +302,24 @@ class PlaceOrder:
             case Err(error):
                 return Err(error)
             case Ok(order):
-                return Ok(
-                    PlacedOrder(
-                        number=format_order_number(order.number),
-                        access_token=access_token,
-                        status="pending_payment",
-                        subtotal_cents=order.subtotal_cents,
-                        delivery_cents=order.delivery.cost_cents,
-                        total_cents=order.total_cents,
-                        payment_due_at=order.payment_due_at,
-                        lead_time_max_days=order.lead_time_max_days,
-                    )
-                )
+                return Ok(self._placed_order(order))
+
+    def _placed_order(self, order: Order) -> PlacedOrder:
+        return PlacedOrder(
+            number=format_order_number(order.number),
+            access_token=self._links.token(order.id),
+            status=order.status.value,
+            subtotal_cents=order.subtotal_cents,
+            delivery_cents=order.delivery.cost_cents,
+            total_cents=order.total_cents,
+            payment_due_at=order.payment_due_at,
+            lead_time_max_days=order.lead_time_max_days,
+        )
 
 
 def _order_line(presentation_id: UUID, quantity: int, offers: dict[UUID, Offer]) -> OrderLine:
     offer = offers[presentation_id]
-    return OrderLine(
+    return OrderLine.create(
         presentation_id=presentation_id,
         perfume_id=offer.perfume_id,
         label=offer.label,
@@ -313,5 +330,4 @@ def _order_line(presentation_id: UUID, quantity: int, offers: dict[UUID, Offer])
         quantity=quantity,
         unit_price_cents=offer.price_cents,
         regular_price_cents=offer.regular_price_cents,
-        line_total_cents=offer.price_cents * quantity,
     )
