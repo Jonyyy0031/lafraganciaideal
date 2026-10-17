@@ -299,6 +299,13 @@ class PlaceOrder:
             return Ok(order)
 
         match await self._transactions.run(work):
+            case Err(CheckoutCartChanged()) as changed:
+                # A retry that raced the first checkout waited on the cart lock and found the
+                # cart taken by that order (decision 31): answer it, as a later retry would.
+                placed = await self._order_reader.placed_from_cart(
+                    cart_digest, now - PAYMENT_WINDOW
+                )
+                return Ok(self._placed_order(placed)) if placed is not None else changed
             case Err(error):
                 return Err(error)
             case Ok(order):

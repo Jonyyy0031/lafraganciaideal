@@ -551,6 +551,14 @@ repair and is superseded by it; testing, review and verify repeat. Deviations of
     `Delivery.create`, `OrderLine.create`, the settings validator, `SqlOrderReader`, and
     `test_migration_0020_orders_cart_token.py` (upgrade, downgrade, re-upgrade on a scratch
     database).
+- 2026-10-17, re-review R1, main session: when the transaction refuses
+  `ORDERS_CHECKOUT_CART_CHANGED`, `PlaceOrder` tries `placed_from_cart` once and answers that
+  order. A retry that waited on the cart lock behind the first checkout now gets the replay
+  instead of the refusal (`application/commands/checkout.py`, the final `match`). A cart that
+  still exists cannot have an order placed from its digest, so a genuine change still refuses.
+  `uv run just check` green (3081 passed). R2 (the cookie holder can fetch the link for 30
+  minutes) is accepted with decision 31 and noted for plan 004; R3 is the logged deviation 3.
+  The regression test for R1 and T1–T3 go to the tester.
 
 ## Test coverage
 
