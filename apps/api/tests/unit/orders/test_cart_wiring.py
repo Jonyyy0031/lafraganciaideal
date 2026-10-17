@@ -7,18 +7,21 @@ import pytest
 
 from fragancia_api.container import MODULES, build_container
 from fragancia_api.modules.catalog import PresentationOffer, PresentationOffers
+from fragancia_api.modules.orders import module as orders_module
 from fragancia_api.modules.orders.application.commands.cart import (
     AcknowledgeCartPrices,
     PurgeCarts,
     RemoveCartLine,
     SetCartLine,
 )
+from fragancia_api.modules.orders.application.commands.checkout import PlaceOrder
 from fragancia_api.modules.orders.application.queries.cart import GetCart
 from fragancia_api.modules.orders.domain.cart import CART_LIFETIME, Cart
 from fragancia_api.modules.orders.http.cart_cookie import CartCookie
 from fragancia_api.modules.orders.infrastructure.cart_tokens import SecureCartTokens
 from fragancia_api.modules.orders.infrastructure.catalog_offers import CatalogOffersAdapter
 from fragancia_api.modules.orders.infrastructure.in_memory import InMemoryCarts
+from fragancia_api.modules.orders.infrastructure.order_links import HmacOrderLinks
 from fragancia_api.shared.http.services import ServiceRegistry
 from fragancia_api.shared.infrastructure.in_memory import FixedClock, InMemoryTransactionRunner
 from tests.support import make_settings
@@ -46,6 +49,43 @@ async def test_the_registered_cookie_is_secure_only_in_production(
     assert cookie.secure is secure
     assert cookie.max_age_seconds == int(CART_LIFETIME.total_seconds())
     await container.close()
+
+
+# --- the order-link secret reaches `HmacOrderLinks` through the wiring (decision 31) -------------
+
+ORDER_ID = UUID(int=7)
+CONFIGURED_SECRET = "configured-order-link-secret-0123456789"
+DEV_LINKS = HmacOrderLinks(orders_module._DEV_ORDER_LINK_SECRET)  # noqa: SLF001
+
+
+async def wired_links(**settings: object) -> HmacOrderLinks:
+    container = build_container(make_settings(**settings))
+    try:
+        links = container.services.get(PlaceOrder)._links  # noqa: SLF001
+        assert isinstance(links, HmacOrderLinks)
+        return links
+    finally:
+        await container.close()
+
+
+@pytest.mark.parametrize("environment", ["development", "test", "production"])
+async def test_the_configured_order_link_secret_is_what_the_links_are_derived_from(
+    environment: str,
+) -> None:
+    links = await wired_links(app_env=environment, order_link_secret=CONFIGURED_SECRET)
+
+    assert links.token(ORDER_ID) == HmacOrderLinks(CONFIGURED_SECRET).token(ORDER_ID)
+    assert links.token(ORDER_ID) != DEV_LINKS.token(ORDER_ID)
+
+
+@pytest.mark.parametrize("secret", [None, ""])
+@pytest.mark.parametrize("environment", ["development", "test"])
+async def test_without_a_secret_outside_production_the_development_value_is_used(
+    environment: str, secret: str | None
+) -> None:
+    links = await wired_links(app_env=environment, order_link_secret=secret)
+
+    assert links.token(ORDER_ID) == DEV_LINKS.token(ORDER_ID)
 
 
 def test_orders_schedules_the_cart_purge_job() -> None:

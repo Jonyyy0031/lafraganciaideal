@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: orders
 min_implementer: mid
 depends_on: ["002"]
@@ -561,6 +561,50 @@ repair and is superseded by it; testing, review and verify repeat. Deviations of
   The regression test for R1 and T1–T3 go to the tester.
 
 ## Test coverage
+
+### Re-test after the step 7 repair (2026-10-17), tester
+
+Baseline before writing: `uv run just check` green (3081 passed, 3 skipped; harness 685) and
+`uv run just test-integration` green (882 passed, 5 skipped). Closing: `uv run just check` green
+(3097 passed, 3 skipped; harness 685) and `uv run just test-integration` green (883 passed, 5
+skipped). Tests added by the tester: 16 unit (T2: 7 parametrized wiring cases; T3: 5 + 1; R1: 3)
+and 1 integration (R1). No GAP and no NOT CONFIRMED. Product code untouched. The rows below
+replace every row of the first baseline that touches `checkout.py`, `stock_holds.py`, `order.py`,
+`order_links.py`, `SqlOrderReader`, `config.py` or migration 0020 (the rows of the first baseline
+that say "validation precedes the cart", "empty cart: ... unknown token" and "StockHoldsAdapter
+translates only ..." are superseded by them; line references of the old table into `checkout.py`
+are stale).
+
+| Behavior (plan / code) | Source | Layer | Test | State |
+| ---------------------- | ------ | ----- | ---- | ----- |
+| Replay: a token whose cart is missing or empty and has a `pending_payment` order from that cart digest within 30 minutes gets the same `PlacedOrder` (same number, same derived token), with no second order, hold or event; the body is ignored | `checkout.py:198-201` | application | `test_checkout.py::test_a_retry_within_30_minutes_answers_the_same_order_without_a_second_one` | CONFIRMED |
+| Replay window and cart identity: none after 30 minutes, none for another cart | `checkout.py:199`, `in_memory.py:83-91` | application | `test_checkout.py::test_no_replay_after_30_minutes`, `test_no_replay_for_another_cart` | CONFIRMED |
+| **T3** The replay happens before validation: a retry whose body fails `ORDERS_CUSTOMER_DATA_INVALID` (phone, email, `address` missing, pickup with address, `address.state`) still gets its order; the same body is refused by a world without the order | `checkout.py:198-207` | application | `test_checkout.py::test_the_replay_happens_before_validation_so_an_invalid_body_still_gets_its_order` (5 cases) | CONFIRMED |
+| A cart that still has lines never replays, and its body is validated | `checkout.py:198,203` | application | `test_checkout.py::test_a_cart_that_still_has_lines_never_replays_and_validates_the_body` | CONFIRMED |
+| Empty cart (no token, unknown token, no lines, no recent order) still validates first and then answers `ORDERS_CHECKOUT_CART_EMPTY` | `checkout.py:203-210` | application | `test_checkout.py::test_no_cookie_*`, `test_an_unknown_token_*`, `test_a_cart_without_lines_is_empty`, `test_an_invalid_phone_is_refused_before_the_cart_is_even_read` | CONFIRMED |
+| Link token is the derived one; only its digest and the cart digest are stored; `status` comes from the aggregate | `checkout.py:284-285,314-324` | application | `test_checkout.py::test_the_link_token_is_the_derived_one_and_only_its_digest_is_stored` | CONFIRMED |
+| **R1** A retry that read the cart and then lost the cart lock to the first checkout (cart gone at the lock) answers the first order instead of `ORDERS_CHECKOUT_CART_CHANGED` | `checkout.py:301-308` | application | `test_checkout.py::test_a_retry_that_waited_on_the_cart_lock_gets_the_order_not_cart_changed` | CONFIRMED |
+| **R1** A genuine change still refuses: cart gone at the lock with only an order older than 30 minutes, or ordered from another cart, gives `CART_CHANGED` | `checkout.py:270-272,305-308` | application | `test_checkout.py::test_a_cart_gone_at_the_lock_with_no_recent_order_is_still_a_changed_cart`, `test_a_cart_gone_at_the_lock_but_ordered_from_another_cart_is_a_changed_cart` | CONFIRMED |
+| **R1** Over two real connections: the first checkout is held inside its transaction (cart locked, stock held), the retry reads the cart and is seen waiting on a lock in `pg_stat_activity`; after release both answer the same order: one order, one reservation, one event, counter 1001, cart gone | `checkout.py:270,301-308`, `sql_cart_repository.py` | integration | `test_checkout_flow.py::test_a_retry_that_waits_on_the_cart_lock_behind_the_first_checkout_gets_its_order` | CONFIRMED (not mutation-run: product code may not be reverted; without the final `match` the retry would get `CART_CHANGED`, by the code) |
+| Replay on real adapters: same order and link, one row, one reservation, one event; none after the window or for another cart | `checkout.py:198`, `SqlOrderReader` | integration | `test_checkout_flow.py::test_a_retry_after_a_lost_response_gets_the_same_order_and_link`, `test_no_replay_after_the_payment_window_or_for_another_cart` | CONFIRMED |
+| Replay over HTTP: the same cookie gets the same order back and the cookie is cleared | `router.py` | http | `test_checkout_http.py::test_after_a_success_the_same_cookie_gets_the_same_order_back` | CONFIRMED |
+| `StockHoldsAdapter`: `INVENTORY_STOCK_UNAVAILABLE` keeps its details; `INVENTORY_PRESENTATION_NOT_STOCKED` and `_NOT_FOUND` become `CHECKOUT_CART_CHANGED`; any other error passes through | `stock_holds.py:13-34` | application | `test_stock_holds_adapter.py` (4 tests) | CONFIRMED |
+| The same two inventory codes against the real inventory (made to order, nonexistent) | `stock_holds.py` | integration | `test_sql_orders.py::test_a_made_to_order_presentation_means_the_cart_changed`, `::test_a_presentation_that_does_not_exist_means_the_cart_changed` | CONFIRMED |
+| `Delivery.create`: address required for home/local, forbidden for pickup (field `address`), pickup copies the point | `order.py:91` | domain | `test_order_domain.py::test_home_and_local_delivery_*`, `test_pickup_*` | CONFIRMED |
+| `OrderLine.create`: line total = unit price x quantity | `order.py:52` | domain | `test_order_domain.py::test_an_order_line_total_is_the_unit_price_times_the_quantity` | CONFIRMED |
+| `HmacOrderLinks`: stable for one id, differs across ids and secrets, unpadded base64url HMAC of `order-link:` + id bytes, digest is SHA-256 hex | `order_links.py` | application (pure adapter) | `test_order_links.py` (4 tests) | CONFIRMED |
+| **T2** The configured `ORDER_LINK_SECRET` is what `HmacOrderLinks` receives through the module wiring (development, test and production), and differs from the development constant | `module.py:60-65` | wiring | `test_cart_wiring.py::test_the_configured_order_link_secret_is_what_the_links_are_derived_from` (3 cases) | CONFIRMED |
+| **T2** Unset or empty secret outside production uses the development value | `module.py:41-42,60-65` | wiring | `test_cart_wiring.py::test_without_a_secret_outside_production_the_development_value_is_used` (4 cases) | CONFIRMED |
+| Production refuses a missing, empty or under-32-character secret; 32 accepted; optional outside production | `config.py:92-97` | unit (settings) | `test_settings.py::test_production_requires_an_order_link_secret_of_32_characters`, `test_a_32_character_order_link_secret_is_accepted_in_production`, `test_the_order_link_secret_is_optional_outside_production` | CONFIRMED |
+| `SqlOrderReader.placed_from_cart`: whole order incl. address, newest first, ignores old orders, other carts and other statuses; `cart_token_digest` stored | `sql_order_repository.py:100-` | integration | `test_sql_orders.py::test_placed_from_cart_*` (4 tests), `test_sql_orders.py:689-702` | CONFIRMED |
+| Migration 0020: column absent before; upgrade adds nullable indexed varchar(64) and keeps old orders; downgrade drops column and index keeping orders; re-upgrade | `0020_orders_cart_token.py` | integration | `test_migration_0020_orders_cart_token.py` (4 tests) | CONFIRMED (upgrade and downgrade both run) |
+| The `orders.orders` indexes are `customer_email` and `cart_token_digest` | `tables.py:76` | integration | `test_sql_orders.py:536` | CONFIRMED |
+
+Not covered, by decision: R2 (the cart cookie is a bearer for the private link for 30 minutes) is
+accepted with decision 31 and noted for plan 004; R3 is Deviation 3; L4 (`status` from the
+aggregate) cannot be pinned by a failing test while `OrderStatus` has one value.
+
+### First baseline 2026-10-16 (SUPERSEDED by the step 7 repair where the rows above replace it)
 
 Baseline (before any test): `uv run just check` green (2790 passed, 3 skipped; harness 685
 passed) and `uv run just test-integration` green (802 passed, 5 skipped). Tests added: 339 (domain

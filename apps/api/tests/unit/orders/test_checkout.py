@@ -916,3 +916,103 @@ async def test_the_link_token_is_the_derived_one_and_only_its_digest_is_stored()
     assert order.access_token_digest == world.links.digest(placed.access_token)
     assert order.cart_token_digest == world.cart_tokens.digest(CART_TOKEN)
     assert placed.status == order.status.value
+
+
+@pytest.mark.parametrize(
+    ("body", "field"),
+    [
+        (request("home", 618_000, who=contact(phone="12345")), "contact.phone"),
+        (request("home", 618_000, who=contact(email="nope")), "contact.email"),
+        (request("home", 618_000, address=None), "address"),
+        (request("pickup", 0, address=home_address()), "address"),
+        (request("home", 618_000, address=home_address(state="XX")), "address.state"),
+    ],
+)
+async def test_the_replay_happens_before_validation_so_an_invalid_body_still_gets_its_order(
+    body: CheckoutRequest, field: str
+) -> None:
+    world = World(build_settings(home_free_from_cents=None))
+    full_cart(world)
+    first = ok(await world.place(request("home", 618_000)))
+
+    # Guard of this test: without a replay the same body is refused by validation.
+    other = World(build_settings(home_free_from_cents=None))
+    full_cart(other)
+    assert refused(await other.place(body)).details == {"field": field}
+
+    again = ok(await world.place(body))
+
+    assert again == first
+    assert len(world.orders.orders) == 1
+    assert len(world.stocks.calls) == 1
+
+
+async def test_a_cart_that_still_has_lines_never_replays_and_validates_the_body() -> None:
+    world = World(build_settings(home_free_from_cents=None))
+    full_cart(world)
+    ok(await world.place(request("home", 618_000)))
+    full_cart(world)  # the same cookie holds a new cart again
+
+    error = refused(await world.place(request("home", 618_000, who=contact(phone="12345"))))
+
+    assert error.code == "ORDERS_CUSTOMER_DATA_INVALID"
+
+
+# --- a retry that waited on the cart lock behind the first checkout (re-review R1) --------------
+
+
+async def retry_that_lost_the_lock_race(world: World) -> PlacedOrder:
+    """Place the first order, then bring the cart back for a second request: it reads the cart as
+    it was before the first commit, and the cart is gone by the time it gets the lock."""
+    full_cart(world)
+    [cart] = world.carts.by_id.values()
+    snapshot = Cart(
+        id=cart.id,
+        token_digest=cart.token_digest,
+        lines=list(cart.lines),
+        created_at=cart.created_at,
+        updated_at=cart.updated_at,
+    )
+    first = ok(await world.place(request("home", 618_000)))
+    assert world.carts.by_id == {}
+    world.carts.by_id[snapshot.id] = snapshot
+    world.carts.before_lock = lambda carts: carts.by_id.clear()
+    return first
+
+
+async def test_a_retry_that_waited_on_the_cart_lock_gets_the_order_not_cart_changed() -> None:
+    world = World(build_settings(home_free_from_cents=None))
+    first = await retry_that_lost_the_lock_race(world)
+    world.clock.current = NOW + timedelta(seconds=2)
+
+    again = ok(await world.place(request("home", 618_000)))
+
+    assert again == first
+    assert len(world.orders.orders) == 1
+    assert len(world.stocks.calls) == 1
+    assert len(world.events.published) == 1
+    assert world.orders.last_number == 1001
+
+
+async def test_a_cart_gone_at_the_lock_with_no_recent_order_is_still_a_changed_cart() -> None:
+    world = World(build_settings(home_free_from_cents=None))
+    await retry_that_lost_the_lock_race(world)
+    world.clock.current = NOW + timedelta(minutes=30, seconds=1)
+
+    error = refused(await world.place(request("home", 618_000)))
+
+    assert error.code == "ORDERS_CHECKOUT_CART_CHANGED"
+    assert len(world.orders.orders) == 1
+
+
+async def test_a_cart_gone_at_the_lock_but_ordered_from_another_cart_is_a_changed_cart() -> None:
+    world = World(build_settings(home_free_from_cents=None))
+    full_cart(world)
+    ok(await world.place(request("home", 618_000)))
+    world.cart("another-cart", (1, 2), (2, 1), offers=[in_stock(1), made_to_order(2)])
+    world.carts.before_lock = lambda carts: carts.by_id.clear()
+
+    error = refused(await world.place(request("home", 618_000), "another-cart"))
+
+    assert error.code == "ORDERS_CHECKOUT_CART_CHANGED"
+    assert len(world.orders.orders) == 1

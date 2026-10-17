@@ -246,6 +246,65 @@ async def test_a_retry_after_a_lost_response_gets_the_same_order_and_link(
     assert len(await order_placed_rows(container)) == 1
 
 
+class PausingOrders(SqlOrderRepository):
+    """Holds the first checkout inside its transaction, after it locked the cart and held the
+    stock, until the test lets it go: the retry then arrives while the cart row is locked."""
+
+    def __init__(self, database: Any) -> None:
+        super().__init__(database)
+        self.inside = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def add(self, order: Order) -> None:
+        self.inside.set()
+        await self.release.wait()
+        await super().add(order)
+
+
+async def wait_until_a_session_waits_on_a_lock(container: Container) -> None:
+    for _ in range(100):
+        waiting = await rows(
+            container,
+            "SELECT 1 FROM pg_stat_activity "
+            "WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        if waiting:
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError("no session ever waited on a lock")
+
+
+async def test_a_retry_that_waits_on_the_cart_lock_behind_the_first_checkout_gets_its_order(
+    container: Container, catalog_rows: CatalogRows
+) -> None:
+    await configure_delivery(container)
+    _, [stock] = await catalog_rows.perfume("Race", sizes=({"stock_available": 9},))
+    await restock(container, stock, 9)
+    token = await add_to_cart(container, [(stock, 2)])
+    pausing = PausingOrders(container.database)
+    first_request = asyncio.create_task(
+        real_place_order(container, pausing).execute(token, request("home", 518_000))
+    )
+    await asyncio.wait_for(pausing.inside.wait(), TIMEOUT)  # the first one holds the cart lock
+    retry = asyncio.create_task(
+        real_place_order(container).execute(token, request("home", 518_000))
+    )
+    await asyncio.wait_for(wait_until_a_session_waits_on_a_lock(container), TIMEOUT)
+    assert not retry.done()  # the retry read the cart and now waits for the row lock
+
+    pausing.release.set()
+    first, second = await asyncio.wait_for(asyncio.gather(first_request, retry), TIMEOUT)
+
+    assert placed(first).number == "LFI-1001"
+    assert placed(second) == placed(first)  # the replay, not ORDERS_CHECKOUT_CART_CHANGED
+    assert await count(container, "orders") == 1
+    assert await count(container, "carts") == 0
+    assert await table_count(container, "reservations") == 1
+    assert await item_row(container, stock) == (9, 2)
+    assert await last_number(container) == 1001
+    assert len(await order_placed_rows(container)) == 1
+
+
 async def test_no_replay_after_the_payment_window_or_for_another_cart(
     container: Container, catalog_rows: CatalogRows
 ) -> None:
