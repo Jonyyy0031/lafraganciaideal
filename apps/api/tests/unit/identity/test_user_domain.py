@@ -7,6 +7,8 @@ from fragancia_api.modules.identity.domain.user import (
     CATALOG_MANAGE,
     DELIVERY_MANAGE,
     INVENTORY_MANAGE,
+    ORDERS_FINANCE,
+    ORDERS_MANAGE,
     OUTBOX_MANAGE,
     ROLE_PERMISSIONS,
     USERS_MANAGE,
@@ -104,8 +106,10 @@ def test_the_owner_has_every_permission_and_staff_only_catalog_and_inventory() -
         USERS_MANAGE,
         OUTBOX_MANAGE,
         DELIVERY_MANAGE,
+        ORDERS_MANAGE,
+        ORDERS_FINANCE,
     }
-    assert ROLE_PERMISSIONS[Role.STAFF] == {CATALOG_MANAGE, INVENTORY_MANAGE}
+    assert ROLE_PERMISSIONS[Role.STAFF] == {CATALOG_MANAGE, INVENTORY_MANAGE, ORDERS_MANAGE}
     assert (CATALOG_MANAGE, INVENTORY_MANAGE, USERS_MANAGE) == (
         "catalog:manage",
         "inventory:manage",
@@ -136,8 +140,10 @@ def test_a_user_gets_the_permissions_of_the_role() -> None:
         USERS_MANAGE,
         OUTBOX_MANAGE,
         DELIVERY_MANAGE,
+        ORDERS_MANAGE,
+        ORDERS_FINANCE,
     }
-    assert _user(Role.STAFF).permissions == {CATALOG_MANAGE, INVENTORY_MANAGE}
+    assert _user(Role.STAFF).permissions == {CATALOG_MANAGE, INVENTORY_MANAGE, ORDERS_MANAGE}
 
 
 def test_changing_the_password_replaces_the_hash_and_stamps_the_time() -> None:

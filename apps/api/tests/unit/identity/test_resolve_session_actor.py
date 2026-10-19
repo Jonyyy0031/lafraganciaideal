@@ -130,7 +130,7 @@ async def test_a_staff_session_resolves_with_staff_permissions_only(identity: Id
     actor = await identity.resolver.resolve(login.token)
 
     assert actor is not None
-    assert actor.permissions == frozenset({"catalog:manage", "inventory:manage"})
+    assert actor.permissions == frozenset({"catalog:manage", "inventory:manage", "orders:manage"})
 
 
 async def test_an_owner_session_resolves_with_the_users_manage_permission(
@@ -143,5 +143,13 @@ async def test_an_owner_session_resolves_with_the_users_manage_permission(
 
     assert actor is not None
     assert actor.permissions == frozenset(
-        {"catalog:manage", "delivery:manage", "inventory:manage", "outbox:manage", "users:manage"}
+        {
+            "catalog:manage",
+            "delivery:manage",
+            "inventory:manage",
+            "orders:finance",
+            "orders:manage",
+            "outbox:manage",
+            "users:manage",
+        }
     )

@@ -107,6 +107,8 @@ async def test_login_returns_the_user_and_the_expiry(client: AsyncClient) -> Non
             "catalog:manage",
             "delivery:manage",
             "inventory:manage",
+            "orders:finance",
+            "orders:manage",
             "outbox:manage",
             "users:manage",
         ],

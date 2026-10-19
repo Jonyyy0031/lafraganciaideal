@@ -368,12 +368,14 @@ async def test_me_derives_permissions_from_the_role(container: Container) -> Non
         "catalog:manage",
         "delivery:manage",
         "inventory:manage",
+        "orders:finance",
+        "orders:manage",
         "outbox:manage",
         "users:manage",
     ]
     assert (staff_me.role, staff_me.permissions) == (
         "staff",
-        ["catalog:manage", "inventory:manage"],
+        ["catalog:manage", "inventory:manage", "orders:manage"],
     )
     assert await queries.me(new_id()) is None
 

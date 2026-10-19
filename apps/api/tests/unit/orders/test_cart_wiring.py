@@ -88,15 +88,15 @@ async def test_without_a_secret_outside_production_the_development_value_is_used
     assert links.token(ORDER_ID) == DEV_LINKS.token(ORDER_ID)
 
 
-def test_orders_schedules_the_cart_purge_job() -> None:
+def test_orders_schedules_the_cart_purge_and_the_overdue_cancel_jobs() -> None:
     orders = next(module for module in MODULES if module.name == "orders")
 
-    assert [job.name for job in orders.jobs] == ["orders_purge_carts"]
+    assert [job.name for job in orders.jobs] == ["orders_purge_carts", "orders_cancel_overdue"]
 
 
 async def test_the_scheduled_job_runs_the_purge_and_returns_how_many_it_deleted() -> None:
     orders = next(module for module in MODULES if module.name == "orders")
-    [job] = orders.jobs
+    job = next(job for job in orders.jobs if job.name == "orders_purge_carts")
     carts = InMemoryCarts(
         Cart(
             id=UUID(int=1),

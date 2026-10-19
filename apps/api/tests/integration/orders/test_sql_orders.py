@@ -533,7 +533,12 @@ async def test_the_customer_email_is_indexed(container: Container) -> None:
         "AND NOT i.indisunique",
     )
 
-    assert {r["name"] for r in indexed} == {"customer_email", "cart_token_digest"}
+    assert {r["name"] for r in indexed} == {
+        "customer_email",
+        "cart_token_digest",
+        "status",
+        "payment_due_at",
+    }
 
 
 # --- SqlCartRepository.delete -------------------------------------------------------------------
