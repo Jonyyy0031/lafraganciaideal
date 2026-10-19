@@ -824,3 +824,64 @@ the repaired code repeats testing, review and verify.
   - `uv run just check` green (3413 passed); `test_order_lifecycle_flow.py` green (24 passed).
 
 ## Verification
+
+2026-10-19, main session, live against the development database. The API ran on :8100 and the
+arq worker was running, with migration 0021 applied; this is the code after the re-review fixes.
+- **Script:** `scratchpad/qa_inv/qa_lifecycle.py`.
+- **Accounts:** owner `verifier007`, and staff `qa004-staff-…`.
+- **Delivery options:** set for the run and restored afterwards (home 18000, free from 250000;
+  local 9000 for 01000; pickup on).
+- **Products:** the QA perfume from plan 002.
+- **Orders:** `LFI-1005` to `LFI-1010` stay in the development database. Two of them really
+  sold one unit each (the 50 ml for `LFI-1005` and the 100 ml for `LFI-1006`, both delivered),
+  so the 50 ml is 5 on hand and the 100 ml is 0. Every other unit was released or returned.
+
+- [x] **Overdue (also covers the orders of plan 003).**
+  - When the worker started, `LFI-1001`–`1004`, overdue since plan 003, were all `cancelled`
+    with reason "No pagado a tiempo". Each has one history row pending_payment → cancelled by
+    actor `system`.
+  - `LFI-1010`, with `payment_due_at` set 1 minute in the past, was cancelled by the worker
+    within one cycle, with the same reason and actor `system`. Its reservation is `released`,
+    and the 50 ml went from 5/1 to 5/0.
+- [x] **List and detail.**
+  - Staff `GET /admin/orders?status=pending_payment` listed the five new orders, newest first
+    (`LFI-1009` … `LFI-1005`).
+  - `q=LFI-1005` and `q=1005` found just that order; `q=qa004@exa` and `q=luis pé` found all
+    five.
+  - The detail showed the address (state `CMX`), the line and an empty history.
+  - Anonymous got 401; `/admin/orders/abc` got 404.
+- [x] **Paid by hand.**
+  - Staff `payment` got 403 `FORBIDDEN`.
+  - Owner with "Transferencia directa" got 204: the status is `paid`, the reservation
+    `committed`, and there is one `sale` movement "Venta: order:<id>". The 50 ml went from 6/4
+    to 5/3.
+  - The outbox has `orders.order.status_changed` pending_payment → paid.
+- [x] **Forward moves.**
+  - Home order:
+    - shipped without a carrier gave 422 `ORDERS_ORDER_DATA_INVALID` `{field: carrier}`;
+    - with "Estafeta" / "123456" it gave 204, then delivered gave 204;
+    - delivered → preparing and cancelling the delivered order gave 409
+      `ORDERS_TRANSITION_INVALID`.
+    - The history has three rows with actor, note, carrier and tracking number.
+  - Pickup order:
+    - paid ("Efectivo en tienda");
+    - shipped gave 409 `{from: paid, to: shipped}`;
+    - preparing → ready_for_pickup → delivered each gave 204, with four history rows.
+- [x] **Cancel unpaid.** Staff, reason "El cliente se arrepintió": 204. The order is `cancelled`
+  with that reason, and the reservation is `released` (50 ml 5/3 → 5/2).
+- [x] **Cancel paid.**
+  - After the payment (50 ml 5/2 → 3/0), `cancel` gave 409, and staff `cancel-paid` gave 403.
+  - Owner `cancel-paid` gave 204: `cancelled`, `refund_status: pending`, the reservation
+    `returned`, and the movements are `sale 2` and then `return 2` "Devolución: order:<id>"
+    (back to 5/0).
+  - Staff `refund` gave 403. Owner `refund` gave 204 with `done`, and a second call gave 409.
+  - The outbox has pending → paid, paid → cancelled, and cancelled → cancelled for the refund.
+- [x] **Notes.** Staff and owner notes gave 201 each, and the detail lists them newest first
+  with their author ids.
+- [x] **Made to order only.** `LFI-1009` (`reservation_id` null) was marked paid (204) and then
+  cancelled as paid (204, `refund_status: pending`), with no inventory call.
+
+NOT VERIFIED live:
+- the deadlock race between the two jobs (the integration test shows it red against the old job
+  and green now);
+- the starvation of re-review N1, which cannot occur before the payments initiative.
