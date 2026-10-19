@@ -33,6 +33,24 @@ class OrderRepository(Protocol):
         """Insert the order and its lines."""
         ...
 
+    async def get_by_number_for_update(self, number: int) -> Order | None:
+        """The order with that number, its row locked `FOR UPDATE`; None when unknown."""
+        ...
+
+    async def claim_overdue(self, now: datetime, limit: int) -> list[Order]:
+        """Up to `limit` `pending_payment` orders with `payment_due_at < now`, oldest first,
+        locked `FOR UPDATE SKIP LOCKED` so two runs never take the same one."""
+        ...
+
+    async def save(self, order: Order) -> None:
+        """Update the order row and insert its `new_history` rows."""
+        ...
+
+    async def add_note(self, number: int, actor: str, text: str, at: datetime) -> bool:
+        """Store an internal note; False when no order has that number. Takes no lock on the
+        order."""
+        ...
+
 
 class CartRepository(Protocol):
     """Write side of carts. Joins the active transaction."""

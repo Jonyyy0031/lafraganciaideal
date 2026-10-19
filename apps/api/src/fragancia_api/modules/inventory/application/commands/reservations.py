@@ -8,8 +8,8 @@ Lock order (every command keeps it, so no wait cycle forms):
   writes its presentations in `presentation_id` order, and the import confirm locks every
   presentation it will write by id first (`PerfumeRepository.lock_presentations`). Neither
   forms a wait cycle with a multi-line reserve.
-- The other commands (extend, commit, release, expire): the reservation row(s) first, then the
-  settings row (share), then the stock items in `presentation_id` order.
+- The other commands (extend, commit, release, return, expire): the reservation row(s) first,
+  then the settings row (share), then the stock items in `presentation_id` order.
 - Only reservation operations lock reservation rows, and every operation takes stock items in
   one global order (`presentation_id`), so none forms a wait cycle with `RecordMovement`,
   `SetThreshold` or `UpdateInventorySettings` (which take the settings row, then items in the
@@ -29,6 +29,8 @@ from fragancia_api.modules.inventory.application.commands.stock import _require_
 from fragancia_api.modules.inventory.application.ports import PresentationCatalog
 from fragancia_api.modules.inventory.domain.errors import (
     ReservationCommitted,
+    ReservationNotActive,
+    ReservationNotCommitted,
     ReservationNotFound,
     ReservationReferenceTaken,
     StockInsufficient,
@@ -45,6 +47,7 @@ from fragancia_api.modules.inventory.domain.reservation import (
     ReservationStatus,
 )
 from fragancia_api.modules.inventory.domain.stock import (
+    MovementKind,
     Reason,
     StockItem,
     low_stock_event,
@@ -198,6 +201,9 @@ class CommitReservation:
                 return Err(ReservationNotFound())
             if reservation.status is ReservationStatus.COMMITTED:
                 return Ok(None)
+            if reservation.status is ReservationStatus.RETURNED:
+                # Its units went back on hand: selling them again would double count.
+                return Err(ReservationNotActive())
             match Reason.create(reservation.sale_reason()):
                 case Err(invalid):
                     return Err(invalid)
@@ -284,7 +290,7 @@ class ReleaseReservation:
             if reservation is None:
                 return Err(ReservationNotFound())
             match reservation.status:
-                case ReservationStatus.COMMITTED:
+                case ReservationStatus.COMMITTED | ReservationStatus.RETURNED:
                     return Err(ReservationCommitted())
                 case ReservationStatus.RELEASED | ReservationStatus.EXPIRED:
                     return Ok(None)
@@ -298,6 +304,70 @@ class ReleaseReservation:
             _unhold(reservation, items)
             reservation.release(now)
             await self._reservations.save(reservation)
+            for item in items.values():
+                await self._stock.save(item)
+            await self._events.publish(
+                [item.changed_event(global_threshold, now) for item in items.values()]
+            )
+            return Ok(None)
+
+        return await self._transactions.run(work)
+
+
+class ReturnReservation:
+    """Command: a sold reservation's units go back on hand (a paid order cancelled), one `return`
+    movement per presentation with the reference as the reason and the system as the actor.
+
+    Idempotent: returning a returned reservation is `Ok` and changes nothing. Any status other
+    than committed is refused (`INVENTORY_RESERVATION_NOT_COMMITTED`): nothing was sold."""
+
+    def __init__(
+        self,
+        *,
+        reservations: ReservationRepository,
+        stock: StockRepository,
+        settings: SettingsRepository,
+        transactions: TransactionRunner,
+        events: EventPublisher,
+        clock: Clock,
+    ) -> None:
+        self._reservations = reservations
+        self._stock = stock
+        self._settings = settings
+        self._transactions = transactions
+        self._events = events
+        self._clock = clock
+
+    async def execute(self, reservation_id: UUID) -> Result[None, DomainError]:
+        async def work() -> Result[None, DomainError]:
+            reservation = await self._reservations.get_for_update(reservation_id)
+            if reservation is None:
+                return Err(ReservationNotFound())
+            if reservation.status is ReservationStatus.RETURNED:
+                return Ok(None)
+            if reservation.status is not ReservationStatus.COMMITTED:
+                return Err(ReservationNotCommitted())
+            match Reason.create(reservation.return_reason()):
+                case Err(invalid):
+                    return Err(invalid)
+                case Ok(reason):
+                    pass
+            global_threshold = (await self._settings.get_for_share()).low_stock_threshold
+            items = await self._stock.get_many_for_update(
+                [line.presentation_id for line in reservation.lines], now=self._clock.now()
+            )
+            now = self._clock.now()
+            for line in reservation.lines:
+                match items[line.presentation_id].record_movement(
+                    MovementKind.RETURN, line.quantity, reason, SALE_ACTOR, now
+                ):
+                    case Err(refused):
+                        return Err(refused)
+                    case Ok(_):
+                        pass
+            reservation.mark_returned(now)
+            await self._reservations.save(reservation)
+            # A return never makes stock go low, so there is no `track_low`.
             for item in items.values():
                 await self._stock.save(item)
             await self._events.publish(

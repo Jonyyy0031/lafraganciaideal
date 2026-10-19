@@ -31,3 +31,12 @@ class StockHoldsAdapter:
                 return Err(CheckoutCartChanged())
             case _:
                 return result
+
+    async def commit(self, reservation_id: UUID) -> Result[None, DomainError]:
+        return await self._reservations.commit(reservation_id)
+
+    async def release(self, reservation_id: UUID) -> Result[None, DomainError]:
+        return await self._reservations.release(reservation_id)
+
+    async def return_sold(self, reservation_id: UUID) -> Result[None, DomainError]:
+        return await self._reservations.return_sold(reservation_id)

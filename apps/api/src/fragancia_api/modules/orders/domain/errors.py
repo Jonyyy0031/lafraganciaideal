@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from fragancia_api.shared.kernel import ConflictError, InvalidValueError
+from fragancia_api.shared.kernel import ConflictError, InvalidValueError, NotFoundError
 
 
 @dataclass(frozen=True)
@@ -97,3 +97,25 @@ class CheckoutStockUnavailable(ConflictError):
 
     code: str = "ORDERS_CHECKOUT_STOCK_UNAVAILABLE"
     message: str = "Ya no hay suficientes unidades de algunos productos"
+
+
+@dataclass(frozen=True)
+class OrderNotFound(NotFoundError):
+    code: str = "ORDERS_ORDER_NOT_FOUND"
+    message: str = "No encontramos ese pedido"
+
+
+@dataclass(frozen=True)
+class OrderTransitionInvalid(ConflictError):
+    """`details`: `{"from": <status>, "to": <status>}`."""
+
+    code: str = "ORDERS_TRANSITION_INVALID"
+    message: str = "El pedido no puede pasar a ese estado"
+
+
+@dataclass(frozen=True)
+class OrderDataInvalid(InvalidValueError):
+    """`details`: `{"field": "note" | "reason" | "carrier" | "tracking_number"}`."""
+
+    code: str = "ORDERS_ORDER_DATA_INVALID"
+    message: str = "Revisa los datos del cambio"

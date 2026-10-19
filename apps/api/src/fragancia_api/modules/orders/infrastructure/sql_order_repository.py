@@ -1,8 +1,10 @@
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Literal, cast
+from uuid import UUID
 
-from sqlalchemy import Row, insert, select, text
+from sqlalchemy import Row, insert, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from fragancia_api.modules.orders.domain.customer import (
     Address,
@@ -12,9 +14,21 @@ from fragancia_api.modules.orders.domain.customer import (
     Phone,
 )
 from fragancia_api.modules.orders.domain.delivery import DeliveryMethod, PostalCode
-from fragancia_api.modules.orders.domain.order import Delivery, Order, OrderLine, OrderStatus
-from fragancia_api.modules.orders.infrastructure.tables import order_lines, orders
+from fragancia_api.modules.orders.domain.order import (
+    Delivery,
+    Order,
+    OrderLine,
+    OrderStatus,
+    RefundStatus,
+)
+from fragancia_api.modules.orders.infrastructure.tables import (
+    order_events,
+    order_lines,
+    order_notes,
+    orders,
+)
 from fragancia_api.shared.infrastructure.database import Database
+from fragancia_api.shared.kernel import new_id
 
 
 class SqlOrderRepository:
@@ -95,6 +109,89 @@ class SqlOrderRepository:
                     for position, line in enumerate(order.lines)
                 ],
             )
+
+    async def get_by_number_for_update(self, number: int) -> Order | None:
+        session = self._database.session
+        row = (
+            await session.execute(select(orders).where(orders.c.number == number).with_for_update())
+        ).first()
+        if row is None:
+            return None
+        return _to_domain(row, await _load_lines(session, row.id))
+
+    async def claim_overdue(self, now: datetime, limit: int) -> list[Order]:
+        session = self._database.session
+        rows = (
+            await session.execute(
+                select(orders)
+                .where(
+                    orders.c.status == OrderStatus.PENDING_PAYMENT.value,
+                    orders.c.payment_due_at < now,
+                )
+                .order_by(orders.c.payment_due_at, orders.c.number)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+        ).all()
+        return [_to_domain(row, await _load_lines(session, row.id)) for row in rows]
+
+    async def save(self, order: Order) -> None:
+        session = self._database.session
+        await session.execute(
+            update(orders)
+            .where(orders.c.id == order.id)
+            .values(
+                status=order.status.value,
+                cancel_reason=order.cancel_reason,
+                refund_status=order.refund_status.value if order.refund_status else None,
+                shipping_carrier=order.shipping_carrier,
+                tracking_number=order.tracking_number,
+                updated_at=order.updated_at,
+            )
+        )
+        if order.new_history:
+            await session.execute(
+                insert(order_events),
+                [
+                    {
+                        "id": new_id(),
+                        "order_id": order.id,
+                        "at": event.at,
+                        "from_status": event.from_status.value,
+                        "to_status": event.to_status.value,
+                        "actor": event.actor,
+                        "note": event.note,
+                        "carrier": event.carrier,
+                        "tracking_number": event.tracking_number,
+                    }
+                    for event in order.new_history
+                ],
+            )
+            order.new_history.clear()
+
+    async def add_note(self, number: int, actor: str, text: str, at: datetime) -> bool:
+        session = self._database.session
+        order_id = await session.scalar(select(orders.c.id).where(orders.c.number == number))
+        if order_id is None:
+            return False
+        await session.execute(
+            insert(order_notes).values(
+                id=new_id(), order_id=order_id, at=at, actor=actor, text=text
+            )
+        )
+        return True
+
+
+async def _load_lines(session: AsyncSession, order_id: UUID) -> list[Row[Any]]:
+    return list(
+        (
+            await session.execute(
+                select(order_lines)
+                .where(order_lines.c.order_id == order_id)
+                .order_by(order_lines.c.position)
+            )
+        ).all()
+    )
 
 
 class SqlOrderReader:
@@ -193,4 +290,8 @@ def _to_domain(row: Row[Any], line_rows: Sequence[Row[Any]]) -> Order:
         payment_due_at=row.payment_due_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        cancel_reason=row.cancel_reason,
+        refund_status=RefundStatus(row.refund_status) if row.refund_status is not None else None,
+        shipping_carrier=row.shipping_carrier,
+        tracking_number=row.tracking_number,
     )

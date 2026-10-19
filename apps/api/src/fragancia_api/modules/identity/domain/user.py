@@ -82,12 +82,22 @@ INVENTORY_MANAGE = "inventory:manage"
 USERS_MANAGE = "users:manage"
 OUTBOX_MANAGE = "outbox:manage"
 DELIVERY_MANAGE = "delivery:manage"
+ORDERS_MANAGE = "orders:manage"
+ORDERS_FINANCE = "orders:finance"
 
 ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
     Role.OWNER: frozenset(
-        {CATALOG_MANAGE, INVENTORY_MANAGE, USERS_MANAGE, OUTBOX_MANAGE, DELIVERY_MANAGE}
+        {
+            CATALOG_MANAGE,
+            INVENTORY_MANAGE,
+            USERS_MANAGE,
+            OUTBOX_MANAGE,
+            DELIVERY_MANAGE,
+            ORDERS_MANAGE,
+            ORDERS_FINANCE,
+        }
     ),
-    Role.STAFF: frozenset({CATALOG_MANAGE, INVENTORY_MANAGE}),
+    Role.STAFF: frozenset({CATALOG_MANAGE, INVENTORY_MANAGE, ORDERS_MANAGE}),
 }
 
 

@@ -1,7 +1,8 @@
 """The Reservation aggregate: units of one or more presentations held until an expiry.
 
 A reservation is all or nothing (decision 24). It moves from `active` to `committed` (an
-approved payment), `released` (a rejected payment) or `expired` (the job, at its expiry). An
+approved payment), `released` (a rejected payment) or `expired` (the job, at its expiry). A
+committed one can end `returned` when its units go back on hand (a paid order cancelled). An
 expired or released reservation can still be committed when a payment arrives late (decision
 25); the command decides whether the units are still there.
 
@@ -41,6 +42,7 @@ class ReservationStatus(StrEnum):
     COMMITTED = "committed"
     RELEASED = "released"
     EXPIRED = "expired"
+    RETURNED = "returned"
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +128,13 @@ class Reservation(AggregateRoot):
         self.status = ReservationStatus.COMMITTED
         self.closed_at = now
 
+    def mark_returned(self, now: datetime) -> None:
+        """A sold reservation whose units went back on hand (a paid order cancelled)."""
+        if self.status is not ReservationStatus.COMMITTED:
+            raise ValueError("Only a committed reservation can be returned")
+        self.status = ReservationStatus.RETURNED
+        self.closed_at = now
+
     def release(self, now: datetime) -> None:
         if self.status is not ReservationStatus.ACTIVE:
             raise ValueError("Only an active reservation can be released")
@@ -141,3 +150,7 @@ class Reservation(AggregateRoot):
     def sale_reason(self) -> str:
         """The ledger reason of its sale movements (Spanish ledger copy, decision 27)."""
         return f"Venta: {self.reference}"
+
+    def return_reason(self) -> str:
+        """The ledger reason of its return movements (Spanish ledger copy)."""
+        return f"Devolución: {self.reference}"

@@ -5,9 +5,11 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Table,
+    text,
 )
 from sqlalchemy.types import Uuid
 
@@ -104,8 +106,55 @@ orders = Table(
     Column("payment_due_at", DateTime(timezone=True), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("cancel_reason", String(300), nullable=True),
+    Column("refund_status", String(10), nullable=True),
+    Column("shipping_carrier", String(60), nullable=True),
+    Column("tracking_number", String(60), nullable=True),
     CheckConstraint("delivery_method IN ('home', 'local', 'pickup')", name="delivery_method"),
     CheckConstraint("total_cents = subtotal_cents + delivery_cents", name="total_sum"),
+    CheckConstraint(
+        "status IN ('pending_payment', 'paid', 'preparing', 'shipped', 'ready_for_pickup', "
+        "'delivered', 'cancelled')",
+        name="status",
+    ),
+    CheckConstraint("refund_status IN ('pending', 'done')", name="refund_status"),
+    Index("ix_orders_status", "status"),
+    # The overdue job's scan: only unpaid orders.
+    Index(
+        "ix_orders_payment_due_unpaid",
+        "payment_due_at",
+        postgresql_where=text("status = 'pending_payment'"),
+    ),
+    schema=SCHEMA,
+)
+
+# One row per move of an order, oldest first when read back. `actor` is an admin user id or
+# `system`; no foreign key because identity owns users.
+order_events = Table(
+    "order_events",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("order_id", Uuid, ForeignKey(orders.c.id, ondelete="CASCADE"), nullable=False),
+    Column("at", DateTime(timezone=True), nullable=False),
+    Column("from_status", String(30), nullable=False),
+    Column("to_status", String(30), nullable=False),
+    Column("actor", String(64), nullable=False),
+    Column("note", String(300), nullable=True),
+    Column("carrier", String(60), nullable=True),
+    Column("tracking_number", String(60), nullable=True),
+    Index("ix_order_events_order_id", "order_id"),
+    schema=SCHEMA,
+)
+
+order_notes = Table(
+    "order_notes",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("order_id", Uuid, ForeignKey(orders.c.id, ondelete="CASCADE"), nullable=False),
+    Column("at", DateTime(timezone=True), nullable=False),
+    Column("actor", String(64), nullable=False),
+    Column("text", String(1000), nullable=False),
+    Index("ix_order_notes_order_id", "order_id"),
     schema=SCHEMA,
 )
 

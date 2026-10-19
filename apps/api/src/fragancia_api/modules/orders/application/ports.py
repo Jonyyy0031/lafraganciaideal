@@ -5,6 +5,11 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from fragancia_api.modules.orders.contracts import (
+    AdminOrderDetail,
+    AdminOrderPage,
+    OrderStatusName,
+)
 from fragancia_api.modules.orders.domain.cart import Cart, Offer
 from fragancia_api.modules.orders.domain.delivery import DeliverySettings
 from fragancia_api.modules.orders.domain.order import Order
@@ -56,6 +61,19 @@ class StockHolds(Protocol):
         """The reservation id; a shortage comes back as `CheckoutStockUnavailable`."""
         ...
 
+    async def commit(self, reservation_id: UUID) -> Result[None, DomainError]:
+        """Sell the reservation's units (the order was paid). A refusal comes back with
+        inventory's own code and details."""
+        ...
+
+    async def release(self, reservation_id: UUID) -> Result[None, DomainError]:
+        """Give the units back (an unpaid order cancelled); idempotent on an expired one."""
+        ...
+
+    async def return_sold(self, reservation_id: UUID) -> Result[None, DomainError]:
+        """Put the units of a sold reservation back on hand (a paid order cancelled)."""
+        ...
+
 
 class OrderReader(Protocol):
     """Read side: orders outside any transaction (`Database.reader()`)."""
@@ -65,6 +83,19 @@ class OrderReader(Protocol):
         `pending_payment` and was created at or after `since`; None when there is none. Lets a
         retried checkout get its order back (decision 31)."""
         ...
+
+
+class OrderQueries(Protocol):
+    """Read side of the panel: orders outside any transaction (`Database.reader()`)."""
+
+    async def page(
+        self, status: OrderStatusName | None, q: str | None, page: int, size: int
+    ) -> AdminOrderPage:
+        """Orders, newest number first. `q` (already trimmed, non-empty) matches `LFI-1001`,
+        `1001`, an email substring or a name substring, case-insensitively."""
+        ...
+
+    async def detail(self, number: int) -> AdminOrderDetail | None: ...
 
 
 class CartReader(Protocol):

@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["003"]
@@ -306,9 +306,9 @@ new 32–38.
      `apps/api/openapi.json` (modify),
      `docs/architecture.md` (modify),
      `apps/api/src/fragancia_api/modules/orders/__init__.py` (modify)
-   - Files (tests): `apps/api/tests/unit/orders/` (modify), `apps/api/tests/integration/orders/` (modify),
+   - Files: `apps/api/tests/unit/orders/` (modify), `apps/api/tests/integration/orders/` (modify),
      `apps/api/tests/unit/inventory/` (modify), `apps/api/tests/integration/inventory/` (modify),
-     `apps/api/tests/unit/identity/` (modify)
+     `apps/api/tests/unit/identity/` (modify), `apps/api/tests/integration/identity/` (modify)
    - Do:
      - **Router.** `orders_admin = admin_router(prefix="/orders", tags=["orders · admin"],
        dependencies=[Depends(require_permission("orders:manage"))])`. The routes `payment`,
@@ -389,6 +389,36 @@ options are the ones from plan 003. Orders are placed through `POST /checkout`.
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+All cosmetic; fixed forward.
+
+1. **Existing tests updated to stay green.** The plan lists test directories only for the
+   tester, but the new permissions, the seven statuses, the second orders job and the new
+   `StockReservations` constructor argument broke existing assertions. Only expectations were
+   updated (no new tests): `apps/api/tests/unit/identity/{test_auth_http,test_resolve_session_actor,test_sessions,test_team_http,test_user_domain}.py`,
+   `apps/api/tests/integration/identity/{test_sql_identity,test_sql_account_links}.py`,
+   `apps/api/tests/unit/inventory/support.py` (builds `ReturnReservation`),
+   `apps/api/tests/unit/orders/{test_cart_wiring,test_order_domain}.py` and
+   `apps/api/tests/integration/orders/{test_sql_carts,test_sql_orders}.py`.
+   `plans-scope` lists these as out of scope; the integration/identity ones are outside the
+   plan's declared test directories.
+2. **Inventory commit/release of a `returned` reservation.** Adding `RETURNED` to
+   `ReservationStatus` would have let `CommitReservation` sell a returned reservation again
+   (double count) and left `ReleaseReservation`'s `match` non-exhaustive. `CommitReservation`
+   now refuses a returned one with `INVENTORY_RESERVATION_NOT_ACTIVE`, and `ReleaseReservation`
+   refuses it with `INVENTORY_RESERVATION_COMMITTED` (it was sold). Documented in the
+   `StockReservations` docstring.
+3. **`OrderRepository.add_note`** is on the port (the plan listed it only under the SQL
+   adapter), and the in-memory repository keeps `history` and `notes` dicts for tests.
+4. **Extra domain helpers** in `orders/domain/order.py`: `parse_order_number`,
+   `clean_note_text` (notes keep line breaks, 1 to 1000 characters) and `ALLOWED_TRANSITIONS`.
+5. **`CancelOverdueOrders`** skips (and logs) an order whose cancel or release is refused
+   instead of failing the whole batch; the others are still cancelled in the same transaction.
+6. **Check constraints** `ck_orders_status` and `ck_orders_refund_status` were added to
+   migration 0021 by hand (autogenerate does not detect them). `alembic check` reports no drift.
+7. **Ordering of permission lists** in tests is alphabetical (`orders:finance`,
+   `orders:manage` between `inventory:manage` and `outbox:manage`).
+8. Cancelled orders store the reason also as the history row's `note`.
 
 ## Test coverage
 
