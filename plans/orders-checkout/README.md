@@ -39,6 +39,8 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
   - That initiative will also commit, extend or release the reservation (inventory-stock
     decisions 4 and 26).
   - It will add the refund on cancelling a paid order (decision 10).
+  - It must keep a webhook-committed reservation from blocking the overdue job. Plan 004's job
+    skips an order whose release is refused, but re-claims it every run (plan 004 review L1).
 - **Branch base.** Plan 001 builds on the `outbox:manage` permission line of
   platform-api-foundation/004, which is not merged yet. The branch starts from it to avoid a
   conflict in `identity/domain/user.py`.

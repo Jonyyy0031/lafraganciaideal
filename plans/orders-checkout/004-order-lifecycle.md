@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: orders
 min_implementer: mid
 depends_on: ["003"]
@@ -339,6 +339,52 @@ new 32–38.
    - Observable result: `uv run just check` and `uv run just test-integration` pass, and the
      routes are in OpenAPI.
 
+7. **Review repair (added 2026-10-19 after the first review)**
+   - Files: `apps/api/src/fragancia_api/modules/orders/application/commands/lifecycle.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/sql_order_repository.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/domain/repositories.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/http/router.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/in_memory.py` (modify),
+     `apps/api/openapi.json` (modify),
+     `docs/architecture.md` (modify),
+     `apps/api/tests/unit/orders/` (modify), `apps/api/tests/integration/orders/` (modify)
+   - Do:
+     - **M1, a deadlock in the overdue job.**
+       - `CancelOverdueOrders.run_once` runs **one transaction per order**. Each one claims a
+         single overdue order (`claim_overdue(now, 1)` with `FOR UPDATE SKIP LOCKED`), cancels
+         it, releases its reservation, saves and publishes.
+       - It loops until nothing is claimed, or 100 orders have been processed in this run, or an
+         order is skipped (see L1).
+       - Each transaction then holds at most one reservation's stock items, taken in id order,
+         so it keeps inventory's global lock order (`reservations.py:1-20`).
+       - The class docstring states this.
+     - **L1, the stuck queue.** Inside the per-order loop, an order whose cancel or release is
+       refused is logged and skipped as today. The loop also stops for the run, so it is not
+       re-claimed in a hot loop.
+       - Record in the class docstring that such orders are re-claimed every run and can starve
+         newer ones once the payments initiative commits reservations from a webhook.
+       - The payments initiative must handle this. Add a line to the README's "Dependency notes"
+         under Payment.
+     - **L2, notes that wait.** `get_by_number_for_update` and `claim_overdue` lock with
+       `FOR NO KEY UPDATE` (`with_for_update(key_share=True)`). A note insert, which only takes
+       `FOR KEY SHARE` through its foreign key, then no longer waits on a move in flight. The
+       docstrings that say a note takes no lock become true. Update the tester's pinned test
+       `test_a_note_waits_for_a_move_in_flight_and_lands_once_it_commits` to assert that the
+       note lands while the move is still in flight.
+     - **L3.** Update the inventory row of `docs/architecture.md`: `return_sold`, the `returned`
+       status and `INVENTORY_RESERVATION_NOT_COMMITTED`.
+     - **L4.** `InMemoryOrders.save` stores a copy without the pending events: pull them before
+       copying, or copy with an empty event list. That way a second command never republishes.
+       Remove the workaround in the test that asserts only the last event.
+   - Observable result:
+     - An integration test runs the job and inventory's `ExpireReservations` concurrently over
+       several overdue orders that share presentations in crossed id order, and neither
+       deadlocks.
+     - An integration test shows a note committing while a move holds the order row.
+     - A unit test shows the job processing orders one transaction at a time and stopping after
+       a skip.
+     - `uv run just check`, `uv run just test-integration` and `plans-scope` are clean.
+
 ## Acceptance criteria
 
 Run with the API and the worker on the development database. The QA perfume and delivery
@@ -487,5 +533,129 @@ Observations for the reviewer (no product code was touched, nothing here is a GA
   touched by it.
 
 ## Review findings
+
+Reviewed 2026-10-19 on `feat/orders-lifecycle` (`main...HEAD`, worktree clean), reviewer
+subagent (opus). Paths below are under `apps/api/src/fragancia_api/modules/` unless rooted.
+
+### Pass 1 — checklist: 13/14 applicable passed, 1 failed (docs), 1 n/a
+
+- [x] `plans-scope` clean: "31 declared, 48 changed … Every change is inside the plan". No hot
+      file (`container.py`, `docs/modules.json`, `.importlinter`) touched.
+- [x] `uv run just check` green (live run): ruff, mypy "no issues found in 427 source files",
+      import-linter 7 kept / 0 broken, 3410 passed / 3 skipped, plans OK, harness-check OK.
+- [x] `uv run just test-integration` green (live run): 981 passed, 5 skipped.
+- [x] Business rules in `domain/` (transition table, per-method rules, text bounds); router only
+      parses the number and maps errors; query adapter has none.
+- [x] CQRS-lite: every command goes aggregate → repository inside `transactions.run` and returns
+      `Result`; `ListOrders`/`GetOrder` go through the `OrderQueries` port and return contract
+      models; the repository methods are not screen-specific.
+- [x] Contracts in `orders/contracts.py`; `openapi.json` regenerated (check's drift test green).
+- [x] Errors `ORDERS_ORDER_NOT_FOUND` / `ORDERS_TRANSITION_INVALID` /
+      `ORDERS_ORDER_DATA_INVALID` / `INVENTORY_RESERVATION_NOT_COMMITTED`, stable SCREAMING_SNAKE.
+- [x] Money in integer cents, times from `Clock`, ids from `new_id()`.
+- [x] New migration 0021: no drops on upgrade, FKs within `orders`, reversible (round trip
+      tested on a scratch database).
+- [x] Routes on `admin_router` with router-level `orders:manage` and per-route `orders:finance`
+      on payment, cancel-paid and refund.
+- [x] Wiring in `orders/module.py` and `inventory/module.py` resolves (container test green).
+- [x] No secrets or real personal data.
+- [x] `## Deviations` honest: spot-checked 2 (commit refuses `RETURNED` with
+      `ReservationNotActive`, release maps it to `ReservationCommitted`,
+      `inventory/application/commands/reservations.py:204,293`) and 5 (`lifecycle.py:199-217`).
+- [ ] **Docs: one stale row.** `docs/architecture.md:63` (inventory) still lists reservations as
+      "(reserve, extend, commit, release, expiry job)" without the new `return` /
+      `returned` status. See L3.
+- n/a PR body: no PR exists yet for this branch (opened after verify).
+
+### Pass 2 — findings
+
+**M1 (medium, needs a code change) — the overdue job breaks inventory's lock order across
+orders and can deadlock.** `orders/application/commands/lifecycle.py:194-222`.
+`CancelOverdueOrders.run_once` runs the whole batch in one transaction and calls
+`stocks.release` once per order. Each `ReleaseReservation` of an *active* reservation locks
+its reservation row and then its own stock items in `presentation_id` order
+(`inventory/application/commands/reservations.py:296-299`). Nothing sorts across calls, so after
+order A the transaction holds A's items and then asks for B's reservation and items. That breaks
+the invariant `reservations.py:1-20` relies on ("every operation takes stock items in one global
+order … so no wait cycle forms").
+
+Reservations are created with `expires_at == payment_due_at` (`orders/application/commands/checkout.py:267-275`).
+So whenever the orders job runs before inventory's expire job in a given minute, the claimed
+orders still have active reservations and the job takes item locks. Two concrete cycles:
+
+- **Against `ExpireReservations`**
+  (`inventory/infrastructure/sql_reservation_repository.py:87-97`, `expires_at <= now`,
+  `SKIP LOCKED`):
+  1. The orders job releases rA (active) and holds stock item P.
+  2. The expire job has already claimed rB and asks for P, so it waits on the orders job.
+  3. The orders job's `get_for_update(rB)` waits on the expire job, and the two deadlock.
+- **Against any sorted multi-item operation** (checkout's `ReserveStock`, `MarkOrderPaid` →
+  commit of another order, `RecordMovement`):
+  1. The job holds P2, from A's release.
+  2. The other transaction holds P1 and asks for P2.
+  3. The job asks for P1, for B's release, and the two deadlock.
+
+PostgreSQL aborts one side after `deadlock_timeout`. If that is the job, its batch rolls back
+and the next run retries it. If it is a customer's checkout or an owner's "mark paid", they get
+a 500. Data stays consistent. This was reasoned from the code and not reproduced: no
+integration test runs the job concurrently with the expire job or a checkout
+(`test_order_lifecycle_flow.py` only covers two job runs and two payments). A possible fix,
+for the implementer to decide: one `transactions.run` per order (claim one, cancel, release,
+save, commit, loop up to the batch). Each transaction then holds one reservation's items, the
+same shape as the manual commands. The lock-order doc in `lifecycle.py:1-7` should then say so.
+
+**L1 (low) — a permanently refused order can starve the job (deviation 5).**
+`lifecycle.py:207-217` together with `sql_order_repository.py:120-134`. A skipped order stays
+`pending_payment` and overdue. The claim is oldest-due first with `LIMIT 100`, so it is
+re-claimed and logged every minute forever. With 100 or more such orders, no newer overdue
+order is ever cancelled. Today this cannot happen: release refuses only a
+committed/returned/missing reservation, and commit happens only atomically with `paid`. It
+becomes possible once the payments initiative commits reservations from a webhook. Note it for
+that initiative, or have the job surface the stuck orders. No change is needed for this plan.
+
+**L2 (low) — "takes no lock on the order" is inaccurate (tester observation 1, confirmed).**
+The claim appears in `orders/domain/repositories.py:50`, `lifecycle.py:163-164` and
+`orders/http/router.py:377-378`. Inserting into `order_notes` makes PostgreSQL take `FOR KEY
+SHARE` on the parent row through the FK, and that conflicts with the plain `FOR UPDATE` used by
+`get_by_number_for_update` and `claim_overdue` (`sql_order_repository.py:116,133`). A note
+therefore waits for an in-flight move or for a whole overdue batch (up to 100 orders, see M1).
+It cannot deadlock. Two ways out: correct the docstrings, or lock with
+`with_for_update(key_share=True)` (`FOR NO KEY UPDATE`). The second is enough because
+`order.id` never changes, and it makes notes genuinely non-blocking.
+
+**L3 (low) — stale inventory row in `docs/architecture.md:63`.** The row does not mention
+`return_sold` / the `returned` reservation status. The orders row (same file) does mention it.
+
+**L4 (low, test fake only) — `InMemoryOrders.save` keeps pending domain events on the stored
+copy (tester observation 2, confirmed).** At `orders/infrastructure/in_memory.py:103-111`, `stored
+= deepcopy(order)` is taken before the command calls `pull_events()`. The next
+`get_by_number_for_update` returns those events again, and a second command re-publishes them.
+The SQL adapter does not do this, so product behavior is fine. The fake can hide a real
+double-publish bug in tests that chain commands, which today assert only on the last event.
+Clearing the stored copy's events (as it already does for `new_history`) would align the fake
+with SQL.
+
+Checked and found correct (no finding):
+
+- **Lock order in the manual commands.** They take the order row, then
+  reservation → settings (share) → items, one reservation per transaction.
+- **Job vs. a concurrent manual move.** The job uses `SKIP LOCKED`. A manual command blocked on
+  a claimed row re-reads it after the job commits (READ COMMITTED; Core rows have no identity
+  map) and gets `ORDERS_TRANSITION_INVALID`.
+- **Two payments at once** sell once (tested).
+- **Late commit after expiry.** It re-checks `available` and refuses with `StockUnavailable`,
+  which is a 409. The nested runner only returns `Err`, and the outer `run` rolls back the
+  order (`shared/infrastructure/database.py:64-77`).
+- **No partial writes on refusal.** `ReturnReservation` writes nothing before every line's
+  movement succeeds, and RETURN quantities stay within `QUANTITY_MAX`. Release and commit
+  refuse before any write.
+- **The state machine** cannot reach a forbidden state: `cancel_*` and `mark_refunded` check
+  status explicitly, and a refund can be marked once.
+- **Authorization.** Finance routes need both permissions. The actor id is a `str`
+  (`shared/application/actor.py`).
+
+Result: 1 medium and 4 low findings. M1 needs a code change, so the status stays `review`
+(repair handoff to the implementer). L2–L4 can ride along with that repair; L1 is a note for
+the payments initiative.
 
 ## Verification
