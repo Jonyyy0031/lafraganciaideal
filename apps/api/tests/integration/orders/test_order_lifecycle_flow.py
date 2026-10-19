@@ -583,18 +583,20 @@ async def test_the_job_cancels_an_overdue_order_without_a_reservation(
     assert (await order_row(container, placed.number))["status"] == "cancelled"
 
 
-async def test_deviation_5_the_job_skips_and_logs_an_order_inventory_refuses_and_cancels_the_rest(
+async def test_deviation_5_the_job_skips_and_logs_an_order_inventory_refuses_and_stops_there(
     container: Container, catalog_rows: CatalogRows
 ) -> None:
-    """The first order's reservation was sold behind the order's back, so inventory refuses its
-    release (`INVENTORY_RESERVATION_COMMITTED`). The job leaves that order untouched and still
-    cancels the second one in the same transaction."""
-    sold = await place(container, catalog_rows, name="Sold")
+    """The second order's reservation was sold behind the order's back, so inventory refuses its
+    release (`INVENTORY_RESERVATION_COMMITTED`). The job cancels the first order (its own
+    transaction), leaves the refused one untouched and stops the run: the third, later order
+    waits for the next run (review L1)."""
     normal = await place(container, catalog_rows, name="Normal")
+    sold = await place(container, catalog_rows, name="Sold")
+    later = await place(container, catalog_rows, name="Later")
     facade = container.services.get(StockReservations)
     assert isinstance(await facade.commit(sold.reservation_id), Ok)  # type: ignore[arg-type]
-    await backdate_due(container, sold.number)
-    await backdate_due(container, normal.number)
+    for order in (normal, sold, later):
+        await backdate_due(container, order.number)
 
     with capture_logs() as logs:
         count = await container.services.get(CancelOverdueOrders).run_once()
@@ -607,6 +609,7 @@ async def test_deviation_5_the_job_skips_and_logs_an_order_inventory_refuses_and
     assert await history(container, sold.number) == []
     assert (await reservation_row(container, sold.reservation_id))["status"] == "committed"  # type: ignore[arg-type]
     assert await item_row(container, sold.stock) == (3, 0)
+    assert (await order_row(container, later.number))["status"] == "pending_payment"
     [warning] = [log for log in logs if log["event"] == "orders.overdue_release_refused"]
     assert (warning["log_level"], warning["number"], warning["code"]) == (
         "warning",
@@ -630,3 +633,60 @@ async def test_two_runs_of_the_job_at_once_cancel_each_order_once(
     for order in placed:
         assert len(await history(container, order.number)) == 1
         assert await item_row(container, order.stock) == (5, 0)
+
+
+async def place_lines(
+    container: Container, lines: list[tuple[UUID, int]], unit_cents: int = 250_000
+) -> Placed:
+    """One order through the real checkout over the given in-stock lines."""
+    token = await add_to_cart(container, lines)
+    total = sum(quantity for _, quantity in lines) * unit_cents + 18_000
+    result = await real_place_order(container).execute(token, request("home", total))
+    assert isinstance(result, Ok), result
+    number = int(result.value.number.removeprefix("LFI-"))
+    [order] = await rows(
+        container, "SELECT id, reservation_id FROM orders.orders WHERE number = :n", n=number
+    )
+    return Placed(number, order["id"], lines[0][0], None, order["reservation_id"])
+
+
+async def test_review_m1_the_job_and_the_expiry_job_over_crossed_stock_do_not_deadlock(
+    container: Container, catalog_rows: CatalogRows
+) -> None:
+    """Orders hold crossed sets of presentations: a one-line order on the later id and a
+    two-line order on both. Run in one transaction the overdue job took the items of the first
+    while asking for those of the second, against inventory's expiry job doing the opposite. One
+    transaction per order keeps inventory's lock order, so both jobs finish."""
+    await configure_delivery(container)
+    placed: list[tuple[Placed, bool]] = []
+    pairs: list[tuple[UUID, UUID]] = []
+    for n in range(4):
+        _, ids = await catalog_rows.perfume(
+            f"Crossed {n}", sizes=({"stock_available": 20}, {"stock_available": 20})
+        )
+        low, high = sorted(ids)
+        for presentation in (low, high):
+            await restock(container, presentation, 20)
+        pairs.append((low, high))
+        single = await place_lines(container, [(high, 1)])
+        double = await place_lines(container, [(high, 1), (low, 1)])
+        placed += [(single, False), (double, True)]  # the two-line one expires, the other is active
+    for order, expires in placed:
+        await backdate_due(container, order.number)
+        if expires:
+            await make_due(container, order.reservation_id)  # type: ignore[arg-type]
+    overdue = container.services.get(CancelOverdueOrders)
+    expiry = container.services.get(ExpireReservations)
+
+    await asyncio.wait_for(asyncio.gather(overdue.run_once(), expiry.run_once()), 30)
+    await asyncio.wait_for(overdue.run_once(), 30)  # whatever the expiry job held at the time
+
+    for order, _ in placed:
+        assert (await order_row(container, order.number))["status"] == "cancelled"
+        assert (await reservation_row(container, order.reservation_id))["status"] in {  # type: ignore[arg-type]
+            "released",
+            "expired",
+        }
+    for low, high in pairs:
+        assert await item_row(container, low) == (20, 0)
+        assert await item_row(container, high) == (20, 0)

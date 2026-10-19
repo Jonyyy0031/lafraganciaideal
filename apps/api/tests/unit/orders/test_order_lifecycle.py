@@ -4,6 +4,7 @@ untouched), the note command, and the overdue job (its claim, reason, actor and 
 refused order is skipped and logged). The real rollback is in the integration tests; here the fakes
 prove the ORDER of the steps: inventory refuses before the order is saved."""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from uuid import UUID
@@ -442,9 +443,9 @@ async def test_marking_the_refund_done_keeps_the_order_cancelled_and_touches_no_
     assert world.stocks.operations == []
     assert world.history()[-1] == (S.CANCELLED, S.CANCELLED, "owner-1")
     assert world.orders.history[UUID(int=901)][-1].note == "Reembolso por transferencia"
-    # `InMemoryOrders.save` keeps a copy that still carries the earlier recorded event (the SQL
-    # adapter has no such thing), so only the last published event is the refund mark.
-    assert world.statuses()[-1] == ("cancelled", "cancelled")
+    # Review L4: the stored copy carries no pending event, so the earlier cancel is not
+    # published again and the refund mark is the only event.
+    assert world.statuses() == [("cancelled", "cancelled")]
 
 
 async def test_a_second_refund_mark_is_a_transition_error() -> None:
@@ -596,7 +597,46 @@ async def test_the_job_with_nothing_overdue_returns_zero() -> None:
     assert await World().wire(CancelOverdueOrders).run_once() == 0
 
 
-async def test_the_job_claims_a_batch_of_100() -> None:
+class CountingRunner(InMemoryTransactionRunner):
+    """Counts the transactions and tells which one each inventory call happens in."""
+
+    def __init__(self) -> None:
+        self.runs = 0
+
+    async def run[T, E](self, work: Callable[[], Awaitable[Result[T, E]]]) -> Result[T, E]:
+        self.runs += 1
+        return await work()
+
+
+class TracedHolds(InMemoryStockHolds):
+    def __init__(self, runner: CountingRunner) -> None:
+        super().__init__()
+        self._runner = runner
+        self.release_runs: list[int] = []
+
+    async def release(self, reservation_id: UUID) -> Result[None, DomainError]:
+        self.release_runs.append(self._runner.runs)
+        return await super().release(reservation_id)
+
+
+async def test_review_m1_the_job_runs_one_transaction_per_order() -> None:
+    runner = CountingRunner()
+    holds = TracedHolds(runner)
+    world = World(stocks=holds)
+    world.transactions = runner
+    await world.store(n=1, due=timedelta(minutes=-30))
+    await world.store(n=2, due=timedelta(minutes=-20))
+    await world.store(n=3, due=timedelta(minutes=-10))
+
+    count = await world.wire(CancelOverdueOrders).run_once()
+
+    assert count == 3
+    # Each release is in its own transaction; a fourth one finds nothing and ends the run.
+    assert holds.release_runs == [1, 2, 3]
+    assert runner.runs == 4
+
+
+async def test_review_m1_the_job_claims_one_order_at_a_time() -> None:
     world = World()
     claimed: list[int] = []
     original = world.orders.claim_overdue
@@ -606,11 +646,26 @@ async def test_the_job_claims_a_batch_of_100() -> None:
         return await original(now, limit)
 
     world.orders.claim_overdue = spy  # type: ignore[method-assign]
+    await world.store(n=1, due=timedelta(minutes=-30))
+    await world.store(n=2, due=timedelta(minutes=-20))
 
     await world.wire(CancelOverdueOrders).run_once()
 
+    assert claimed == [1, 1, 1]
+
+
+async def test_review_m1_a_run_processes_at_most_100_orders() -> None:
+    world = World()
+    for n in range(1, OVERDUE_BATCH + 6):
+        await world.store(n=n, due=timedelta(minutes=-30))
+
+    first = await world.wire(CancelOverdueOrders).run_once()
+    second = await world.wire(CancelOverdueOrders).run_once()
+
     assert OVERDUE_BATCH == 100
-    assert claimed == [100]
+    assert first == 100
+    assert second == 5
+    assert all(o.status is S.CANCELLED for o in world.orders.orders)
 
 
 class SelectiveHolds(InMemoryStockHolds):
@@ -628,9 +683,7 @@ class SelectiveHolds(InMemoryStockHolds):
         return Ok(None)
 
 
-async def test_deviation_5_a_refused_release_skips_and_logs_that_order_and_cancels_the_rest() -> (
-    None
-):
+async def test_deviation_5_a_refused_release_skips_and_logs_that_order_and_stops_the_run() -> None:
     holds = SelectiveHolds({UUID(int=72)}, "INVENTORY_RESERVATION_COMMITTED")
     world = World(stocks=holds)
     await world.store(n=1, due=timedelta(minutes=-30))
@@ -640,15 +693,16 @@ async def test_deviation_5_a_refused_release_skips_and_logs_that_order_and_cance
     with capture_logs() as logs:
         count = await world.wire(CancelOverdueOrders).run_once()
 
-    assert count == 2
-    assert [o.status for o in world.orders.orders] == [S.CANCELLED, S.PENDING_PAYMENT, S.CANCELLED]
+    assert count == 1
+    assert [o.status for o in world.orders.orders] == [
+        S.CANCELLED,
+        S.PENDING_PAYMENT,
+        S.PENDING_PAYMENT,
+    ]
     # The skipped order has no history row, no event and keeps its reason empty.
     assert world.history(2) == []
     assert world.current(2).cancel_reason is None
-    assert [e.number for e in world.events.published if isinstance(e, OrderStatusChanged)] == [
-        1001,
-        1003,
-    ]
+    assert [e.number for e in world.events.published if isinstance(e, OrderStatusChanged)] == [1001]
     warnings = [log for log in logs if log["event"] == "orders.overdue_release_refused"]
     assert len(warnings) == 1
     assert warnings[0]["log_level"] == "warning"
@@ -656,12 +710,8 @@ async def test_deviation_5_a_refused_release_skips_and_logs_that_order_and_cance
         1002,
         "INVENTORY_RESERVATION_COMMITTED",
     )
-    # Every order was still tried, in claim order.
-    assert holds.operations == [
-        ("release", UUID(int=71)),
-        ("release", UUID(int=72)),
-        ("release", UUID(int=73)),
-    ]
+    # The run stopped at the refused order (review L1): the third was never tried.
+    assert holds.operations == [("release", UUID(int=71)), ("release", UUID(int=72))]
 
 
 class StaleClaim(InMemoryOrders):
@@ -706,4 +756,4 @@ async def test_deviation_5_when_every_release_is_refused_the_job_cancels_none() 
     assert count == 0
     assert [o.status for o in world.orders.orders] == [S.PENDING_PAYMENT, S.PENDING_PAYMENT]
     assert world.events.published == []
-    assert [log["event"] for log in logs] == ["orders.overdue_release_refused"] * 2
+    assert [log["event"] for log in logs] == ["orders.overdue_release_refused"]

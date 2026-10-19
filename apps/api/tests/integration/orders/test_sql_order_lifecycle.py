@@ -355,12 +355,12 @@ async def test_a_note_does_not_touch_the_order_row(container: Container) -> None
     assert await row(container, "SELECT status, updated_at FROM orders.orders") == before
 
 
-async def test_a_note_waits_for_a_move_in_flight_and_lands_once_it_commits(
+async def test_a_note_lands_while_a_move_holds_the_order_row(
     container: Container,
 ) -> None:
-    """The command takes no lock of its own, but the foreign key checks the order row, and
-    PostgreSQL's key-share lock for that waits for a `FOR UPDATE` holder. The wait ends when the
-    move commits; nothing deadlocks and the note is kept."""
+    """Review L2: the order row is locked `FOR NO KEY UPDATE`, which does not conflict with the
+    `FOR KEY SHARE` the note's foreign key takes, so the note commits while the move is still in
+    flight."""
     await store_order(container, make_order(number=1001))
     r = repo(container)
     holding = asyncio.Event()
@@ -374,16 +374,15 @@ async def test_a_note_waits_for_a_move_in_flight_and_lands_once_it_commits(
     mover = asyncio.create_task(in_transaction(container, moving))
     await asyncio.wait_for(holding.wait(), TIMEOUT)
     add_note = container.services.get(AddOrderNote)
-    note = asyncio.create_task(add_note.execute(1001, "Hola", "admin-1"))
-    await asyncio.sleep(0.5)
-    waiting = not note.done()
-    release.set()
-    await asyncio.wait_for(mover, TIMEOUT)
-    result = await asyncio.wait_for(note, TIMEOUT)
+    try:
+        result = await asyncio.wait_for(add_note.execute(1001, "Hola", "admin-1"), 3)
+        landed = len(await rows(container, "SELECT 1 FROM orders.order_notes"))
+    finally:
+        release.set()
+        await asyncio.wait_for(mover, TIMEOUT)
 
-    assert waiting
     assert isinstance(result, Ok)
-    assert len(await rows(container, "SELECT 1 FROM orders.order_notes")) == 1
+    assert landed == 1, "the note was committed while the move was still in flight"
 
 
 # --- SqlOrderQueries: page ---------------------------------------------------------------------
