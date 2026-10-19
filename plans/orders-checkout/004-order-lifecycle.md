@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: orders
 min_implementer: mid
 depends_on: ["003"]
@@ -421,6 +421,70 @@ All cosmetic; fixed forward.
 8. Cancelled orders store the reason also as the history row's `note`.
 
 ## Test coverage
+
+Baseline (before any test): `uv run just check` 3097 passed, 3 skipped, nothing failing;
+`uv run just test-integration` 883 passed, 5 skipped. Closing: `uv run just check` 3410 passed,
+3 skipped (+313); `uv run just test-integration` 981 passed, 5 skipped (+98). No GAP and no
+NOT CONFIRMED were needed: everything below was confirmed from code or from local execution.
+No product code was edited.
+
+Source paths are under `apps/api/src/fragancia_api/modules/`; test paths under
+`apps/api/tests/`.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| `RETURNED` status, `mark_returned` only from `COMMITTED`, `return_reason` | `inventory/domain/reservation.py:45,131,154` | domain | `unit/inventory/test_reservation_return_domain.py` | CONFIRMED |
+| `ReturnReservation`: one `return` movement per line, reason `Devolución: <ref>`, actor system, `StockChanged`, idempotent, refuses active/released/expired, not found | `inventory/application/commands/reservations.py:317-380` | application | `unit/inventory/test_return_reservation.py` | CONFIRMED |
+| Deviation 2: `CommitReservation` refuses a returned reservation (`INVENTORY_RESERVATION_NOT_ACTIVE`, nothing sold again) and `ReleaseReservation` refuses it (`INVENTORY_RESERVATION_COMMITTED`) | `reservations.py:204,293` | application (in-memory) and integration (real SQL) | `test_return_reservation.py::test_commit_of_a_returned_...`, `::test_release_of_a_returned_...`, `::test_the_facade_refuses_commit_and_release_...`; `integration/orders/test_order_lifecycle_flow.py::test_a_returned_reservation_is_idempotent_to_return_and_refuses_commit_and_release` | CONFIRMED |
+| `return_sold` over real inventory: units back on hand, one `return` movement per in-stock line, reservation `returned`, refused when never sold | `stock_reservations.py`, `reservations.py:317` | integration | `test_order_lifecycle_flow.py::test_cancelling_a_paid_order_returns_the_units_...`, `::test_returning_a_reservation_that_was_never_sold_...` | CONFIRMED |
+| Permissions `orders:manage` (owner, staff) and `orders:finance` (owner) | `identity/domain/user.py:80-91` | domain / http | updated by the implementer in `unit/identity/test_user_domain.py` and the identity http and integration tests (deviation 1); not rewritten here | CONFIRMED |
+| Full 7x7 transition matrix; refusals carry `{"from","to"}`; table equals the plan's | `orders/domain/order.py:62-78,427-431` | domain | `unit/orders/test_order_lifecycle_domain.py::test_the_transition_matrix_...` (49 cases), `::test_the_module_transition_table_matches_the_plan_table` | CONFIRMED |
+| `mark_paid`: note required, 1-300 after collapsing whitespace, transition checked before note, history row and `orders.order.status_changed` | `order.py:319-329` | domain | `test_order_lifecycle_domain.py::test_mark_paid_*` | CONFIRMED |
+| `ship`: home needs carrier and tracking (1-60), local forbids both, pickup never ships; `ready_for_pickup` pickup only; `deliver`; `start_preparing` | `order.py:331-381` | domain | `test_order_lifecycle_domain.py` (ship, ready_for_pickup, deliver sections) | CONFIRMED |
+| `cancel_unpaid` / `cancel_paid`: reason 1-300, refund pending only for paid, status rules | `order.py:383-408` | domain | `test_order_lifecycle_domain.py` (cancel section) | CONFIRMED |
+| `mark_refunded`: needs cancelled + pending, history row cancelled to cancelled, second mark refused | `order.py:410-425` | domain | `test_order_lifecycle_domain.py` (mark_refunded section) | CONFIRMED |
+| `parse_order_number`, `clean_note_text` (deviation 4) | `order.py:84-97` | domain | `test_order_lifecycle_domain.py::test_parse_order_number`, `::test_clean_note_text_*` | CONFIRMED |
+| Each lifecycle command: which inventory call (none without a reservation), refusal passes through with the order unsaved, not found, invalid move or data calls no inventory | `orders/application/commands/lifecycle.py:56-185` | application | `unit/orders/test_order_lifecycle.py` | CONFIRMED |
+| `AddOrderNote`: stored with author and time, validates text before lookup, unknown number | `lifecycle.py:162-185` | application | `test_order_lifecycle.py::test_adding_a_note_*`, `::test_a_note_*` | CONFIRMED |
+| Job claims overdue unpaid orders only, reason "No pagado a tiempo", actor system, release per reservation, batch 100, count | `lifecycle.py:188-227` | application | `test_order_lifecycle.py::test_the_job_*` | CONFIRMED |
+| Deviation 5: a refused release is skipped and logged (`orders.overdue_release_refused`), the others still cancel | `lifecycle.py:207-217` | application and integration | `test_order_lifecycle.py::test_deviation_5_a_refused_release_...`, `::test_deviation_5_when_every_release_...`; `test_order_lifecycle_flow.py::test_deviation_5_the_job_skips_and_logs_...` (real SQL) | CONFIRMED |
+| Deviation 5: a refused cancel is skipped and logged (`orders.overdue_cancel_refused`) without releasing | `lifecycle.py:199-206` | application | `test_order_lifecycle.py::test_deviation_5_a_refused_cancel_...` (stale claim) | CONFIRMED |
+| `StockHoldsAdapter.commit/release/return_sold` pass inventory's result through unchanged | `orders/infrastructure/stock_holds.py` | application | `unit/orders/test_stock_holds_lifecycle_adapter.py` | CONFIRMED |
+| Routes: anonymous 401, no orders permission 403, staff 403 on payment/cancel-paid/refund (and finance alone not enough), 204/201 statuses, 404 for unparseable or unknown number, 409/422 codes and `details`, actor from the session, query bounds | `orders/http/router.py:211-346` | http | `unit/orders/test_order_lifecycle_http.py` | CONFIRMED |
+| OpenAPI declares the eight operations, their success status and 404/409/422, and the order models | `router.py`, `contracts.py:180-320` | http | `test_order_lifecycle_http.py::test_the_order_operations_...`, `::test_the_openapi_*` | CONFIRMED |
+| `SqlOrderRepository.save` (status, new columns, history rows, no double insert, rollback), `get_by_number_for_update` | `sql_order_repository.py:120-160` | integration | `integration/orders/test_sql_order_lifecycle.py` | CONFIRMED |
+| `claim_overdue`: unpaid and `payment_due_at < now` only (exact `now` excluded), oldest due first, limit, `SKIP LOCKED` against another claim and against an order being moved | `sql_order_repository.py:104-118` | integration | `test_sql_order_lifecycle.py::test_claim_*`, `::test_a_second_claim_skips_...` | CONFIRMED |
+| `add_note`: stores, unknown number false, no write to the order row | `sql_order_repository.py:162-175` | integration | `test_sql_order_lifecycle.py::test_add_note_*`, `::test_a_note_does_not_touch_the_order_row` | CONFIRMED |
+| "Takes no lock on the order" (`AddOrderNote`) | `lifecycle.py:162-185` | integration | `test_sql_order_lifecycle.py::test_a_note_waits_for_a_move_in_flight_...` | CONFIRMED with a caveat (see Findings below) |
+| `SqlOrderQueries.page`: status filter, search by `LFI-n` / `n` / email / name ignoring case, LIKE wildcards literal, newest first, paging and total | `sql_order_queries.py:36-77` | integration | `test_sql_order_lifecycle.py::test_the_list_*`, `::test_the_search_*`, `::test_paging_*` | CONFIRMED |
+| `SqlOrderQueries.detail`: header, lines, address/pickup/invoice, history oldest first, notes newest first, refund, carrier, reservation id; None when unknown | `sql_order_queries.py:79-` | integration | `test_sql_order_lifecycle.py` (detail section) | CONFIRMED |
+| Paid by hand over real inventory: commit, `sale` movement per in-stock line, `on_hand`/`reserved`, history, outbox `status_changed` payload; rollback when inventory refuses; late commit of an expired reservation; two payments at once sell once | `lifecycle.py:84-93` | integration | `test_order_lifecycle_flow.py` (paid by hand section) | CONFIRMED |
+| Made-to-order-only orders pay, cancel and cancel overdue without touching inventory | `lifecycle.py:71` | integration | `test_order_lifecycle_flow.py::test_an_order_without_a_reservation_*`, `::test_the_job_cancels_an_overdue_order_without_a_reservation` | CONFIRMED |
+| Forward moves and backwards refusal over real adapters | `lifecycle.py:96-125` | integration | `test_order_lifecycle_flow.py` (forward moves section) | CONFIRMED |
+| Cancel unpaid releases (also an expired reservation); cancel paid returns units and leaves refund pending; refund done once | `lifecycle.py:128-159` | integration | `test_order_lifecycle_flow.py` (cancel sections) | CONFIRMED |
+| The job over real SQL: cancels overdue unpaid with reason/actor/events, leaves not-overdue and paid orders, two concurrent runs cancel each order once | `lifecycle.py:188-227` | integration | `test_order_lifecycle_flow.py::test_the_job_*`, `::test_two_runs_of_the_job_at_once_...` | CONFIRMED |
+| Migration 0021 round trip on a scratch database: absent at 0020; four nullable columns; `order_events` and `order_notes` columns; indexes (the unpaid one partial); status and refund checks accept the seven statuses / pending, done, null and refuse anything else; FK cascade; orders stored before keep their data; downgrade removes everything and keeps orders; upgrade after downgrade rebuilds an identical schema snapshot | `migrations/versions/0021_orders_lifecycle.py` | integration | `integration/orders/test_migration_0021_orders_lifecycle.py` (28 tests) | CONFIRMED |
+| e2e | n/a | e2e | no e2e infrastructure yet (plan table: no) | n/a |
+
+Tests added per layer (parametrized cases counted): domain 129 in orders (49 are the matrix)
+plus 9 in inventory; application 54 in orders, 12 in inventory and 6 in the adapter file; http
+103; integration 98 (28 migration, 47 repository and queries, 23 flow). Unit total +313 over the
+baseline, integration +98.
+
+Observations for the reviewer (no product code was touched, nothing here is a GAP):
+
+- **`add_note` is not lock-free in practice.** The command takes no explicit lock, as the plan
+  says, but the `order_notes.order_id` foreign key makes PostgreSQL take a key-share lock on the
+  order row, which waits for a `FOR UPDATE` holder. So a note added while a move on the same
+  order is in flight waits until that move commits (no deadlock; a move waiting on a note waits
+  only for the note's short transaction). The test pins this observed behavior.
+- **`InMemoryOrders.save` keeps recorded events on its stored copy.** The SQL adapter does not,
+  so in the in-memory fake a second command on the same order publishes the earlier event
+  again. Tests that run several commands on one order assert on the last event only
+  (`test_marking_the_refund_done_...`). A fake-only artifact, not product behavior.
+- The migration test was run for real on scratch databases (`fragancia_mig_<random>_test`,
+  created and dropped by the fixture); `fragancia_test` and the development database were not
+  touched by it.
 
 ## Review findings
 
