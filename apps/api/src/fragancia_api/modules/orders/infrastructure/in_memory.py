@@ -81,7 +81,11 @@ class InMemoryOrders:
         return self.last_number
 
     async def add(self, order: Order) -> None:
-        self.orders.append(deepcopy(order))
+        # The stored copy must not keep the pending events (as in `save`), or a later command
+        # through this fake would publish them again.
+        stored = deepcopy(order)
+        stored.pull_events()
+        self.orders.append(stored)
 
     def _find(self, number: int) -> Order | None:
         return next((o for o in self.orders if o.number == number), None)

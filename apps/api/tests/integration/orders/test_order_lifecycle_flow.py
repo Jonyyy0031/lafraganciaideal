@@ -706,7 +706,11 @@ async def test_review_m1_the_job_and_the_expiry_job_over_crossed_stock_do_not_de
             {"ids": item_ids},
         )
         jobs = asyncio.gather(overdue.run_once(), expiry.run_once())
-        await wait_until_sessions_wait_on_locks(container, at_least=2)
+        try:
+            await wait_until_sessions_wait_on_locks(container, at_least=2)
+        except BaseException:
+            jobs.cancel()  # never leave the jobs un-awaited when the overlap is not reached
+            raise
         await holder.rollback()  # release the items: both jobs now race for them
     await asyncio.wait_for(jobs, 30)
     await asyncio.wait_for(overdue.run_once(), 30)  # whatever the expiry job held at the time
