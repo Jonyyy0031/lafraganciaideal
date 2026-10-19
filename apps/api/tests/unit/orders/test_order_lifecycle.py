@@ -745,6 +745,24 @@ async def test_deviation_5_a_refused_cancel_skips_and_logs_that_order_without_re
     assert (warnings[0]["number"], warnings[0]["code"]) == (1002, "ORDERS_TRANSITION_INVALID")
 
 
+async def test_review_l1_a_refused_cancel_stops_the_run_and_is_claimed_again_next_time() -> None:
+    world = World(orders=StaleClaim())
+    await world.store(n=1, due=timedelta(minutes=-30))
+    await world.store(n=2, due=timedelta(minutes=-20))
+    await world.store(n=3, due=timedelta(minutes=-10))
+    job = world.wire(CancelOverdueOrders)
+
+    with capture_logs() as logs:
+        first = await job.run_once()
+        second = await job.run_once()
+
+    # Order 3 is never reached: 2 is refused first in both runs (it starves the newer ones).
+    assert (first, second) == (1, 0)
+    assert world.current(3).status is S.PENDING_PAYMENT
+    assert world.stocks.operations == [("release", UUID(int=71))]
+    assert [log["event"] for log in logs] == ["orders.overdue_cancel_refused"] * 2
+
+
 async def test_deviation_5_when_every_release_is_refused_the_job_cancels_none() -> None:
     world = World(stocks=InMemoryStockHolds(refusal=refusal()))
     await world.store(n=1, due=timedelta(minutes=-30))

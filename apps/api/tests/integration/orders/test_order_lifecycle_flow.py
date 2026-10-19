@@ -650,6 +650,22 @@ async def place_lines(
     return Placed(number, order["id"], lines[0][0], None, order["reservation_id"])
 
 
+async def wait_until_sessions_wait_on_locks(container: Container, *, at_least: int) -> None:
+    """Poll `pg_locks` until `at_least` distinct sessions wait on an ungranted lock (the test
+    holds the lock, so the waiters can only be the jobs under test)."""
+    query = text(
+        "SELECT count(DISTINCT l.pid) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid "
+        "WHERE NOT l.granted AND a.datname = current_database() AND l.pid <> pg_backend_pid()"
+    )
+    deadline = asyncio.get_running_loop().time() + 20
+    while asyncio.get_running_loop().time() < deadline:
+        async with container.database.engine.connect() as connection:
+            if (await connection.execute(query)).scalar_one() >= at_least:
+                return
+        await asyncio.sleep(0.05)
+    pytest.fail(f"fewer than {at_least} sessions ever waited on a lock: the jobs did not overlap")
+
+
 async def test_review_m1_the_job_and_the_expiry_job_over_crossed_stock_do_not_deadlock(
     container: Container, catalog_rows: CatalogRows
 ) -> None:
@@ -678,7 +694,21 @@ async def test_review_m1_the_job_and_the_expiry_job_over_crossed_stock_do_not_de
     overdue = container.services.get(CancelOverdueOrders)
     expiry = container.services.get(ExpireReservations)
 
-    await asyncio.wait_for(asyncio.gather(overdue.run_once(), expiry.run_once()), 30)
+    # Hold every stock item of the test so both jobs reach inventory and queue behind the holder:
+    # the interleaving is then proven (two sessions waiting on a lock at once), not hoped for.
+    item_ids = [presentation for pair in pairs for presentation in pair]
+    async with container.database.engine.connect() as holder:
+        await holder.execute(
+            text(
+                "SELECT 1 FROM inventory.stock_items WHERE presentation_id = ANY(:ids) "
+                "ORDER BY presentation_id FOR UPDATE"
+            ),
+            {"ids": item_ids},
+        )
+        jobs = asyncio.gather(overdue.run_once(), expiry.run_once())
+        await wait_until_sessions_wait_on_locks(container, at_least=2)
+        await holder.rollback()  # release the items: both jobs now race for them
+    await asyncio.wait_for(jobs, 30)
     await asyncio.wait_for(overdue.run_once(), 30)  # whatever the expiry job held at the time
 
     for order, _ in placed:

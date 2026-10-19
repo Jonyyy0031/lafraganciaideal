@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: orders
 min_implementer: mid
 depends_on: ["003"]
@@ -492,9 +492,9 @@ Source paths are under `apps/api/src/fragancia_api/modules/`; test paths under
 | `parse_order_number`, `clean_note_text` (deviation 4) | `order.py:84-97` | domain | `test_order_lifecycle_domain.py::test_parse_order_number`, `::test_clean_note_text_*` | CONFIRMED |
 | Each lifecycle command: which inventory call (none without a reservation), refusal passes through with the order unsaved, not found, invalid move or data calls no inventory | `orders/application/commands/lifecycle.py:56-185` | application | `unit/orders/test_order_lifecycle.py` | CONFIRMED |
 | `AddOrderNote`: stored with author and time, validates text before lookup, unknown number | `lifecycle.py:162-185` | application | `test_order_lifecycle.py::test_adding_a_note_*`, `::test_a_note_*` | CONFIRMED |
-| Job claims overdue unpaid orders only, reason "No pagado a tiempo", actor system, release per reservation, batch 100, count | `lifecycle.py:188-227` | application | `test_order_lifecycle.py::test_the_job_*` | CONFIRMED |
-| Deviation 5: a refused release is skipped and logged (`orders.overdue_release_refused`), the others still cancel | `lifecycle.py:207-217` | application and integration | `test_order_lifecycle.py::test_deviation_5_a_refused_release_...`, `::test_deviation_5_when_every_release_...`; `test_order_lifecycle_flow.py::test_deviation_5_the_job_skips_and_logs_...` (real SQL) | CONFIRMED |
-| Deviation 5: a refused cancel is skipped and logged (`orders.overdue_cancel_refused`) without releasing | `lifecycle.py:199-206` | application | `test_order_lifecycle.py::test_deviation_5_a_refused_cancel_...` (stale claim) | CONFIRMED |
+| Job claims overdue unpaid orders only, reason "No pagado a tiempo", actor system, release per reservation, batch 100 in ONE transaction (superseded: now one transaction per order), count | `lifecycle.py:188-227` | application | `test_order_lifecycle.py::test_the_job_*` | CONFIRMED |
+| SUPERSEDED 2026-10-19 (see repair round): deviation 5 "the others still cancel" no longer holds; a refused release is logged (`orders.overdue_release_refused`) and the run stops | `lifecycle.py:207-217` | application and integration | `test_order_lifecycle.py::test_deviation_5_a_refused_release_...`, `::test_deviation_5_when_every_release_...`; `test_order_lifecycle_flow.py::test_deviation_5_the_job_skips_and_logs_...` (real SQL) | CONFIRMED |
+| SUPERSEDED 2026-10-19 (see repair round; now also stops the run): deviation 5 a refused cancel is skipped and logged (`orders.overdue_cancel_refused`) without releasing | `lifecycle.py:199-206` | application | `test_order_lifecycle.py::test_deviation_5_a_refused_cancel_...` (stale claim) | CONFIRMED |
 | `StockHoldsAdapter.commit/release/return_sold` pass inventory's result through unchanged | `orders/infrastructure/stock_holds.py` | application | `unit/orders/test_stock_holds_lifecycle_adapter.py` | CONFIRMED |
 | Routes: anonymous 401, no orders permission 403, staff 403 on payment/cancel-paid/refund (and finance alone not enough), 204/201 statuses, 404 for unparseable or unknown number, 409/422 codes and `details`, actor from the session, query bounds | `orders/http/router.py:211-346` | http | `unit/orders/test_order_lifecycle_http.py` | CONFIRMED |
 | OpenAPI declares the eight operations, their success status and 404/409/422, and the order models | `router.py`, `contracts.py:180-320` | http | `test_order_lifecycle_http.py::test_the_order_operations_...`, `::test_the_openapi_*` | CONFIRMED |
@@ -519,18 +519,41 @@ baseline, integration +98.
 
 Observations for the reviewer (no product code was touched, nothing here is a GAP):
 
-- **`add_note` is not lock-free in practice.** The command takes no explicit lock, as the plan
+- (SUPERSEDED, see repair round) **`add_note` is not lock-free in practice.** The command takes no explicit lock, as the plan
   says, but the `order_notes.order_id` foreign key makes PostgreSQL take a key-share lock on the
   order row, which waits for a `FOR UPDATE` holder. So a note added while a move on the same
   order is in flight waits until that move commits (no deadlock; a move waiting on a note waits
   only for the note's short transaction). The test pins this observed behavior.
-- **`InMemoryOrders.save` keeps recorded events on its stored copy.** The SQL adapter does not,
+- (SUPERSEDED by L4) **`InMemoryOrders.save` keeps recorded events on its stored copy.** The SQL adapter does not,
   so in the in-memory fake a second command on the same order publishes the earlier event
   again. Tests that run several commands on one order assert on the last event only
   (`test_marking_the_refund_done_...`). A fake-only artifact, not product behavior.
 - The migration test was run for real on scratch databases (`fragancia_mig_<random>_test`,
   created and dropped by the fixture); `fragancia_test` and the development database were not
   touched by it.
+
+### Repair round 2026-10-19 (step 7: M1, L1, L2, L4)
+
+Baseline (this round, before my edits): `uv run just check` green; `uv run just
+test-integration` 981 passed, 6 skipped. Closing: `check` 3413 passed, 3 skipped; integration
+982 passed, 5 skipped (the skip count differs by one between runs; not investigated, no test of
+mine is skipped). No GAP, no NOT CONFIRMED. No product code edited. Rows marked SUPERSEDED above
+describe the pre-repair behavior and are not covered by this block.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| M1: one transaction per order; each release runs in its own transaction; a final empty claim ends the run | `lifecycle.py` (`run_once`, `_cancel_next`) | application | `test_order_lifecycle.py::test_review_m1_the_job_runs_one_transaction_per_order` | CONFIRMED |
+| M1: claims one order at a time (`claim_overdue(now, 1)`) | same | application | `::test_review_m1_the_job_claims_one_order_at_a_time` | CONFIRMED |
+| M1: at most `OVERDUE_BATCH` (100) orders per run, the rest on the next run | same | application | `::test_review_m1_a_run_processes_at_most_100_orders` | CONFIRMED |
+| L1: a refused release is logged and STOPS the run (later orders untouched, not tried) | `lifecycle.py` | application and integration | `::test_deviation_5_a_refused_release_skips_and_logs_that_order_and_stops_the_run`, `::test_deviation_5_when_every_release_is_refused_...`; `test_order_lifecycle_flow.py::test_deviation_5_the_job_skips_and_logs_...` (real SQL) | CONFIRMED |
+| L1 (added now): a refused CANCEL also stops the run with a third order behind it, is logged, and the same order is re-claimed (and stops the run again) next time | `lifecycle.py` | application | `::test_review_l1_a_refused_cancel_stops_the_run_and_is_claimed_again_next_time` | CONFIRMED |
+| M1 over real SQL: the overdue job and `ExpireReservations` over crossed stock sets do not deadlock and end with every order cancelled and stock back at `(20, 0)`. The overlap is now PROVEN, not hoped for: the test holds `FOR UPDATE` on every stock item, starts both jobs, waits (polling `pg_locks` for ungranted locks) until at least two sessions wait, and only then releases; it fails with "the jobs did not overlap" otherwise | `lifecycle.py`; inventory `ExpireReservations` | integration | `test_order_lifecycle_flow.py::test_review_m1_the_job_and_the_expiry_job_over_crossed_stock_do_not_deadlock` (+ `wait_until_sessions_wait_on_locks`) | CONFIRMED (run 3 times green; not run against pre-repair code, so a regression guard, not a demonstrated red) |
+| L2: `get_by_number_for_update` and `claim_overdue` use `FOR NO KEY UPDATE`: a note (FK key-share) no longer waits for a move in flight | `sql_order_repository.py` | integration | `test_sql_order_lifecycle.py::test_a_note_lands_while_a_move_holds_the_order_row` | CONFIRMED |
+| L2: `claim_overdue` still skips an order locked by another claim or a move | `sql_order_repository.py` | integration | `test_sql_order_lifecycle.py::test_a_second_claim_skips_...` | CONFIRMED (unchanged) |
+| L4: `InMemoryOrders.save` stores a copy without pending events; a second command on the same order does not republish the first event | `orders/infrastructure/in_memory.py` | application | `test_order_lifecycle.py` refund test asserts the exact event list | CONFIRMED |
+| `AddOrderNote` after L2 (docstring change only) | `lifecycle.py:162-185` | application | existing `test_adding_a_note_*` | CONFIRMED (unchanged) |
+
+Tests this round: unit +1 (L1 cancel stop); integration 0 new, 1 strengthened (M1 overlap).
 
 ## Review findings
 
