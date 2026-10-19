@@ -160,8 +160,9 @@ class MarkOrderRefunded(OrderMove):
 
 
 class AddOrderNote:
-    """Command: an internal note on an order (decision 37). It goes into its own table and takes
-    no lock on the order."""
+    """Command: an internal note on an order (decision 37). It goes into its own table and only
+    takes `FOR KEY SHARE` on the order through its foreign key, which does not conflict with the
+    `FOR NO KEY UPDATE` of a move, so it never waits."""
 
     def __init__(
         self, *, orders: OrderRepository, transactions: TransactionRunner, clock: Clock
@@ -186,42 +187,62 @@ class AddOrderNote:
 
 
 class CancelOverdueOrders(OrderMove):
-    """Worker job (decision 24): cancel the unpaid orders whose `payment_due_at` passed, a batch
-    at a time, and release their reservations (already expired in most cases). The actor is
-    `system`. An order whose release inventory refuses is skipped and logged, so one bad row
-    never blocks the rest. Returns how many orders it cancelled."""
+    """Worker job (decision 24): cancel the unpaid orders whose `payment_due_at` passed and
+    release their reservations (already expired in most cases). The actor is `system`.
+    Returns how many orders it cancelled.
+
+    One transaction per order: each claims a single overdue order (`SKIP LOCKED`), cancels it,
+    releases its reservation, saves and publishes. A transaction therefore holds the stock items
+    of one reservation only, taken in id order, which keeps inventory's global lock order
+    (`inventory/application/commands/reservations.py:1-20`). A whole batch in one transaction
+    would hold the items of order A while asking for those of order B and could deadlock against
+    checkout, a manual move or `ExpireReservations`. The run stops when nothing is claimed,
+    after `OVERDUE_BATCH` orders, or at the first order whose cancel or release is refused
+    (logged).
+
+    Such a refused order stays `pending_payment`, so it is re-claimed (and stops the run) every
+    time, which would starve the newer overdue orders behind it. Today release refuses only a
+    committed, returned or missing reservation, and commit happens atomically with `paid`, so
+    it cannot happen. It can once the payments initiative commits reservations from a webhook;
+    that initiative must handle it (initiative README, "Dependency notes")."""
 
     async def run_once(self) -> int:
-        async def work() -> Result[int, DomainError]:
-            now = self._clock.now()
-            cancelled = 0
-            for order in await self._orders.claim_overdue(now, OVERDUE_BATCH):
-                match order.cancel_unpaid(AUTO_CANCEL_REASON, SYSTEM_ACTOR, now):
-                    case Err(refused):
-                        _log.warning(
-                            "orders.overdue_cancel_refused", number=order.number, code=refused.code
-                        )
-                        continue
-                    case Ok(_):
-                        pass
-                if order.reservation_id is not None:
-                    match await self._stocks.release(order.reservation_id):
-                        case Err(refused):
-                            _log.warning(
-                                "orders.overdue_release_refused",
-                                number=order.number,
-                                code=refused.code,
-                            )
-                            continue
-                        case Ok(_):
-                            pass
-                await self._orders.save(order)
-                await self._events.publish(order.pull_events())
-                cancelled += 1
-            return Ok(cancelled)
+        cancelled = 0
+        for _ in range(OVERDUE_BATCH):
+            match await self._transactions.run(self._cancel_next):
+                case Err(_):
+                    break
+                case Ok(True):
+                    cancelled += 1
+                case Ok(_):
+                    break
+        return cancelled
 
-        match await self._transactions.run(work):
-            case Err(_):
-                return 0
-            case Ok(cancelled):
-                return cancelled
+    async def _cancel_next(self) -> Result[bool, DomainError]:
+        """True when it cancelled an order; False when nothing is overdue or the claimed order
+        was refused (logged, left as it was)."""
+        now = self._clock.now()
+        claimed = await self._orders.claim_overdue(now, 1)
+        if not claimed:
+            return Ok(False)
+        order = claimed[0]
+        match order.cancel_unpaid(AUTO_CANCEL_REASON, SYSTEM_ACTOR, now):
+            case Err(refused):
+                _log.warning(
+                    "orders.overdue_cancel_refused", number=order.number, code=refused.code
+                )
+                return Ok(False)
+            case Ok(_):
+                pass
+        if order.reservation_id is not None:
+            match await self._stocks.release(order.reservation_id):
+                case Err(refused):
+                    _log.warning(
+                        "orders.overdue_release_refused", number=order.number, code=refused.code
+                    )
+                    return Ok(False)
+                case Ok(_):
+                    pass
+        await self._orders.save(order)
+        await self._events.publish(order.pull_events())
+        return Ok(True)

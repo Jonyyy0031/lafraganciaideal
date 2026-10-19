@@ -6080,7 +6080,7 @@
           "orders · admin"
         ],
         "summary": "Add Order Note",
-        "description": "Add an internal note (1 to 1000 characters) signed with the admin's user id. It takes no\nlock on the order. 404 `ORDERS_ORDER_NOT_FOUND`; 422 `ORDERS_ORDER_DATA_INVALID`\n(`details.field`). `orders:manage`.",
+        "description": "Add an internal note (1 to 1000 characters) signed with the admin's user id. It never\nwaits on a move in flight (the order row is locked `FOR NO KEY UPDATE`). 404\n`ORDERS_ORDER_NOT_FOUND`; 422 `ORDERS_ORDER_DATA_INVALID`\n(`details.field`). `orders:manage`.",
         "operationId": "add_order_note",
         "security": [
           {

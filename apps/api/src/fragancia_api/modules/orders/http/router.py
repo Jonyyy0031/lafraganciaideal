@@ -374,8 +374,9 @@ async def add_order_note(
     request: Request,
     use_case: Annotated[AddOrderNote, Depends(provide(AddOrderNote))],
 ) -> None:
-    """Add an internal note (1 to 1000 characters) signed with the admin's user id. It takes no
-    lock on the order. 404 `ORDERS_ORDER_NOT_FOUND`; 422 `ORDERS_ORDER_DATA_INVALID`
+    """Add an internal note (1 to 1000 characters) signed with the admin's user id. It never
+    waits on a move in flight (the order row is locked `FOR NO KEY UPDATE`). 404
+    `ORDERS_ORDER_NOT_FOUND`; 422 `ORDERS_ORDER_DATA_INVALID`
     (`details.field`). `orders:manage`."""
     unwrap(await use_case.execute(_number(number), body.text, _actor(request)))
 

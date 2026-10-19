@@ -34,12 +34,13 @@ class OrderRepository(Protocol):
         ...
 
     async def get_by_number_for_update(self, number: int) -> Order | None:
-        """The order with that number, its row locked `FOR UPDATE`; None when unknown."""
+        """The order with that number, its row locked `FOR NO KEY UPDATE`
+        (a note insert takes `FOR KEY SHARE`, so it does not wait); None when unknown."""
         ...
 
     async def claim_overdue(self, now: datetime, limit: int) -> list[Order]:
         """Up to `limit` `pending_payment` orders with `payment_due_at < now`, oldest first,
-        locked `FOR UPDATE SKIP LOCKED` so two runs never take the same one."""
+        locked `FOR NO KEY UPDATE SKIP LOCKED` so two runs never take the same one."""
         ...
 
     async def save(self, order: Order) -> None:

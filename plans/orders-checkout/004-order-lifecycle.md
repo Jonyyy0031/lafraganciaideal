@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["003"]
@@ -657,5 +657,38 @@ Checked and found correct (no finding):
 Result: 1 medium and 4 low findings. M1 needs a code change, so the status stays `review`
 (repair handoff to the implementer). L2–L4 can ride along with that repair; L1 is a note for
 the payments initiative.
+
+## Repair log
+
+Step 7 implemented 2026-10-19 (status `implementing`). Prior review evidence is kept above;
+the repaired code repeats testing, review and verify.
+
+- **M1.** `CancelOverdueOrders.run_once` now runs one `transactions.run` per order
+  (`_cancel_next`: `claim_overdue(now, 1)`, cancel, release, save, publish), up to
+  `OVERDUE_BATCH` (100) orders per run. The docstring states the lock-order reason.
+- **L1.** The run stops at the first order whose cancel or release is refused (logged), so it
+  is not re-claimed in a hot loop. The docstring records the starvation risk; the initiative
+  README's "Dependency notes" under Payment already carries the line (no edit needed).
+  Existing deviation 5 behavior changed accordingly: the rest of the batch is no longer
+  cancelled in the same run (deviation 5 text above describes the pre-repair behavior).
+- **L2.** `get_by_number_for_update` and `claim_overdue` lock with
+  `with_for_update(key_share=True)` (`FOR NO KEY UPDATE`). Docstrings of the port, the
+  `AddOrderNote` command and the route updated; `openapi.json` regenerated (route description).
+- **L3.** `docs/architecture.md` inventory row mentions `return_sold`, `returned` and
+  `INVENTORY_RESERVATION_NOT_COMMITTED`.
+- **L4.** `InMemoryOrders.save` stores a copy without pending events.
+- **Tests.**
+  - Unit (`tests/unit/orders/test_order_lifecycle.py`): replaced `test_the_job_claims_a_batch_of_100`
+    with `test_review_m1_the_job_claims_one_order_at_a_time`,
+    `test_review_m1_the_job_runs_one_transaction_per_order` and
+    `test_review_m1_a_run_processes_at_most_100_orders`; the deviation 5 tests now expect the
+    run to stop at the refused order; the refund test asserts the exact event list (L4
+    workaround removed).
+  - Integration: `test_a_note_waits_for_a_move_in_flight_...` became
+    `test_a_note_lands_while_a_move_holds_the_order_row`;
+    `test_review_m1_the_job_and_the_expiry_job_over_crossed_stock_do_not_deadlock` runs both
+    jobs concurrently over crossed stock; the deviation 5 flow test expects the stop.
+  - Not proven: the deadlock test was not run against the pre-repair code (no way to restore
+    it without reverting files), so it is a regression guard, not a demonstrated red.
 
 ## Verification

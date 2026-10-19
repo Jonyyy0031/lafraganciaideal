@@ -105,6 +105,7 @@ class InMemoryOrders:
         """Like the SQL adapter it keeps a copy, appends the new history to the stored one and
         forgets it on the order it was given."""
         stored = deepcopy(order)
+        stored.pull_events()
         position = next(i for i, o in enumerate(self.orders) if o.id == order.id)
         self.history.setdefault(order.id, []).extend(order.new_history)
         order.new_history.clear()

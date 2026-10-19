@@ -113,7 +113,9 @@ class SqlOrderRepository:
     async def get_by_number_for_update(self, number: int) -> Order | None:
         session = self._database.session
         row = (
-            await session.execute(select(orders).where(orders.c.number == number).with_for_update())
+            await session.execute(
+                select(orders).where(orders.c.number == number).with_for_update(key_share=True)
+            )
         ).first()
         if row is None:
             return None
@@ -130,7 +132,7 @@ class SqlOrderRepository:
                 )
                 .order_by(orders.c.payment_due_at, orders.c.number)
                 .limit(limit)
-                .with_for_update(skip_locked=True)
+                .with_for_update(key_share=True, skip_locked=True)
             )
         ).all()
         return [_to_domain(row, await _load_lines(session, row.id)) for row in rows]
