@@ -418,3 +418,59 @@ code must repeat testing, review and verify.
   `POST /orders/view` and `POST /orders/cancel` with the token in the body.
 
 ## Verification
+
+2026-10-20, main session, live against the development database.
+- **Setup.** The API ran on :8100 and the arq worker was running, at migration 0022, after the
+  step 5 repair.
+- **Script:** `scratchpad/qa_inv/qa_order_page.py`.
+- **Delivery options:** home only (18000, free from 250000), restored afterwards.
+- **Data left in the database:** orders `LFI-1011` to `LFI-1016`. `LFI-1011` really sold one
+  50 ml unit (it was paid and shipped); every other unit was released or cancelled.
+
+- [x] **By link.** `POST /orders/view` with the checkout token answered the view of `LFI-1011`,
+  with exactly these keys: number, status, created_at, payment_due_at, customer_name,
+  customer_phone, lines, subtotal/delivery/total, lead_time_max_days, delivery_method, address,
+  pickup_address/hours, invoice, shipping_carrier, tracking_number, refund_status, cancelled_by,
+  timeline and can_cancel.
+  - Values: "Marta Ruiz", phone `9987654321`, state CMX, RFC `XAXX010101000`, one line, total
+    207950, timeline `[pending_payment]`, and `can_cancel: true`.
+  - The body contains none of "note", "actor", "reservation", "digest", "cancel_reason" or
+    "email".
+  - A wrong token answered 404 `ORDERS_ORDER_NOT_FOUND`.
+  - The old `GET /orders/{token}` and `POST /orders/{token}/cancel` answered 404.
+- [x] **After moves.**
+  - Paid ("SPEI") and shipped (Estafeta / 123456) from the panel, the timeline read
+    pending_payment → paid → shipped with times, with carrier and tracking shown and
+    `can_cancel: false`.
+  - A customer cancel then answered 409 `ORDERS_TRANSITION_INVALID`.
+- [x] **Lookup.**
+  - `LFI-1012` with `"  marta.qa005@EXAMPLE.com "` answered the same token as checkout, and so did
+    the plain number `1012`.
+  - A wrong email and the unknown `LFI-999999` both answered 404 `ORDERS_LOOKUP_NOT_FOUND` with
+    byte-identical bodies.
+  - Attempts 4 and 5 for the number were 200; the 6th and 7th were 429
+    `ORDERS_LOOKUP_RATE_LIMITED`.
+  - `orders.lookup_throttle` holds `lookup-number:1012` with 7 attempts, so the refused attempts
+    were counted too.
+- [x] **Customer cancel.**
+  - `POST /orders/cancel` on unpaid `LFI-1012` answered 204. The view shows `cancelled`,
+    `cancelled_by: customer` and `can_cancel: false`.
+  - The 50 ml `reserved` went from 1 to 0.
+  - The panel history has actor `customer` with "Cancelado por el cliente".
+- [x] **Who cancelled.**
+  - A panel cancel with "Motivo interno de la tienda" shows `cancelled_by: shop`, and the text is
+    absent from the view.
+  - An order with `payment_due_at` set in the past was cancelled by the worker and shows
+    `system`.
+  - A made-to-order order that was paid, cancelled as paid and then refunded shows `shop`,
+    `refund_status: done`, and the timeline pending_payment → paid → cancelled, with no refund
+    entry.
+- [x] **Decision 42 in the logs.** In the uvicorn access log, every `/orders/view`,
+  `/orders/cancel` and `/orders/lookup` line shows only the fixed path. The token appears only on
+  the two lines where this script itself requested the old token-in-path URLs, to prove they
+  answer 404.
+
+NOT VERIFIED live:
+- the per-IP limit of 20, because the run came from one IP and stayed under it (the unit and
+  integration tests cover it);
+- the web page that reads `#token=…`, which belongs to phase 3.
