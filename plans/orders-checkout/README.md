@@ -178,6 +178,18 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
     - 004: the lifecycle in the panel.
     - 005: the customer's order page.
     - 006: the emails.
+39. (2026-10-20) **Looking up an order by number and email opens it at once.**
+    - When they match, the lookup answers the private link.
+    - It is limited per IP and per order number.
+    - A wrong email and an unknown number answer the same, so the lookup does not reveal which
+      numbers exist.
+40. (2026-10-20) **The customer's page shows everything except internal data.**
+    - It shows the status timeline, products, totals, the full address, tracking, invoice data,
+      the payment deadline and the estimated lead time.
+    - It hides internal notes, who made each change, and the cancel reason the shop typed. It
+      says only whether the customer, the system or the shop cancelled.
+41. (2026-10-20) **The customer can cancel an unpaid order from its page.** The units are
+    released at once, and the history records the customer as the actor.
 
 ## Delivered
 
