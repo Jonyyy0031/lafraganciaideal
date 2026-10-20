@@ -158,6 +158,17 @@ order_notes = Table(
     schema=SCHEMA,
 )
 
+# Fixed-window attempt counters of the customer's order lookup (decision 39): keys like
+# `lookup-ip:<ip>` and `lookup-number:<n>`.
+lookup_throttle = Table(
+    "lookup_throttle",
+    metadata,
+    Column("key", String(64), primary_key=True),
+    Column("attempts", Integer, nullable=False),
+    Column("window_started_at", DateTime(timezone=True), nullable=False),
+    schema=SCHEMA,
+)
+
 order_lines = Table(
     "order_lines",
     metadata,

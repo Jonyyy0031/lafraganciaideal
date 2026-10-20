@@ -35,6 +35,8 @@ async def clean_orders(container: Container) -> AsyncIterator[None]:
             await connection.execute(
                 text("UPDATE orders.order_numbers SET last_number = 1000 WHERE id = 1")
             )
+            # Plan 005: no lookup attempts counted.
+            await connection.execute(text("TRUNCATE orders.lookup_throttle"))
             await connection.execute(
                 text(
                     "TRUNCATE inventory.stock_items, inventory.stock_movements, "

@@ -2,13 +2,26 @@
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
+from fragancia_api.modules.orders.contracts import (
+    AdminOrderAddress,
+    AdminOrderInvoice,
+    CustomerOrderLine,
+    CustomerOrderStep,
+    CustomerOrderView,
+)
 from fragancia_api.modules.orders.domain.cart import Cart, Offer
 from fragancia_api.modules.orders.domain.delivery import DeliverySettings
 from fragancia_api.modules.orders.domain.errors import CheckoutStockUnavailable
-from fragancia_api.modules.orders.domain.order import Order, OrderEvent, OrderStatus
+from fragancia_api.modules.orders.domain.order import (
+    Order,
+    OrderEvent,
+    OrderStatus,
+    cancelled_by,
+    format_order_number,
+)
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result, new_id
 
 
@@ -182,3 +195,103 @@ class InMemoryCatalogOffers:
 
     async def offers(self, ids: Sequence[UUID], now: datetime) -> dict[UUID, Offer]:
         return {i: self.by_id[i] for i in ids if i in self.by_id}
+
+
+class InMemoryCustomerOrders:
+    """The `CustomerOrderQueries` port over an `InMemoryOrders` store: it builds the view from
+    the stored orders and their history, as the SQL adapter does from rows."""
+
+    def __init__(self, store: InMemoryOrders) -> None:
+        self._store = store
+
+    async def by_access_digest(self, digest: str) -> CustomerOrderView | None:
+        order = next((o for o in self._store.orders if o.access_token_digest == digest), None)
+        if order is None:
+            return None
+        history = self._store.history.get(order.id, [])
+        moves = [e for e in history if e.from_status != e.to_status]
+        cancel = next((e for e in moves if e.to_status == OrderStatus.CANCELLED), None)
+        address = order.delivery.address
+        invoice = order.invoice
+        return CustomerOrderView(
+            number=format_order_number(order.number),
+            status=order.status.value,
+            created_at=order.created_at,
+            payment_due_at=order.payment_due_at,
+            customer_name=order.name.value,
+            customer_phone=order.phone.value,
+            lines=[
+                CustomerOrderLine(
+                    label=line.label,
+                    ml=line.ml,
+                    quantity=line.quantity,
+                    unit_price_cents=line.unit_price_cents,
+                    line_total_cents=line.line_total_cents,
+                    availability=line.availability,
+                    lead_time_min_days=line.lead_time_min_days,
+                    lead_time_max_days=line.lead_time_max_days,
+                )
+                for line in order.lines
+            ],
+            subtotal_cents=order.subtotal_cents,
+            delivery_cents=order.delivery.cost_cents,
+            total_cents=order.total_cents,
+            lead_time_max_days=order.lead_time_max_days,
+            delivery_method=order.delivery.method.value,
+            address=(
+                AdminOrderAddress(
+                    street=address.street,
+                    exterior_number=address.exterior_number,
+                    interior_number=address.interior_number,
+                    neighborhood=address.neighborhood,
+                    postal_code=address.postal_code.value,
+                    municipality=address.municipality,
+                    state=address.state,
+                    references=address.references,
+                )
+                if address is not None
+                else None
+            ),
+            pickup_address=order.delivery.pickup_address,
+            pickup_hours=order.delivery.pickup_hours,
+            invoice=(
+                AdminOrderInvoice(
+                    rfc=invoice.rfc,
+                    business_name=invoice.business_name,
+                    tax_regime=invoice.tax_regime,
+                    cfdi_use=invoice.cfdi_use,
+                    postal_code=invoice.postal_code.value,
+                )
+                if invoice is not None
+                else None
+            ),
+            shipping_carrier=order.shipping_carrier,
+            tracking_number=order.tracking_number,
+            refund_status=(order.refund_status.value if order.refund_status is not None else None),
+            cancelled_by=cancelled_by(cancel.actor) if cancel is not None else None,
+            timeline=[
+                CustomerOrderStep(status="pending_payment", at=order.created_at),
+                *(CustomerOrderStep(status=event.to_status.value, at=event.at) for event in moves),
+            ],
+            can_cancel=order.status == OrderStatus.PENDING_PAYMENT,
+        )
+
+    async def match(self, number: int, email: str) -> tuple[UUID, int] | None:
+        order = next((o for o in self._store.orders if o.number == number), None)
+        if order is None or order.email.value != email:
+            return None
+        return order.id, order.number
+
+
+class InMemoryLookupThrottle:
+    """The `LookupThrottle` port: a fixed window per key, like the SQL upsert."""
+
+    def __init__(self) -> None:
+        self.counters: dict[str, tuple[int, datetime]] = {}
+
+    async def hit(self, key: str, now: datetime, window: timedelta) -> int:
+        attempts, started = self.counters.get(key, (0, now))
+        if key in self.counters and started <= now - window:
+            attempts, started = 0, now
+        self.counters[key] = (attempts + 1, started)
+        return attempts + 1

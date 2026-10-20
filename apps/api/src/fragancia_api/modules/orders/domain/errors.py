@@ -1,6 +1,11 @@
 from dataclasses import dataclass
 
-from fragancia_api.shared.kernel import ConflictError, InvalidValueError, NotFoundError
+from fragancia_api.shared.kernel import (
+    ConflictError,
+    InvalidValueError,
+    NotFoundError,
+    RateLimitedError,
+)
 
 
 @dataclass(frozen=True)
@@ -119,3 +124,17 @@ class OrderDataInvalid(InvalidValueError):
 
     code: str = "ORDERS_ORDER_DATA_INVALID"
     message: str = "Revisa los datos del cambio"
+
+
+@dataclass(frozen=True)
+class OrderLookupNotFound(NotFoundError):
+    """The same for an unknown number and for a wrong email (decision 39)."""
+
+    code: str = "ORDERS_LOOKUP_NOT_FOUND"
+    message: str = "No encontramos un pedido con ese número y correo"
+
+
+@dataclass(frozen=True)
+class OrderLookupRateLimited(RateLimitedError):
+    code: str = "ORDERS_LOOKUP_RATE_LIMITED"
+    message: str = "Demasiados intentos; espera unos minutos"

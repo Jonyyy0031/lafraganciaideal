@@ -10,6 +10,10 @@ from fragancia_api.modules.orders.application.commands.cart import (
     SetCartLine,
 )
 from fragancia_api.modules.orders.application.commands.checkout import PlaceOrder
+from fragancia_api.modules.orders.application.commands.customer_order import (
+    CancelOrderByCustomer,
+    LookUpOrder,
+)
 from fragancia_api.modules.orders.application.commands.delivery import UpdateDeliveryOptions
 from fragancia_api.modules.orders.application.commands.lifecycle import (
     AddOrderNote,
@@ -20,6 +24,7 @@ from fragancia_api.modules.orders.application.commands.lifecycle import (
     MarkOrderRefunded,
 )
 from fragancia_api.modules.orders.application.queries.cart import GetCart
+from fragancia_api.modules.orders.application.queries.customer_order import GetCustomerOrder
 from fragancia_api.modules.orders.application.queries.delivery import (
     GetDeliveryOptions,
     GetPublicDeliveryOptions,
@@ -33,9 +38,13 @@ from fragancia_api.modules.orders.contracts import (
     CancelOrderRequest,
     CartView,
     CheckoutRequest,
+    CustomerOrderView,
     DeliveryOptions,
     DeliveryQuoteResponse,
     MarkPaidRequest,
+    OrderAccessRequest,
+    OrderLookupRequest,
+    OrderLookupResponse,
     OrderNoteRequest,
     OrderStatusName,
     PlacedOrder,
@@ -381,4 +390,55 @@ async def add_order_note(
     unwrap(await use_case.execute(_number(number), body.text, _actor(request)))
 
 
-routers = (admin, public, cart, checkout, orders_admin)
+customer_orders = public_router(prefix="/orders", tags=["orders · customer"])
+
+
+@customer_orders.post(
+    "/lookup",
+    responses={404: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
+)
+async def look_up_order(
+    body: OrderLookupRequest,
+    request: Request,
+    use_case: Annotated[LookUpOrder, Depends(provide(LookUpOrder))],
+) -> OrderLookupResponse:
+    """Find an order again with its number (`LFI-1001` or `1001`) and the email it was placed
+    with (any case, spaces trimmed); answers the private-link token (decision 39). The token is a
+    secret that opens the order. A wrong email and an unknown number answer the same 404
+    `ORDERS_LOOKUP_NOT_FOUND`. Attempts are limited per IP and per order number: 429
+    `ORDERS_LOOKUP_RATE_LIMITED`."""
+    token = unwrap(
+        await use_case.execute(
+            body.number, body.email, request.client.host if request.client else None
+        )
+    )
+    return OrderLookupResponse(access_token=token)
+
+
+@customer_orders.post("/view", responses=_404)
+async def get_customer_order(
+    body: OrderAccessRequest,
+    use_case: Annotated[GetCustomerOrder, Depends(provide(GetCustomerOrder))],
+) -> CustomerOrderView:
+    """The customer's page of an order, by the private-link token from checkout (decisions 13,
+    40 and 42). The token is a secret: whoever has it sees the order, with the name, phone,
+    address and invoice data. It travels in the body, never in a URL path, so no access or error
+    log records it; the web link carries it in the URL fragment (`/pedido#token=...`) and the
+    page POSTs it, as ADR 0010 does for identity's links. No internal notes, admin ids or cancel
+    reason. 404 `ORDERS_ORDER_NOT_FOUND`."""
+    return unwrap(await use_case.execute(body.access_token))
+
+
+@customer_orders.post("/cancel", status_code=204, responses=_404_409)
+async def cancel_order_by_customer(
+    body: OrderAccessRequest,
+    use_case: Annotated[CancelOrderByCustomer, Depends(provide(CancelOrderByCustomer))],
+) -> None:
+    """The customer cancels their own order while it is `pending_payment` (decisions 41 and 42);
+    its reserved units are released. The token is a secret and travels in the body (see
+    `POST /orders/view`). 404 `ORDERS_ORDER_NOT_FOUND`; 409 `ORDERS_TRANSITION_INVALID` once the
+    order is paid or cancelled."""
+    unwrap(await use_case.execute(body.access_token))
+
+
+routers = (admin, public, cart, checkout, orders_admin, customer_orders)
