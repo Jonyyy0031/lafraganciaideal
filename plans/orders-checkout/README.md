@@ -196,6 +196,13 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
     - So it never reaches server or proxy logs, nor the `Referer` header.
 43. (2026-10-20) **The customer's page also shows the customer's name and phone,** as decision 40
     meant: everything except internal data.
+44. (2026-10-20) **The orders module sends its own emails,** through outbox subscribers like
+    inventory's low-stock email. A `notifications` module comes with the second channel
+    (WhatsApp), and can take them over.
+45. (2026-10-20) **The emails are plain text,** like the existing ones. The branded HTML design
+    belongs to the web phase.
+46. (2026-10-20) **The customer also gets an email when the order goes into preparation,** besides
+    the moves in decision 12. Marking a refund done sends no email.
 
 ## Delivered
 
