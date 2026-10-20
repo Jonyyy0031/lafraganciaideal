@@ -190,6 +190,12 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
       says only whether the customer, the system or the shop cancelled.
 41. (2026-10-20) **The customer can cancel an unpaid order from its page.** The units are
     released at once, and the history records the customer as the actor.
+42. (2026-10-20) **The order token never appears in a URL path.**
+    - The private link carries it in the URL fragment, `/pedido#token=…`.
+    - The page sends it in a POST body, as identity's links do (ADR 0010).
+    - So it never reaches server or proxy logs, nor the `Referer` header.
+43. (2026-10-20) **The customer's page also shows the customer's name and phone,** as decision 40
+    meant: everything except internal data.
 
 ## Delivered
 

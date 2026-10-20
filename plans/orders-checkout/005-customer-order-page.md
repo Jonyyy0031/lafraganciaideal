@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: orders
 min_implementer: mid
 depends_on: ["004"]
@@ -190,6 +190,44 @@ while it is unpaid. The plan applies decisions 13 and 31, and the new 39–41.
      - The tester writes the layered tests.
    - Observable result: `uv run just check` and `uv run just test-integration` pass.
 
+5. **Review repair (added 2026-10-20 after the first review; decisions 42 and 43)**
+   - Files: `apps/api/src/fragancia_api/modules/orders/http/router.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/contracts.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/sql_customer_orders.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/infrastructure/in_memory.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/application/queries/customer_order.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/application/commands/customer_order.py` (modify),
+     `apps/api/openapi.json` (modify),
+     `docs/architecture.md` (modify),
+     `apps/api/tests/unit/orders/` (modify), `apps/api/tests/integration/orders/` (modify)
+   - Do:
+     - **M1, the token stays out of URLs (decision 42).**
+       - Replace `GET /orders/{access_token}` with `POST /orders/view`, and
+         `POST /orders/{access_token}/cancel` with `POST /orders/cancel`. Both take the body
+         `OrderAccessRequest(access_token: str, max_length 200)`.
+       - `POST /orders/lookup` is unchanged. No route keeps the token in its path, so the access
+         log, a proxy log and the unhandled-error log (`shared/http/middleware.py:146`, which logs
+         the path) never see it.
+       - The docstrings say the web link carries the token in the URL **fragment**
+         (`/pedido#token=…`). The page reads the fragment and POSTs it, as ADR 0010 does for
+         identity's links.
+       - Error codes and statuses stay as they are.
+     - **L2, name and phone on the page (decision 43).** `CustomerOrderView` gains
+       `customer_name` and `customer_phone`, filled by the SQL and in-memory readers. The route
+       docstring says what the page shows, and `openapi.json` is regenerated.
+     - **L3** goes to `plans/findings/platform-client-ip-behind-proxy.md` (deployment). Nothing
+       changes in this plan.
+     - **Info 4** is accepted: the per-number lookup limit can be used to block one number's
+       lookup for 15 minutes, while the private link still works. It is the same trade-off as
+       identity's per-email login limit.
+     - **Tests.**
+       - Update the HTTP, flow and OpenAPI tests to the new routes.
+       - Assert that no route path under `/orders` has a token parameter.
+       - Add the two fields to the exact key sets.
+   - Observable result:
+     - `uv run just check`, `uv run just test-integration` and `plans-scope` are clean.
+     - The old path routes answer 404 or 405.
+
 ## Acceptance criteria
 
 Run with the API and the worker on the development database. Orders are placed through
@@ -275,5 +313,54 @@ unknown number, as the plan says; a body that fails validation (422) consumes no
 route with the token `lookup` and answers 404 `ORDERS_ORDER_NOT_FOUND` (documented by a test).
 
 ## Review findings
+
+### First review 2026-10-20 (reviewer subagent; written up by the main session)
+
+The reviewer was interrupted before writing this section, so the main session recorded its
+report here.
+
+**Pass 1, checklist: 14 of 15 pass, 1 not applicable (no PR yet).**
+- `plans-scope` is clean: 24 files, all inside the plan.
+- `uv run just check` passes, with 3507 passed and 3 skipped; the harness has 685, and
+  `openapi.json` is current.
+- `uv run just test-integration` passes, with 1028 passed and 5 skipped.
+- Layers, the CQRS split, contracts, migration 0022 (new, reversible, no cross-schema foreign
+  key), `public_router`, wiring, secrets and docs all pass.
+
+**Pass 2, findings: 0 high, 1 medium, 2 low, 2 info.**
+
+1. **Medium: the permanent order token travels in the URL path, and is logged.**
+   - Where: `http/router.py:422` (`GET /{access_token}`) and `:433` (`POST /{access_token}/cancel`).
+   - The token never expires (an HMAC of the order id, decision 31). The uvicorn access log and
+     any proxy log write the full path, and so does the unhandled-error log
+     (`shared/http/middleware.py:146`).
+   - Scenario: anyone who reads the logs can open any order, with its address and RFC, and
+     cancel the unpaid ones, forever.
+   - **Resolution (decision 42):** step 5 moves the token into a POST body, and the web link
+     carries it in a URL fragment, as ADR 0010 does.
+2. **Low: the docstring promises a phone that the view does not show.**
+   - Where: `router.py:427-429`; `CustomerOrderView` (`contracts.py:245-270`) has neither the
+     phone nor the name.
+   - **Resolution (decision 43):** step 5 adds `customer_name` and `customer_phone`.
+3. **Low, outside this plan: per-IP limits depend on the proxy setup** (`request.client.host`;
+   uvicorn trusts `X-Forwarded-For` only from `FORWARDED_ALLOW_IPS`).
+   - Filed as `plans/findings/platform-client-ip-behind-proxy.md`.
+4. **Info: anyone can block one number's lookup for 15 minutes,** because the per-number counter
+   is shared by every IP. The private link still works. **Accepted**, by the same trade-off as
+   identity's per-email login limit.
+5. **Info: what came out clean.**
+   - **Number formats.** Every format of a number maps to one throttle key: `parse_order_number`
+     accepts ASCII digits only, at most 9 (`domain/order.py:100-105`).
+   - **No enumeration.** An unknown number and a wrong email run the same query and get
+     byte-identical bodies. Unknown numbers count against the limit too.
+   - **The throttle.** It is one atomic upsert, with no window race, and the counts commit before
+     the refusal.
+   - **Token lookup.** It goes by the SHA-256 digest on a unique index, over 256 bits of token.
+   - **Cancel.** The number comes from the token's own order, under a row lock, and
+     `cancel_unpaid` refuses anything that is not pending, so a paid order or another customer's
+     order cannot be cancelled.
+   - **The view.** No notes, actor ids, cancel reason, reservation id, email or digests.
+
+**Status:** `review`. M1 and L2 need code (step 5), so the plan returns to `implementing`.
 
 ## Verification
