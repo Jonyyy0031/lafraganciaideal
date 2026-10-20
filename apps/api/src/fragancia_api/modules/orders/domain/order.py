@@ -1,5 +1,14 @@
-"""The order: a frozen copy of what the guest bought, the delivery and the invoice data. Plan 003
-only creates it (`pending_payment`); the other states come with the lifecycle."""
+"""The order: a frozen copy of what the guest bought, the delivery and the invoice data, and its
+lifecycle. It is created `pending_payment` and only moves forward (decision 35):
+
+    pending_payment -> paid | cancelled
+    paid            -> preparing (optional) | shipped | ready_for_pickup | cancelled
+    preparing       -> shipped | ready_for_pickup
+    shipped | ready_for_pickup -> delivered
+
+Every move appends one `OrderEvent` (the history row the repository writes) and records
+`orders.order.status_changed`. Refusals are `Err`; the callers pair a move with the inventory
+call it needs inside one transaction."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -16,16 +25,84 @@ from fragancia_api.modules.orders.domain.customer import (
     Phone,
 )
 from fragancia_api.modules.orders.domain.delivery import DeliveryMethod, Pickup
-from fragancia_api.modules.orders.domain.errors import CustomerDataInvalid
-from fragancia_api.shared.kernel import AggregateRoot, DomainEvent, Err, Ok, Result
+from fragancia_api.modules.orders.domain.errors import (
+    CustomerDataInvalid,
+    OrderDataInvalid,
+    OrderTransitionInvalid,
+)
+from fragancia_api.shared.kernel import AggregateRoot, DomainError, DomainEvent, Err, Ok, Result
 
 ORDER_NUMBER_PREFIX = "LFI-"
 FIRST_ORDER_NUMBER = 1001
 PAYMENT_WINDOW = timedelta(minutes=30)
 
+NOTE_MAX = 300
+REASON_MAX = 300
+CARRIER_MAX = 60
+TRACKING_NUMBER_MAX = 60
+AUTO_CANCEL_REASON = "No pagado a tiempo"
+SYSTEM_ACTOR = "system"
+
 
 class OrderStatus(StrEnum):
     PENDING_PAYMENT = "pending_payment"
+    PAID = "paid"
+    PREPARING = "preparing"
+    SHIPPED = "shipped"
+    READY_FOR_PICKUP = "ready_for_pickup"
+    DELIVERED = "delivered"
+    CANCELLED = "cancelled"
+
+
+class RefundStatus(StrEnum):
+    PENDING = "pending"
+    DONE = "done"
+
+
+# The state machine (decisions 9 and 35): the statuses an order can move to from each one.
+ALLOWED_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
+    OrderStatus.PENDING_PAYMENT: frozenset({OrderStatus.PAID, OrderStatus.CANCELLED}),
+    OrderStatus.PAID: frozenset(
+        {
+            OrderStatus.PREPARING,
+            OrderStatus.SHIPPED,
+            OrderStatus.READY_FOR_PICKUP,
+            OrderStatus.CANCELLED,
+        }
+    ),
+    OrderStatus.PREPARING: frozenset({OrderStatus.SHIPPED, OrderStatus.READY_FOR_PICKUP}),
+    OrderStatus.SHIPPED: frozenset({OrderStatus.DELIVERED}),
+    OrderStatus.READY_FOR_PICKUP: frozenset({OrderStatus.DELIVERED}),
+    OrderStatus.DELIVERED: frozenset(),
+    OrderStatus.CANCELLED: frozenset(),
+}
+
+
+NOTE_TEXT_MAX = 1000
+
+
+def parse_order_number(raw: str) -> int | None:
+    """`LFI-1001` or `1001` (any case, no spaces) to 1001; None for anything else."""
+    value = raw.upper().removeprefix(ORDER_NUMBER_PREFIX)
+    if not value.isascii() or not value.isdigit() or len(value) > 9:
+        return None
+    return int(value)
+
+
+def clean_note_text(raw: str) -> Result[str, OrderDataInvalid]:
+    """An internal note keeps its line breaks; only the ends are trimmed (1 to 1000 chars)."""
+    value = raw.strip()
+    if not 1 <= len(value) <= NOTE_TEXT_MAX:
+        return Err(OrderDataInvalid(details={"field": "text", "max": NOTE_TEXT_MAX}))
+    return Ok(value)
+
+
+def _text(raw: str, maximum: int, field: str) -> Result[str, OrderDataInvalid]:
+    """The text with its whitespace collapsed, 1 to `maximum` characters."""
+    value = " ".join(raw.split())
+    if not 1 <= len(value) <= maximum:
+        return Err(OrderDataInvalid(details={"field": field, "max": maximum}))
+    return Ok(value)
 
 
 def format_order_number(number: int) -> str:
@@ -111,6 +188,31 @@ class OrderPlaced(DomainEvent):
     number: int
 
 
+@dataclass(frozen=True, kw_only=True)
+class OrderStatusChanged(DomainEvent):
+    """Published for every move, including the refund mark (from and to are then both
+    `cancelled`); the emails (plan 006) subscribe to it by name."""
+
+    name: ClassVar[str] = "orders.order.status_changed"
+    order_id: UUID
+    number: int
+    from_status: str
+    to_status: str
+
+
+@dataclass(frozen=True, slots=True)
+class OrderEvent:
+    """One history row: who moved the order, when, and the data entered."""
+
+    at: datetime
+    from_status: OrderStatus
+    to_status: OrderStatus
+    actor: str
+    note: str | None = None
+    carrier: str | None = None
+    tracking_number: str | None = None
+
+
 class Order(AggregateRoot):
     def __init__(
         self,
@@ -133,6 +235,10 @@ class Order(AggregateRoot):
         payment_due_at: datetime,
         created_at: datetime,
         updated_at: datetime,
+        cancel_reason: str | None = None,
+        refund_status: RefundStatus | None = None,
+        shipping_carrier: str | None = None,
+        tracking_number: str | None = None,
     ) -> None:
         super().__init__()
         self.id = id
@@ -155,6 +261,13 @@ class Order(AggregateRoot):
         self.payment_due_at = payment_due_at
         self.created_at = created_at
         self.updated_at = updated_at
+        self.cancel_reason = cancel_reason
+        self.refund_status = refund_status
+        self.shipping_carrier = shipping_carrier
+        self.tracking_number = tracking_number
+        # The history rows of the moves made since the order was loaded; the repository writes
+        # them. Older rows are not loaded on the write side.
+        self.new_history: list[OrderEvent] = []
 
     @classmethod
     def place(
@@ -202,3 +315,150 @@ class Order(AggregateRoot):
         )
         order.record(OrderPlaced(order_id=id, number=number))
         return order
+
+    def mark_paid(self, note: str, actor: str, now: datetime) -> Result[None, DomainError]:
+        """Paid by hand until the payments initiative exists; the note says how (decision 32)."""
+        if not self._can_move_to(OrderStatus.PAID):
+            return Err(self._refused(OrderStatus.PAID))
+        match _text(note, NOTE_MAX, "note"):
+            case Err(invalid):
+                return Err(invalid)
+            case Ok(clean):
+                pass
+        self._move(OrderStatus.PAID, actor, now, note=clean)
+        return Ok(None)
+
+    def start_preparing(self, actor: str, now: datetime) -> Result[None, DomainError]:
+        if not self._can_move_to(OrderStatus.PREPARING):
+            return Err(self._refused(OrderStatus.PREPARING))
+        self._move(OrderStatus.PREPARING, actor, now)
+        return Ok(None)
+
+    def ship(
+        self, carrier: str | None, tracking_number: str | None, actor: str, now: datetime
+    ) -> Result[None, DomainError]:
+        """Home delivery needs the carrier and the tracking number; local delivery carries
+        neither (decision 33). Pickup orders are never shipped."""
+        if self.delivery.method == DeliveryMethod.PICKUP or not self._can_move_to(
+            OrderStatus.SHIPPED
+        ):
+            return Err(self._refused(OrderStatus.SHIPPED))
+        clean_carrier: str | None = None
+        clean_tracking: str | None = None
+        if self.delivery.method == DeliveryMethod.HOME:
+            match _text(carrier or "", CARRIER_MAX, "carrier"):
+                case Err(invalid):
+                    return Err(invalid)
+                case Ok(clean_carrier):
+                    pass
+            match _text(tracking_number or "", TRACKING_NUMBER_MAX, "tracking_number"):
+                case Err(invalid):
+                    return Err(invalid)
+                case Ok(clean_tracking):
+                    pass
+        elif carrier is not None or tracking_number is not None:
+            field = "carrier" if carrier is not None else "tracking_number"
+            return Err(OrderDataInvalid(details={"field": field}))
+        self.shipping_carrier = clean_carrier
+        self.tracking_number = clean_tracking
+        self._move(
+            OrderStatus.SHIPPED, actor, now, carrier=clean_carrier, tracking_number=clean_tracking
+        )
+        return Ok(None)
+
+    def ready_for_pickup(self, actor: str, now: datetime) -> Result[None, DomainError]:
+        if self.delivery.method != DeliveryMethod.PICKUP or not self._can_move_to(
+            OrderStatus.READY_FOR_PICKUP
+        ):
+            return Err(self._refused(OrderStatus.READY_FOR_PICKUP))
+        self._move(OrderStatus.READY_FOR_PICKUP, actor, now)
+        return Ok(None)
+
+    def deliver(self, actor: str, now: datetime) -> Result[None, DomainError]:
+        if not self._can_move_to(OrderStatus.DELIVERED):
+            return Err(self._refused(OrderStatus.DELIVERED))
+        self._move(OrderStatus.DELIVERED, actor, now)
+        return Ok(None)
+
+    def cancel_unpaid(self, reason: str, actor: str, now: datetime) -> Result[None, DomainError]:
+        if self.status is not OrderStatus.PENDING_PAYMENT:
+            return Err(self._refused(OrderStatus.CANCELLED))
+        match _text(reason, REASON_MAX, "reason"):
+            case Err(invalid):
+                return Err(invalid)
+            case Ok(clean):
+                pass
+        self.cancel_reason = clean
+        self._move(OrderStatus.CANCELLED, actor, now, note=clean)
+        return Ok(None)
+
+    def cancel_paid(self, reason: str, actor: str, now: datetime) -> Result[None, DomainError]:
+        """Only a paid order, not yet prepared or shipped. The refund stays pending until
+        someone marks it done (decision 36)."""
+        if self.status is not OrderStatus.PAID:
+            return Err(self._refused(OrderStatus.CANCELLED))
+        match _text(reason, REASON_MAX, "reason"):
+            case Err(invalid):
+                return Err(invalid)
+            case Ok(clean):
+                pass
+        self.cancel_reason = clean
+        self.refund_status = RefundStatus.PENDING
+        self._move(OrderStatus.CANCELLED, actor, now, note=clean)
+        return Ok(None)
+
+    def mark_refunded(self, note: str, actor: str, now: datetime) -> Result[None, DomainError]:
+        """The refund of a cancelled paid order was made by hand; the history row keeps the
+        status cancelled to cancelled with the note."""
+        if (
+            self.status is not OrderStatus.CANCELLED
+            or self.refund_status is not RefundStatus.PENDING
+        ):
+            return Err(self._refused(OrderStatus.CANCELLED))
+        match _text(note, NOTE_MAX, "note"):
+            case Err(invalid):
+                return Err(invalid)
+            case Ok(clean):
+                pass
+        self.refund_status = RefundStatus.DONE
+        self._move(OrderStatus.CANCELLED, actor, now, note=clean)
+        return Ok(None)
+
+    def _can_move_to(self, to: OrderStatus) -> bool:
+        return to in ALLOWED_TRANSITIONS[self.status]
+
+    def _refused(self, to: OrderStatus) -> OrderTransitionInvalid:
+        return OrderTransitionInvalid(details={"from": self.status.value, "to": to.value})
+
+    def _move(
+        self,
+        to: OrderStatus,
+        actor: str,
+        now: datetime,
+        *,
+        note: str | None = None,
+        carrier: str | None = None,
+        tracking_number: str | None = None,
+    ) -> None:
+        previous = self.status
+        self.status = to
+        self.updated_at = now
+        self.new_history.append(
+            OrderEvent(
+                at=now,
+                from_status=previous,
+                to_status=to,
+                actor=actor,
+                note=note,
+                carrier=carrier,
+                tracking_number=tracking_number,
+            )
+        )
+        self.record(
+            OrderStatusChanged(
+                order_id=self.id,
+                number=self.number,
+                from_status=previous.value,
+                to_status=to.value,
+            )
+        )

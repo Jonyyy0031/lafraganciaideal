@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from fragancia_api.shared.contracts import Page
+
 # Business rules (price and postal-code ranges, required fields) live in the domain; these
 # models only bound the payload.
 _CENTS_BOUND = 1_000_000_000
@@ -175,3 +177,141 @@ class DeliveryQuoteResponse(BaseModel):
     """The methods that apply, in the order home, local, pickup; empty when none does."""
 
     options: list[DeliveryQuoteLine]
+
+
+OrderStatusName = Literal[
+    "pending_payment", "paid", "preparing", "shipped", "ready_for_pickup", "delivered", "cancelled"
+]
+RefundStatusName = Literal["pending", "done"]
+
+
+class AdminOrderSummary(BaseModel):
+    """One row of the panel's order list."""
+
+    number: str = Field(examples=["LFI-1001"])
+    created_at: datetime
+    customer_name: str
+    customer_email: str
+    status: OrderStatusName
+    delivery_method: Literal["home", "local", "pickup"]
+    total_cents: int
+    refund_status: RefundStatusName | None
+
+
+class AdminOrderPage(Page[AdminOrderSummary]): ...
+
+
+class AdminOrderLine(BaseModel):
+    """The frozen copy of the offer at checkout (decision 11)."""
+
+    presentation_id: UUID
+    perfume_id: UUID
+    label: str
+    ml: int
+    availability: Literal["in_stock", "made_to_order"]
+    lead_time_min_days: int | None
+    lead_time_max_days: int | None
+    quantity: int
+    unit_price_cents: int
+    regular_price_cents: int
+    line_total_cents: int
+
+
+class AdminOrderAddress(BaseModel):
+    street: str
+    exterior_number: str
+    interior_number: str | None
+    neighborhood: str
+    postal_code: str
+    municipality: str
+    state: str
+    references: str | None
+
+
+class AdminOrderInvoice(BaseModel):
+    rfc: str
+    business_name: str
+    tax_regime: str
+    cfdi_use: str
+    postal_code: str
+
+
+class AdminOrderEvent(BaseModel):
+    """One history row. `actor` is an admin user id or `system`; a refund mark has the same
+    status in `from_status` and `to_status`."""
+
+    at: datetime
+    from_status: OrderStatusName
+    to_status: OrderStatusName
+    actor: str
+    note: str | None
+    carrier: str | None
+    tracking_number: str | None
+
+
+class AdminOrderNote(BaseModel):
+    """An internal note; `actor` is the admin user id."""
+
+    at: datetime
+    actor: str
+    text: str
+
+
+class AdminOrderDetail(BaseModel):
+    """An order with everything the panel shows. `history` is oldest first, `notes` newest
+    first. `reservation_id` is `null` for an order made only of made-to-order lines."""
+
+    number: str = Field(examples=["LFI-1001"])
+    status: OrderStatusName
+    created_at: datetime
+    updated_at: datetime
+    payment_due_at: datetime
+    customer_name: str
+    customer_email: str
+    customer_phone: str
+    delivery_method: Literal["home", "local", "pickup"]
+    delivery_cents: int
+    address: AdminOrderAddress | None
+    pickup_address: str | None
+    pickup_hours: str | None
+    invoice: AdminOrderInvoice | None
+    lines: list[AdminOrderLine]
+    subtotal_cents: int
+    total_cents: int
+    lead_time_max_days: int | None
+    cancel_reason: str | None
+    refund_status: RefundStatusName | None
+    shipping_carrier: str | None
+    tracking_number: str | None
+    reservation_id: UUID | None
+    history: list[AdminOrderEvent]
+    notes: list[AdminOrderNote]
+
+
+# The rules (required, 1 to 300 characters, who may ship what) live in the domain; these models
+# only bound the payload.
+class MarkPaidRequest(BaseModel):
+    """How the payment was received, e.g. "Transferencia directa" (decision 32)."""
+
+    note: str = Field(max_length=1000, examples=["Transferencia directa"])
+
+
+class AdvanceOrderRequest(BaseModel):
+    """`carrier` and `tracking_number` are required when shipping a home delivery and must be
+    absent otherwise (decision 33)."""
+
+    to: Literal["preparing", "shipped", "ready_for_pickup", "delivered"]
+    carrier: str | None = Field(default=None, max_length=1000, examples=["Estafeta"])
+    tracking_number: str | None = Field(default=None, max_length=1000, examples=["123456"])
+
+
+class CancelOrderRequest(BaseModel):
+    reason: str = Field(max_length=1000, examples=["El cliente lo pidió"])
+
+
+class RefundDoneRequest(BaseModel):
+    note: str = Field(max_length=1000, examples=["Reembolso por transferencia"])
+
+
+class OrderNoteRequest(BaseModel):
+    text: str = Field(max_length=5000)

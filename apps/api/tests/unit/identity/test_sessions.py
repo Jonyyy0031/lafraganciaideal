@@ -108,11 +108,19 @@ async def test_my_account_shows_the_role_and_sorted_permissions(identity: Identi
     assert (owner_me.email, owner_me.role, owner_me.permissions) == (
         "owner@example.test",
         "owner",
-        ["catalog:manage", "delivery:manage", "inventory:manage", "outbox:manage", "users:manage"],
+        [
+            "catalog:manage",
+            "delivery:manage",
+            "inventory:manage",
+            "orders:finance",
+            "orders:manage",
+            "outbox:manage",
+            "users:manage",
+        ],
     )
     assert (staff_me.role, staff_me.permissions) == (
         "staff",
-        ["catalog:manage", "inventory:manage"],
+        ["catalog:manage", "inventory:manage", "orders:manage"],
     )
     assert await identity.get_my_account.execute(uuid4()) is None
 

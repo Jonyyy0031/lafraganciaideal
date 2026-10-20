@@ -95,8 +95,16 @@ def test_an_order_number_is_the_prefix_and_the_integer() -> None:
     assert format_order_number(12345) == "LFI-12345"
 
 
-def test_the_only_status_is_pending_payment() -> None:
-    assert [status.value for status in OrderStatus] == ["pending_payment"]
+def test_the_statuses_are_the_seven_of_the_lifecycle() -> None:
+    assert [status.value for status in OrderStatus] == [
+        "pending_payment",
+        "paid",
+        "preparing",
+        "shipped",
+        "ready_for_pickup",
+        "delivered",
+        "cancelled",
+    ]
 
 
 def test_placing_an_order_leaves_it_pending_payment_with_its_stamps() -> None:

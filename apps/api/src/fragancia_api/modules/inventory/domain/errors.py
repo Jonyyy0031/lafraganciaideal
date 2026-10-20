@@ -92,3 +92,9 @@ class ReservationNotActive(ConflictError):
 class ReservationCommitted(ConflictError):
     code: str = "INVENTORY_RESERVATION_COMMITTED"
     message: str = "The reservation was already committed"
+
+
+@dataclass(frozen=True)
+class ReservationNotCommitted(ConflictError):
+    code: str = "INVENTORY_RESERVATION_NOT_COMMITTED"
+    message: str = "The reservation was not sold, so there is nothing to return"

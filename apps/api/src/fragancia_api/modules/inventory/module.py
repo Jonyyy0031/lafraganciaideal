@@ -8,6 +8,7 @@ from fragancia_api.modules.inventory.application.commands.reservations import (
     ExtendReservation,
     ReleaseReservation,
     ReserveStock,
+    ReturnReservation,
 )
 from fragancia_api.modules.inventory.application.commands.stock import (
     RecordImportedCounts,
@@ -142,10 +143,19 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         events=platform.events,
         clock=platform.clock,
     )
+    return_sold = ReturnReservation(
+        reservations=reservations,
+        stock=stock,
+        settings=settings,
+        transactions=platform.transactions,
+        events=platform.events,
+        clock=platform.clock,
+    )
     services.add(ReserveStock, reserve)
     services.add(ExtendReservation, extend)
     services.add(CommitReservation, commit)
     services.add(ReleaseReservation, release)
+    services.add(ReturnReservation, return_sold)
     services.add(
         ExpireReservations,
         ExpireReservations(
@@ -159,7 +169,13 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     )
     services.add(
         StockReservations,
-        StockReservations(reserve=reserve, extend=extend, commit=commit, release=release),
+        StockReservations(
+            reserve=reserve,
+            extend=extend,
+            commit=commit,
+            release=release,
+            return_sold=return_sold,
+        ),
     )
 
 

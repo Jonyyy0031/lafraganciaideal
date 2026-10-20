@@ -532,7 +532,7 @@ async def test_the_scheduled_orders_job_runs_the_purge_against_the_database(
     await store(container, stale)
     await backdate(container, stale.id, datetime.now(UTC) - timedelta(days=40))
     orders = next(module for module in MODULES if module.name == "orders")
-    [job] = orders.jobs
+    job = next(job for job in orders.jobs if job.name == "orders_purge_carts")
 
     assert await job.run(container.services) == 1
     assert await count(container, "carts") == 0

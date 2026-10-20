@@ -13,6 +13,7 @@ if TYPE_CHECKING:
         ExtendReservation,
         ReleaseReservation,
         ReserveStock,
+        ReturnReservation,
     )
 
 
@@ -34,6 +35,11 @@ class StockReservations:
     - Release is idempotent too: releasing a released or expired reservation is `Ok`; a
       committed one is refused with `INVENTORY_RESERVATION_COMMITTED`. Reserving and releasing
       record no movement.
+    - Return puts the units of a committed (sold) reservation back on hand, one `return`
+      movement per presentation with the reason "Devolución: <reference>" and the system as the
+      actor, and marks the reservation `returned`. It is idempotent on a returned reservation;
+      any other status is refused with `INVENTORY_RESERVATION_NOT_COMMITTED`. Committing or
+      releasing a returned reservation is refused.
     - An active reservation keeps its units until released, committed or expired by the job.
 
     Each call runs in its own transaction, or joins the caller's when one is active.
@@ -46,11 +52,13 @@ class StockReservations:
         extend: ExtendReservation,
         commit: CommitReservation,
         release: ReleaseReservation,
+        return_sold: ReturnReservation,
     ) -> None:
         self._reserve = reserve
         self._extend = extend
         self._commit = commit
         self._release = release
+        self._return_sold = return_sold
 
     async def reserve(
         self, reference: str, quantities: Mapping[UUID, int], expires_at: datetime
@@ -70,3 +78,7 @@ class StockReservations:
     async def release(self, reservation_id: UUID) -> Result[None, DomainError]:
         """Give the units back (a rejected payment)."""
         return await self._release.execute(reservation_id)
+
+    async def return_sold(self, reservation_id: UUID) -> Result[None, DomainError]:
+        """Put the units of a sold reservation back on hand (a paid order cancelled)."""
+        return await self._return_sold.execute(reservation_id)

@@ -26,8 +26,9 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
 | 001  | Delivery options | — | New `orders` module. The owners configure home delivery (flat rate, free from an amount), local delivery (postal codes and a price) and one pickup point. A public quote says which methods apply to a postal code and subtotal, and at what cost |
 | 002  | Server-side cart | 001 | A cart identified by a cookie: add, change and remove lines, at most 10 units per presentation. It shows current prices and availability, flags changed prices, and is purged after 30 days |
 | 003  | Checkout → order | 002 | Guest details, address, delivery method and cost, optional invoice data, totals and an `LFI-` number. A private link; units reserved for 30 minutes; the order starts "pending payment" |
-| 004  | Order lifecycle | 003 | The panel moves the order through its states; cancelling before payment releases the stock, and an unpaid order cancels itself when its reservation expires. The customer's order page, by private link or by number and email |
-| 005  | Order emails | 004 | The customer gets a confirmation and every state change; the owners get every paid order |
+| 004  | Order lifecycle in the panel | 003 | The panel lists and opens orders and moves them through their states, with history and notes; owners mark an order paid by hand; cancelling releases the stock (or returns it, leaving the refund pending), and an unpaid order cancels itself when its payment window ends |
+| 005  | Customer order page | 004 | The customer's order page, by private link or by number and email (throttled) |
+| 006  | Order emails | 005 | The customer gets a confirmation and every state change; the owners get every paid order |
 
 ## Dependency notes
 
@@ -38,6 +39,12 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
   - That initiative will also commit, extend or release the reservation (inventory-stock
     decisions 4 and 26).
   - It will add the refund on cancelling a paid order (decision 10).
+  - **A committed reservation must not block the overdue job.** When a webhook commits the
+    reservation of an order that is still pending, its release is refused.
+    - Plan 004's job then stops its run at that order, and the order is the oldest one, so every
+      run claims it again first (plan 004 review L1 and re-review N1).
+    - The payments initiative must therefore move a committed order out of `pending_payment`, or
+      make the job exclude refused orders, before webhooks commit reservations.
 - **Branch base.** Plan 001 builds on the `outbox:manage` permission line of
   platform-api-foundation/004, which is not merged yet. The branch starts from it to avoid a
   conflict in `identity/domain/user.py`.
@@ -149,6 +156,28 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
       confirmation email (plan 005) can include it.
     - If the checkout response is lost, retrying with the same cart cookie within 30 minutes
       answers the same order instead of "carrito vacío".
+32. (2026-10-17) **Owners can mark an order paid by hand, with a note.**
+    - This works today, and later for payments outside Mercado Pago.
+    - Marking it paid sells the reserved units. When the reservation already expired, it sells
+      only if the units are still available; otherwise it is refused.
+33. (2026-10-17) **Shipping a home delivery requires the carrier and the tracking number.**
+    - Local delivery is marked shipped without them.
+    - Pickup uses "Listo para recoger" instead of shipped.
+34. (2026-10-17) **Who can cancel.** Staff and owners cancel an unpaid order. Only owners cancel a
+    paid one, because it moves money.
+35. (2026-10-17) **States only move forward.** A mistake is explained with an internal note, and
+    every change stays in the history with who made it and when.
+36. (2026-10-17) **Cancelling a paid order returns its units to stock and leaves the refund
+    pending.**
+    - The units go back with return movements.
+    - An owner marks the refund done by hand until the payments initiative refunds
+      automatically.
+37. (2026-10-17) **"En preparación" is optional.** A paid order can go straight to shipped or to
+    ready for pickup.
+38. (2026-10-17) **The rest of the initiative is split in three.**
+    - 004: the lifecycle in the panel.
+    - 005: the customer's order page.
+    - 006: the emails.
 
 ## Delivered
 

@@ -577,7 +577,7 @@ async def test_an_invitation_travels_through_the_relay_to_a_working_staff_accoun
         actor = await resolver.resolve(login.value.token)
         assert actor is not None
         assert actor.permissions == frozenset(
-            {"catalog:manage", "inventory:manage"}
+            {"catalog:manage", "inventory:manage", "orders:manage"}
         )  # staff, not owner
         again = await container.services.get(AcceptInvitation).execute(token, PASSWORD)
         assert isinstance(again, Err) and again.error.code == "IDENTITY_LINK_INVALID"

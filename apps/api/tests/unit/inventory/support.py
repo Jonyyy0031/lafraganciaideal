@@ -8,6 +8,7 @@ from fragancia_api.modules.inventory.application.commands.reservations import (
     ExtendReservation,
     ReleaseReservation,
     ReserveStock,
+    ReturnReservation,
 )
 from fragancia_api.modules.inventory.application.commands.stock import (
     RecordImportedCounts,
@@ -133,6 +134,18 @@ class Inventory:
             events=self.events,
             clock=self.clock,
         )
+        self.return_sold = ReturnReservation(
+            reservations=reservations,
+            stock=self.store,
+            settings=settings,
+            transactions=transactions,
+            events=self.events,
+            clock=self.clock,
+        )
         self.facade = StockReservations(
-            reserve=self.reserve, extend=self.extend, commit=self.commit, release=self.release
+            reserve=self.reserve,
+            extend=self.extend,
+            commit=self.commit,
+            release=self.release,
+            return_sold=self.return_sold,
         )

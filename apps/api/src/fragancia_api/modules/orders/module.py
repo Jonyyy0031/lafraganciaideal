@@ -10,12 +10,23 @@ from fragancia_api.modules.orders.application.commands.cart import (
 )
 from fragancia_api.modules.orders.application.commands.checkout import PlaceOrder
 from fragancia_api.modules.orders.application.commands.delivery import UpdateDeliveryOptions
+from fragancia_api.modules.orders.application.commands.lifecycle import (
+    AddOrderNote,
+    AdvanceOrder,
+    CancelOverdueOrders,
+    CancelPaidOrder,
+    CancelUnpaidOrder,
+    MarkOrderPaid,
+    MarkOrderRefunded,
+    OrderMove,
+)
 from fragancia_api.modules.orders.application.queries.cart import GetCart
 from fragancia_api.modules.orders.application.queries.delivery import (
     GetDeliveryOptions,
     GetPublicDeliveryOptions,
     QuoteDelivery,
 )
+from fragancia_api.modules.orders.application.queries.orders import GetOrder, ListOrders
 from fragancia_api.modules.orders.domain.cart import CART_LIFETIME
 from fragancia_api.modules.orders.http.cart_cookie import CartCookie
 from fragancia_api.modules.orders.http.router import routers
@@ -30,6 +41,7 @@ from fragancia_api.modules.orders.infrastructure.sql_delivery_settings_repositor
     SqlDeliverySettingsReader,
     SqlDeliverySettingsRepository,
 )
+from fragancia_api.modules.orders.infrastructure.sql_order_queries import SqlOrderQueries
 from fragancia_api.modules.orders.infrastructure.sql_order_repository import (
     SqlOrderReader,
     SqlOrderRepository,
@@ -119,6 +131,33 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
             clock=platform.clock,
         ),
     )
+    order_repository = SqlOrderRepository(platform.database)
+    stocks = StockHoldsAdapter(services.get(StockReservations))
+
+    def move[C: OrderMove](command: type[C]) -> C:
+        return command(
+            orders=order_repository,
+            stocks=stocks,
+            transactions=platform.transactions,
+            events=platform.events,
+            clock=platform.clock,
+        )
+
+    services.add(MarkOrderPaid, move(MarkOrderPaid))
+    services.add(AdvanceOrder, move(AdvanceOrder))
+    services.add(CancelUnpaidOrder, move(CancelUnpaidOrder))
+    services.add(CancelPaidOrder, move(CancelPaidOrder))
+    services.add(MarkOrderRefunded, move(MarkOrderRefunded))
+    services.add(CancelOverdueOrders, move(CancelOverdueOrders))
+    services.add(
+        AddOrderNote,
+        AddOrderNote(
+            orders=order_repository, transactions=platform.transactions, clock=platform.clock
+        ),
+    )
+    order_queries = SqlOrderQueries(platform.database)
+    services.add(ListOrders, ListOrders(order_queries))
+    services.add(GetOrder, GetOrder(order_queries))
     services.add(
         CartCookie,
         CartCookie(
@@ -132,5 +171,10 @@ module = AppModule(
     name="orders",
     register=register,
     routers=routers,
-    jobs=(ScheduledJob("orders_purge_carts", lambda s: s.get(PurgeCarts).run_once(), 60, 120),),
+    jobs=(
+        ScheduledJob("orders_purge_carts", lambda s: s.get(PurgeCarts).run_once(), 60, 120),
+        ScheduledJob(
+            "orders_cancel_overdue", lambda s: s.get(CancelOverdueOrders).run_once(), 60, 120
+        ),
+    ),
 )
