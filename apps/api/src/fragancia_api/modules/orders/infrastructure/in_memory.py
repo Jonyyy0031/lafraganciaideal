@@ -218,6 +218,8 @@ class InMemoryCustomerOrders:
             status=order.status.value,
             created_at=order.created_at,
             payment_due_at=order.payment_due_at,
+            customer_name=order.name.value,
+            customer_phone=order.phone.value,
             lines=[
                 CustomerOrderLine(
                     label=line.label,

@@ -316,6 +316,8 @@ class CustomerOrderView(BaseModel):
     status: OrderStatusName
     created_at: datetime
     payment_due_at: datetime
+    customer_name: str
+    customer_phone: str
     lines: list[CustomerOrderLine]
     subtotal_cents: int
     delivery_cents: int
@@ -332,6 +334,12 @@ class CustomerOrderView(BaseModel):
     cancelled_by: Literal["customer", "system", "shop"] | None
     timeline: list[CustomerOrderStep]
     can_cancel: bool
+
+
+class OrderAccessRequest(BaseModel):
+    """The private-link token, in the body so it never travels in a URL path (decision 42)."""
+
+    access_token: str = Field(max_length=200)
 
 
 class OrderLookupRequest(BaseModel):

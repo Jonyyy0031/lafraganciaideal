@@ -83,6 +83,7 @@ async def test_a_new_home_order_is_shown_with_its_lines_totals_and_address(
 
     assert (view.number, view.status, view.created_at) == ("LFI-1001", "pending_payment", T0)
     assert view.payment_due_at == T0 + timedelta(minutes=30)
+    assert (view.customer_name, view.customer_phone) == ("Ana López", "9981234567")
     assert [(line.label, line.quantity) for line in view.lines] == [
         ("Brand Perfume 1 EDT 100 ml", 2),
         ("Brand Perfume 2 EDT 100 ml", 1),

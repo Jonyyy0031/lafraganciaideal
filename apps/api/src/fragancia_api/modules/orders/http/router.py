@@ -42,6 +42,7 @@ from fragancia_api.modules.orders.contracts import (
     DeliveryOptions,
     DeliveryQuoteResponse,
     MarkPaidRequest,
+    OrderAccessRequest,
     OrderLookupRequest,
     OrderLookupResponse,
     OrderNoteRequest,
@@ -414,26 +415,30 @@ async def look_up_order(
     return OrderLookupResponse(access_token=token)
 
 
-@customer_orders.get("/{access_token}", responses=_404)
+@customer_orders.post("/view", responses=_404)
 async def get_customer_order(
-    access_token: Annotated[str, Path(max_length=200)],
+    body: OrderAccessRequest,
     use_case: Annotated[GetCustomerOrder, Depends(provide(GetCustomerOrder))],
 ) -> CustomerOrderView:
-    """The customer's page of an order, by the private-link token from checkout (decisions 13
-    and 40). The token is a secret: whoever has it sees the order, address and phone included.
-    No internal notes, admin ids or cancel reason. 404 `ORDERS_ORDER_NOT_FOUND`."""
-    return unwrap(await use_case.execute(access_token))
+    """The customer's page of an order, by the private-link token from checkout (decisions 13,
+    40 and 42). The token is a secret: whoever has it sees the order, with the name, phone,
+    address and invoice data. It travels in the body, never in a URL path, so no access or error
+    log records it; the web link carries it in the URL fragment (`/pedido#token=...`) and the
+    page POSTs it, as ADR 0010 does for identity's links. No internal notes, admin ids or cancel
+    reason. 404 `ORDERS_ORDER_NOT_FOUND`."""
+    return unwrap(await use_case.execute(body.access_token))
 
 
-@customer_orders.post("/{access_token}/cancel", status_code=204, responses=_404_409)
+@customer_orders.post("/cancel", status_code=204, responses=_404_409)
 async def cancel_order_by_customer(
-    access_token: Annotated[str, Path(max_length=200)],
+    body: OrderAccessRequest,
     use_case: Annotated[CancelOrderByCustomer, Depends(provide(CancelOrderByCustomer))],
 ) -> None:
-    """The customer cancels their own order while it is `pending_payment` (decision 41); its
-    reserved units are released. The token is a secret. 404 `ORDERS_ORDER_NOT_FOUND`; 409
-    `ORDERS_TRANSITION_INVALID` once the order is paid or cancelled."""
-    unwrap(await use_case.execute(access_token))
+    """The customer cancels their own order while it is `pending_payment` (decisions 41 and 42);
+    its reserved units are released. The token is a secret and travels in the body (see
+    `POST /orders/view`). 404 `ORDERS_ORDER_NOT_FOUND`; 409 `ORDERS_TRANSITION_INVALID` once the
+    order is paid or cancelled."""
+    unwrap(await use_case.execute(body.access_token))
 
 
 routers = (admin, public, cart, checkout, orders_admin, customer_orders)

@@ -1,7 +1,7 @@
-"""Plan 005 step 4, http: the three public customer routes. No session needed, `/lookup` not
-captured by `/{access_token}`, the exact key set of the view (no internal field), wrong email and
-unknown number answering byte-identical bodies, every status and error code, the client IP passed
-to the throttle, validation, and the OpenAPI document."""
+"""Plan 005 steps 4 and 5, http: the three public customer routes. No session needed, no route
+carrying the token in its path (decision 42), the exact key set of the view (no internal field),
+wrong email and unknown number answering byte-identical bodies, every status and error code, the
+client IP passed to the throttle, validation, and the OpenAPI document."""
 
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -46,7 +46,13 @@ from tests.unit.orders.test_order_lifecycle_http import OrdersActorResolver
 
 BASE = "/api/v1/orders"
 LOOKUP = f"{BASE}/lookup"
+VIEW = f"{BASE}/view"
+CANCEL = f"{BASE}/cancel"
 S = OrderStatus
+
+
+def access(token: str) -> dict[str, str]:
+    return {"access_token": token}
 
 
 def lookup_body(number: str = "LFI-1001", email: str = "ana@example.com") -> dict[str, Any]:
@@ -86,7 +92,7 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
         yield c
 
 
-# --- GET /{access_token} -----------------------------------------------------------------------
+# --- POST /view ------------------------------------------------------------------------------
 
 
 async def test_the_view_is_public_and_answers_200_for_a_known_token(
@@ -94,7 +100,7 @@ async def test_the_view_is_public_and_answers_200_for_a_known_token(
 ) -> None:
     await harness.shop.store()
 
-    response = await client.get(f"{BASE}/{token_of()}")
+    response = await client.post(VIEW, json=access(token_of()))
 
     assert response.status_code == 200
     body = response.json()
@@ -115,7 +121,7 @@ async def test_the_view_has_exactly_the_customer_keys_and_nothing_internal(
     await shop.world.wire(MarkOrderPaid).execute(1001, "Transferencia directa", "owner-1")
     await shop.world.orders.add_note(1001, "owner-1", "nota interna", NOW)
 
-    body = (await client.get(f"{BASE}/{token_of()}")).json()
+    body = (await client.post(VIEW, json=access(token_of()))).json()
 
     assert set(body) == VIEW_KEYS
     assert set(body["lines"][0]) == LINE_KEYS
@@ -135,7 +141,7 @@ async def test_the_view_body_never_contains_an_internal_value(
     assert stored.access_token_digest is not None
     assert stored.cart_token_digest is not None
 
-    text = (await client.get(f"{BASE}/{token_of()}")).text
+    text = (await client.post(VIEW, json=access(token_of()))).text
 
     for secret in (
         "nota interna secreta",
@@ -155,7 +161,7 @@ async def test_a_wrong_token_answers_404_order_not_found(
 ) -> None:
     await harness.shop.store()
 
-    response = await client.get(f"{BASE}/wrong")
+    response = await client.post(VIEW, json=access("wrong"))
 
     assert response.status_code == 404
     assert response.json()["code"] == "ORDERS_ORDER_NOT_FOUND"
@@ -166,25 +172,75 @@ async def test_the_stored_digest_does_not_open_the_order(
 ) -> None:
     await harness.shop.store()
 
-    response = await client.get(f"{BASE}/{LINKS.digest(token_of())}")
+    response = await client.post(VIEW, json=access(LINKS.digest(token_of())))
 
     assert response.status_code == 404
 
 
 async def test_a_token_over_200_characters_is_a_validation_error(client: AsyncClient) -> None:
-    response = await client.get(f"{BASE}/{'t' * 201}")
+    response = await client.post(VIEW, json=access("t" * 201))
 
     assert response.status_code == 422
     assert response.json()["code"] == "VALIDATION_ERROR"
 
 
-# --- POST /lookup (not captured by /{access_token}) --------------------------------------------
+# --- POST /lookup and the token-free paths ---------------------------------------------------
 
 
-def test_lookup_is_registered_before_the_token_route(app: FastAPI) -> None:
-    paths = list(app.openapi()["paths"])  # in registration order
+def test_no_orders_route_carries_a_token_in_its_path(app: FastAPI) -> None:
+    """Decision 42: the token is in the body, so no log of the path ever records it."""
+    for path, operations in app.openapi()["paths"].items():
+        if not path.startswith(f"{BASE}/") and path != BASE:
+            continue
+        assert "token" not in path.lower(), path
+        for operation in operations.values():
+            names = [p["name"] for p in operation.get("parameters", []) if p["in"] == "path"]
+            assert not any("token" in name for name in names), (path, names)
 
-    assert paths.index(LOOKUP) < paths.index(f"{BASE}/{{access_token}}")
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("get", f"{BASE}/tok-1"),
+        ("post", f"{BASE}/tok-1/cancel"),
+        ("get", f"{BASE}/{'t' * 201}"),
+    ],
+)
+async def test_the_old_token_in_path_routes_are_gone(
+    client: AsyncClient, harness: Harness, method: str, path: str
+) -> None:
+    await harness.shop.store()
+
+    response = await client.request(method, path)
+
+    assert response.status_code in (404, 405)
+    assert harness.shop.world.current().status is S.PENDING_PAYMENT
+
+
+@pytest.mark.parametrize("path", [VIEW, CANCEL])
+async def test_the_token_routes_only_accept_post(client: AsyncClient, path: str) -> None:
+    assert (await client.get(path)).status_code == 405
+
+
+@pytest.mark.parametrize("path", [VIEW, CANCEL])
+@pytest.mark.parametrize("payload", [{}, {"access_token": 5}, {"access_token": None}])
+async def test_the_token_routes_validate_their_body(
+    client: AsyncClient, path: str, payload: dict[str, Any]
+) -> None:
+    response = await client.post(path, json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+
+
+async def test_the_view_shows_the_name_and_phone_of_the_customer(
+    client: AsyncClient, harness: Harness
+) -> None:
+    await harness.shop.store()
+
+    body = (await client.post(VIEW, json=access(token_of()))).json()
+
+    assert (body["customer_name"], body["customer_phone"]) == ("Ana López", "9981234567")
 
 
 async def test_lookup_answers_the_token_that_opens_the_same_order(
@@ -217,13 +273,12 @@ async def test_lookup_validates_its_own_body_not_a_token_path(client: AsyncClien
     assert response.json()["code"] == "VALIDATION_ERROR"
 
 
-async def test_get_on_lookup_reaches_the_token_route_with_the_token_lookup(
+async def test_get_on_lookup_is_405_now_that_no_route_has_a_token_path(
     client: AsyncClient,
 ) -> None:
     response = await client.get(LOOKUP)
 
-    assert response.status_code == 404
-    assert response.json()["code"] == "ORDERS_ORDER_NOT_FOUND"
+    assert response.status_code == 405
 
 
 async def test_lookup_accepts_the_number_without_prefix_and_the_email_in_any_case(
@@ -331,7 +386,7 @@ async def test_a_validation_error_does_not_count_an_attempt(
     assert harness.shop.throttle.counters == {}
 
 
-# --- POST /{access_token}/cancel ---------------------------------------------------------------
+# --- POST /cancel ---------------------------------------------------------------------------
 
 
 async def test_cancel_answers_204_with_no_body_and_cancels_the_order(
@@ -339,12 +394,12 @@ async def test_cancel_answers_204_with_no_body_and_cancels_the_order(
 ) -> None:
     await harness.shop.store()
 
-    response = await client.post(f"{BASE}/{token_of()}/cancel")
+    response = await client.post(CANCEL, json=access(token_of()))
 
     assert response.status_code == 204
     assert response.content == b""
     assert harness.shop.world.current().status is S.CANCELLED
-    view = (await client.get(f"{BASE}/{token_of()}")).json()
+    view = (await client.post(VIEW, json=access(token_of()))).json()
     assert (view["status"], view["cancelled_by"], view["can_cancel"]) == (
         "cancelled",
         "customer",
@@ -357,7 +412,7 @@ async def test_cancel_with_an_unknown_token_answers_404(
 ) -> None:
     await harness.shop.store()
 
-    response = await client.post(f"{BASE}/wrong/cancel")
+    response = await client.post(CANCEL, json=access("wrong"))
 
     assert response.status_code == 404
     assert response.json()["code"] == "ORDERS_ORDER_NOT_FOUND"
@@ -369,7 +424,7 @@ async def test_cancel_of_a_paid_order_answers_409_transition_invalid(
 ) -> None:
     await harness.shop.store(S.PAID)
 
-    response = await client.post(f"{BASE}/{token_of()}/cancel")
+    response = await client.post(CANCEL, json=access(token_of()))
 
     assert response.status_code == 409
     assert response.json()["code"] == "ORDERS_TRANSITION_INVALID"
@@ -380,9 +435,9 @@ async def test_cancel_twice_answers_409_the_second_time(
     client: AsyncClient, harness: Harness
 ) -> None:
     await harness.shop.store()
-    await client.post(f"{BASE}/{token_of()}/cancel")
+    await client.post(CANCEL, json=access(token_of()))
 
-    response = await client.post(f"{BASE}/{token_of()}/cancel")
+    response = await client.post(CANCEL, json=access(token_of()))
 
     assert response.status_code == 409
 
@@ -396,8 +451,8 @@ async def test_a_cancel_of_a_lookup_token_works_end_to_end(
     # re-point the order at the token the lookup answered, as the real HMAC links do.
     harness.shop.world.current().access_token_digest = LINKS.digest(token)
 
-    assert (await client.get(f"{BASE}/{token}")).status_code == 200
-    assert (await client.post(f"{BASE}/{token}/cancel")).status_code == 204
+    assert (await client.post(VIEW, json=access(token))).status_code == 200
+    assert (await client.post(CANCEL, json=access(token))).status_code == 204
 
 
 # --- OpenAPI -----------------------------------------------------------------------------------
@@ -407,16 +462,16 @@ def test_the_three_customer_operations_are_in_the_openapi(app: FastAPI) -> None:
     paths = app.openapi()["paths"]
 
     assert "post" in paths[LOOKUP]
-    assert "get" in paths[f"{BASE}/{{access_token}}"]
-    assert "post" in paths[f"{BASE}/{{access_token}}/cancel"]
+    assert "post" in paths[VIEW]
+    assert "post" in paths[CANCEL]
 
 
 def test_the_openapi_declares_every_status_of_the_customer_routes(app: FastAPI) -> None:
     paths = app.openapi()["paths"]
 
     lookup = paths[LOOKUP]["post"]["responses"]
-    view = paths[f"{BASE}/{{access_token}}"]["get"]["responses"]
-    cancel = paths[f"{BASE}/{{access_token}}/cancel"]["post"]["responses"]
+    view = paths[VIEW]["post"]["responses"]
+    cancel = paths[CANCEL]["post"]["responses"]
     assert {"200", "404", "422", "429"} <= lookup.keys()
     assert {"200", "404", "422"} <= view.keys()
     assert {"204", "404", "409", "422"} <= cancel.keys()
@@ -427,8 +482,8 @@ def test_the_customer_routes_are_public_and_tagged(app: FastAPI) -> None:
 
     for path, method in [
         (LOOKUP, "post"),
-        (f"{BASE}/{{access_token}}", "get"),
-        (f"{BASE}/{{access_token}}/cancel", "post"),
+        (VIEW, "post"),
+        (CANCEL, "post"),
     ]:
         assert paths[path][method]["tags"] == ["orders · customer"], path
         assert "security" not in paths[path][method], path
@@ -441,6 +496,7 @@ def test_the_openapi_view_schema_has_exactly_the_customer_keys(app: FastAPI) -> 
     assert set(schemas["CustomerOrderLine"]["properties"]) == LINE_KEYS
     assert set(schemas["CustomerOrderStep"]["properties"]) == STEP_KEYS
     assert set(schemas["OrderLookupRequest"]["properties"]) == {"number", "email"}
+    assert set(schemas["OrderAccessRequest"]["properties"]) == {"access_token"}
     assert set(schemas["OrderLookupResponse"]["properties"]) == {"access_token"}
     assert schemas["CustomerOrderView"]["properties"]["cancelled_by"]["anyOf"][0]["enum"] == [
         "customer",

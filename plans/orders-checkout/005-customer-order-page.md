@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: verify
 module: orders
 min_implementer: mid
 depends_on: ["004"]
@@ -233,7 +233,7 @@ while it is unpaid. The plan applies decisions 13 and 31, and the new 39–41.
 Run with the API and the worker on the development database. Orders are placed through
 `POST /checkout`, and moved with the panel routes of plan 004.
 
-- [ ] **By link.** `GET /api/v1/orders/{access_token}` with the token from checkout answers the
+- [ ] **By link.** `POST /api/v1/orders/view` with `{access_token}` from checkout answers the
   view:
   - the status, lines and totals;
   - the address, and the invoice when there is one;
@@ -251,7 +251,7 @@ Run with the API and the worker on the development database. Orders are placed t
     body.
   - The 6th attempt for one number within 15 minutes answers 429 `ORDERS_LOOKUP_RATE_LIMITED`.
 - [ ] **Customer cancel.**
-  - `POST /orders/{token}/cancel` on an unpaid order answers 204. The page shows `cancelled`,
+  - `POST /orders/cancel` with the token on an unpaid order answers 204. The page shows `cancelled`,
     `cancelled_by: "customer"` and `can_cancel: false`.
   - The panel history shows actor `customer` with reason "Cancelado por el cliente", and the
     reservation is released.
@@ -362,5 +362,59 @@ report here.
    - **The view.** No notes, actor ids, cancel reason, reservation id, email or digests.
 
 **Status:** `review`. M1 and L2 need code (step 5), so the plan returns to `implementing`.
+
+### Re-review of step 5, 2026-10-20 (main session)
+
+- **Scope.** The repair diff is `router.py`, `contracts.py`, the two readers, `openapi.json`,
+  `docs/architecture.md` and tests. `plans-scope` is clean.
+- **M1 is resolved.**
+  - `POST /orders/view` and `POST /orders/cancel` take `OrderAccessRequest` (`access_token`, at
+    most 200 characters). No `/orders` route keeps a path parameter, and a test asserts it.
+  - The old paths answer 404 or 405, and the order is untouched.
+  - The token now appears only in bodies: the checkout response, the lookup response and these
+    two requests. None of them is logged; the middleware logs the method and the path only
+    (`shared/http/middleware.py:146`).
+- **L2 is resolved.** `customer_name` and `customer_phone` are in the contract, both readers and
+  the exact key-set tests.
+- **New defects:** none found. The error codes, statuses and use cases are unchanged; only the
+  transport of the token moved.
+- **Tests.** `check` 3519 passed, `test-integration` 1028 passed. The implementer wrote the
+  regression tests (see `## Repair log`). The changed behaviour is small and fully pinned by
+  them, so no separate tester round. The acceptance criteria now name the new routes.
+- **Status:** moved to `verify`.
+
+## Repair log
+
+### Step 5, 2026-10-20 (implementer; returned to `implementing` by the main session after the first review)
+
+Previous testing, review and verify evidence is superseded for the changed routes and view; the
+code must repeat testing, review and verify.
+
+- **M1 (decision 42):** `GET /orders/{access_token}` is now `POST /orders/view` and
+  `POST /orders/{access_token}/cancel` is now `POST /orders/cancel`. Both take
+  `OrderAccessRequest(access_token, max_length 200)` (new in `contracts.py`). `/lookup` is
+  unchanged, error codes and statuses are unchanged. The docstrings say the web link carries the
+  token in the URL fragment (`/pedido#token=...`), as ADR 0010 does. The `Path` import stays
+  (used by `_Number`).
+- **L2 (decision 43):** `CustomerOrderView` gains `customer_name` and `customer_phone`, filled by
+  `SqlCustomerOrders` and `InMemoryCustomerOrders`. The route docstring names them.
+- **L3** is the finding `plans/findings/platform-client-ip-behind-proxy.md`; **Info 4**
+  accepted. Nothing changed for either.
+- **Docs and contract:** `openapi.json` regenerated with `uv run just openapi`; the orders row
+  of `docs/architecture.md` updated.
+- **Tests updated:** `test_customer_order_http.py` moved to the new routes (the OpenAPI
+  registration-order test is replaced by the no-token-path test, and `GET /lookup` now answers
+  405). `VIEW_KEYS` gains the two fields and `FORBIDDEN` drops them (`test_customer_order.py`).
+- **Tests added:** `test_no_orders_route_carries_a_token_in_its_path`,
+  `test_the_old_token_in_path_routes_are_gone` (404 or 405, order untouched),
+  `test_the_token_routes_only_accept_post`, `test_the_token_routes_validate_their_body`,
+  `test_the_view_shows_the_name_and_phone_of_the_customer`; name and phone asserted in
+  `test_customer_order.py` and `test_sql_customer_orders.py`; `OrderAccessRequest` asserted in
+  the OpenAPI schema test.
+- **Results:** `uv run just check` green (3519 passed, 3 skipped; harness 685);
+  `uv run just test-integration` 1028 passed, 5 skipped; `plans-scope` clean (17 declared, 25
+  changed, all inside the plan).
+- **Deviations:** none. The acceptance criteria text still names the old paths; they read as
+  `POST /orders/view` and `POST /orders/cancel` with the token in the body.
 
 ## Verification

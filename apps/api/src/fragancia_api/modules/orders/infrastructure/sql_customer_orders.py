@@ -52,6 +52,8 @@ class SqlCustomerOrders:
             status=cast(OrderStatusName, row.status),
             created_at=row.created_at,
             payment_due_at=row.payment_due_at,
+            customer_name=row.customer_name,
+            customer_phone=row.customer_phone,
             lines=[
                 CustomerOrderLine(
                     label=line.label,

@@ -6224,26 +6224,24 @@
         }
       }
     },
-    "/api/v1/orders/{access_token}": {
-      "get": {
+    "/api/v1/orders/view": {
+      "post": {
         "tags": [
           "orders · customer"
         ],
         "summary": "Get Customer Order",
-        "description": "The customer's page of an order, by the private-link token from checkout (decisions 13\nand 40). The token is a secret: whoever has it sees the order, address and phone included.\nNo internal notes, admin ids or cancel reason. 404 `ORDERS_ORDER_NOT_FOUND`.",
+        "description": "The customer's page of an order, by the private-link token from checkout (decisions 13,\n40 and 42). The token is a secret: whoever has it sees the order, with the name, phone,\naddress and invoice data. It travels in the body, never in a URL path, so no access or error\nlog records it; the web link carries it in the URL fragment (`/pedido#token=...`) and the\npage POSTs it, as ADR 0010 does for identity's links. No internal notes, admin ids or cancel\nreason. 404 `ORDERS_ORDER_NOT_FOUND`.",
         "operationId": "get_customer_order",
-        "parameters": [
-          {
-            "name": "access_token",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "maxLength": 200,
-              "title": "Access Token"
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderAccessRequest"
+              }
             }
-          }
-        ],
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -6256,14 +6254,14 @@
             }
           },
           "404": {
+            "description": "Not Found",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            },
-            "description": "Not Found"
+            }
           },
           "422": {
             "description": "Invalid input or a broken business rule",
@@ -6278,49 +6276,47 @@
         }
       }
     },
-    "/api/v1/orders/{access_token}/cancel": {
+    "/api/v1/orders/cancel": {
       "post": {
         "tags": [
           "orders · customer"
         ],
         "summary": "Cancel Order By Customer",
-        "description": "The customer cancels their own order while it is `pending_payment` (decision 41); its\nreserved units are released. The token is a secret. 404 `ORDERS_ORDER_NOT_FOUND`; 409\n`ORDERS_TRANSITION_INVALID` once the order is paid or cancelled.",
+        "description": "The customer cancels their own order while it is `pending_payment` (decisions 41 and 42);\nits reserved units are released. The token is a secret and travels in the body (see\n`POST /orders/view`). 404 `ORDERS_ORDER_NOT_FOUND`; 409 `ORDERS_TRANSITION_INVALID` once the\norder is paid or cancelled.",
         "operationId": "cancel_order_by_customer",
-        "parameters": [
-          {
-            "name": "access_token",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "maxLength": 200,
-              "title": "Access Token"
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderAccessRequest"
+              }
             }
-          }
-        ],
+          },
+          "required": true
+        },
         "responses": {
           "204": {
             "description": "Successful Response"
           },
           "404": {
+            "description": "Not Found",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            },
-            "description": "Not Found"
+            }
           },
           "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            },
-            "description": "Conflict"
+            }
           },
           "422": {
             "description": "Invalid input or a broken business rule",
@@ -8701,6 +8697,14 @@
             "format": "date-time",
             "title": "Payment Due At"
           },
+          "customer_name": {
+            "type": "string",
+            "title": "Customer Name"
+          },
+          "customer_phone": {
+            "type": "string",
+            "title": "Customer Phone"
+          },
           "lines": {
             "items": {
               "$ref": "#/components/schemas/CustomerOrderLine"
@@ -8853,6 +8857,8 @@
           "status",
           "created_at",
           "payment_due_at",
+          "customer_name",
+          "customer_phone",
           "lines",
           "subtotal_cents",
           "delivery_cents",
@@ -9309,6 +9315,21 @@
         ],
         "title": "MovementRequest",
         "description": "One stock movement. `quantity` is positive for restock, return and loss, signed and\nnon-zero for an adjustment, and the absolute count (0 or more) for a count."
+      },
+      "OrderAccessRequest": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Access Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token"
+        ],
+        "title": "OrderAccessRequest",
+        "description": "The private-link token, in the body so it never travels in a URL path (decision 42)."
       },
       "OrderLookupRequest": {
         "properties": {

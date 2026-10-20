@@ -57,6 +57,8 @@ VIEW_KEYS = {
     "status",
     "created_at",
     "payment_due_at",
+    "customer_name",
+    "customer_phone",
     "lines",
     "subtotal_cents",
     "delivery_cents",
@@ -104,8 +106,6 @@ FORBIDDEN = {
     "access_token_digest",
     "cart_token_digest",
     "customer_email",
-    "customer_name",
-    "customer_phone",
     "updated_at",
     "id",
 }
@@ -190,6 +190,7 @@ async def test_a_new_order_shows_its_data_a_one_step_timeline_and_can_be_cancell
     assert (view.number, view.status) == ("LFI-1001", "pending_payment")
     assert view.created_at == NOW
     assert view.payment_due_at == NOW + timedelta(minutes=30)
+    assert (view.customer_name, view.customer_phone) == ("Ana López", "9981234567")
     assert [(s.status, s.at) for s in view.timeline] == [("pending_payment", NOW)]
     assert view.can_cancel is True
     assert (view.cancelled_by, view.refund_status) == (None, None)
