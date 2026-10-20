@@ -24,6 +24,7 @@ from fragancia_api.modules.orders.domain.order import (
     Order,
     OrderEvent,
     OrderLine,
+    OrderPaid,
     OrderStatus,
     OrderStatusChanged,
     RefundStatus,
@@ -206,12 +207,15 @@ def test_mark_paid_moves_to_paid_with_a_history_row_and_an_event() -> None:
         )
     ]
     events = order.pull_events()
-    assert len(events) == 1
-    event = events[0]
+    assert len(events) == 2
+    event, paid = events
     assert isinstance(event, OrderStatusChanged)
     assert event.name == "orders.order.status_changed"
     assert (event.order_id, event.number) == (UUID(int=900), 1001)
     assert (event.from_status, event.to_status) == ("pending_payment", "paid")
+    assert isinstance(paid, OrderPaid)
+    assert paid.name == "orders.order.paid"
+    assert paid.payload() == {"order_id": str(UUID(int=900)), "number": 1001}
 
 
 @pytest.mark.parametrize("note", ["", "   ", " \n\t "])
@@ -573,7 +577,8 @@ def test_a_full_home_walk_appends_one_row_and_one_event_per_move() -> None:
         (S.PAID, S.SHIPPED),
         (S.SHIPPED, S.DELIVERED),
     ]
-    assert [(e.from_status, e.to_status) for e in order.pull_events()] == [  # type: ignore[attr-defined]
+    changes = [e for e in order.pull_events() if isinstance(e, OrderStatusChanged)]
+    assert [(e.from_status, e.to_status) for e in changes] == [
         ("pending_payment", "paid"),
         ("paid", "shipped"),
         ("shipped", "delivered"),

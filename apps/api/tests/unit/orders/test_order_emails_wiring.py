@@ -1,4 +1,4 @@
-"""Plan 006, wiring: the real container subscribes the three email handlers to the two event names
+"""Plan 006, wiring: the real container subscribes the three email handlers to the three event names
 orders publishes, with the settings' URLs and the real order-link adapter."""
 
 from typing import Any
@@ -13,7 +13,7 @@ from fragancia_api.modules.orders.application.handlers.order_emails import (
     SendPaidOrderToOwners,
 )
 from fragancia_api.modules.orders.application.ports import Recipient
-from fragancia_api.modules.orders.domain.order import OrderPlaced, OrderStatusChanged
+from fragancia_api.modules.orders.domain.order import OrderPaid, OrderPlaced, OrderStatusChanged
 from fragancia_api.modules.orders.infrastructure.identity_owners import IdentityOwners
 from fragancia_api.modules.orders.infrastructure.order_links import HmacOrderLinks
 from fragancia_api.modules.orders.infrastructure.sql_order_queries import SqlOrderQueries
@@ -33,7 +33,10 @@ async def test_the_container_subscribes_the_three_email_handlers() -> None:
         changed = bus.handlers(OrderStatusChanged.name)
 
         assert [type(h) for h in placed] == [SendOrderPlacedEmail]
-        assert [type(h) for h in changed] == [SendOrderStatusEmail, SendPaidOrderToOwners]
+        paid = bus.handlers(OrderPaid.name)
+
+        assert [type(h) for h in changed] == [SendOrderStatusEmail]
+        assert [type(h) for h in paid] == [SendPaidOrderToOwners]
     finally:
         await container.close()
 
@@ -46,7 +49,8 @@ async def test_the_handlers_get_the_configured_urls_and_the_real_adapters() -> N
         status: Any
         owners: Any
         [placed] = bus.handlers(OrderPlaced.name)
-        status, owners = bus.handlers(OrderStatusChanged.name)
+        [status] = bus.handlers(OrderStatusChanged.name)
+        [owners] = bus.handlers(OrderPaid.name)
 
         for customer_handler in (placed, status):
             assert customer_handler._storefront_url == STOREFRONT  # noqa: SLF001

@@ -200,6 +200,17 @@ async def test_every_recipient_refused_with_a_5xx_becomes_email_rejected() -> No
     assert isinstance(raised.value.__cause__, smtplib.SMTPRecipientsRefused)
 
 
+async def test_a_server_without_smtputf8_becomes_email_rejected() -> None:
+    error = smtplib.SMTPNotSupportedError("SMTPUTF8 not supported by server")
+    FakeSmtp.raise_on_send = error
+
+    with pytest.raises(EmailRejected, match="SMTPUTF8") as raised:
+        await _sender().send(MESSAGE)
+
+    assert raised.value.__cause__ is error
+    assert FakeSmtp.instances[0].closed
+
+
 @pytest.mark.parametrize("code", [421, 450, 451, 499])
 async def test_a_4xx_smtp_reply_propagates_unchanged_so_it_is_retried(code: int) -> None:
     error = smtplib.SMTPResponseException(code, b"try again later")

@@ -63,8 +63,11 @@ class Capturing:
     """The `EmailSender` port that keeps what it was asked to send."""
 
     sent: list[EmailMessage] = field(default_factory=list)
+    failing: set[str] = field(default_factory=set)
 
     async def send(self, message: EmailMessage) -> None:
+        if message.to in self.failing:
+            raise ConnectionError("smtp down")
         self.sent.append(message)
 
     def to(self, address: str) -> list[EmailMessage]:
@@ -85,7 +88,7 @@ def relay_with(container: Container, sender: Capturing) -> OutboxRelay:
         SendOrderStatusEmail(queries=queries, links=LINKS, email=sender, storefront_url=STOREFRONT),
     )
     bus.subscribe(
-        "orders.order.status_changed",
+        "orders.order.paid",
         SendPaidOrderToOwners(
             queries=queries, owners=owners, email=sender, admin_web_url=ADMIN_WEB
         ),
@@ -176,8 +179,8 @@ async def test_a_checkout_emails_the_customer_with_the_real_order_and_a_link_the
     assert f"C.P. {stored['address_postal_code']}" in mail.body
     assert "Tiempo de preparación estimado: hasta 10 días." in mail.body
     due = (await order_row(world.container, placed.number))["payment_due_at"]
-    shown = due.astimezone(ZoneInfo("America/Mexico_City")).strftime("%d/%m/%Y %H:%M")
-    assert f"Tienes hasta {shown} (hora de Ciudad de México) para pagar." in mail.body
+    shown = due.astimezone(ZoneInfo("America/Cancun")).strftime("%d/%m/%Y %H:%M")
+    assert f"Tienes hasta {shown} (hora de Cancún) para pagar." in mail.body
     assert world.sender.to(owner) == []  # the owners hear about paid orders only
     opened = await view_query(world.container).execute(token_in(mail.body))
     assert isinstance(opened, Ok)
@@ -210,6 +213,47 @@ async def test_marking_paid_emails_the_customer_and_every_active_owner_once(
         assert f"{ADMIN_WEB}/admin/pedidos/LFI-1001" in mail.body
         assert "#token=" not in mail.body
     assert world.sender.to(gone) == [] and world.sender.to(staff) == []
+
+
+async def test_a_failing_customer_send_on_the_paid_row_does_not_block_the_owners_email(
+    world: World, catalog_rows: CatalogRows
+) -> None:
+    ana = await add_user(world.container, "Ana", Role.OWNER)
+    placed = await placed_and_relayed(world, catalog_rows)
+    before = len(world.sender.sent)
+    world.sender.failing.add(CUSTOMER)
+
+    await pay(world.container, placed)
+    await world.deliver()
+
+    new = world.sender.sent[before:]
+    assert [m.to for m in new] == [ana]  # the owners' own row went out
+    rows = {
+        r["name"]: r for r in await world.outbox() if str(r["name"]).startswith("orders.order.")
+    }
+    assert rows["orders.order.paid"]["published_at"] is not None
+    assert rows["orders.order.status_changed"]["published_at"] is None  # retried on its own
+    assert rows["orders.order.status_changed"]["attempts"] == 1
+
+
+async def test_a_failing_owner_send_does_not_repeat_the_customer_email(
+    world: World, catalog_rows: CatalogRows
+) -> None:
+    ana = await add_user(world.container, "Ana", Role.OWNER)
+    placed = await placed_and_relayed(world, catalog_rows)
+    before = len(world.sender.sent)
+    world.sender.failing.add(ana)
+
+    await pay(world.container, placed)
+    await world.deliver()
+
+    new = world.sender.sent[before:]
+    assert [m.to for m in new] == [CUSTOMER]
+    rows = {
+        r["name"]: r for r in await world.outbox() if str(r["name"]).startswith("orders.order.")
+    }
+    assert rows["orders.order.status_changed"]["published_at"] is not None
+    assert rows["orders.order.paid"]["published_at"] is None
 
 
 async def test_a_home_order_gets_one_email_per_move_and_shipped_shows_carrier_and_tracking(
@@ -350,7 +394,8 @@ async def test_every_handled_event_is_published_with_no_failure(
 
     rows = await world.outbox()
 
-    assert {r["name"] for r in rows} >= {"orders.order.placed", "orders.order.status_changed"}
+    names = {"orders.order.placed", "orders.order.status_changed", "orders.order.paid"}
+    assert {r["name"] for r in rows} >= names
     assert all(r["published_at"] is not None for r in rows)
     assert all(r["failed_at"] is None and r["attempts"] == 0 for r in rows)
 

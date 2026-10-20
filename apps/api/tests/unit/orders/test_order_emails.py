@@ -33,7 +33,11 @@ from fragancia_api.modules.orders.contracts import (
     AdminOrderLine,
     AdminOrderPage,
 )
-from fragancia_api.modules.orders.domain.order import OrderPlaced, OrderStatusChanged
+from fragancia_api.modules.orders.domain.order import (
+    OrderPaid,
+    OrderPlaced,
+    OrderStatusChanged,
+)
 from fragancia_api.modules.orders.http.router import routers
 from fragancia_api.modules.orders.infrastructure.in_memory import InMemoryOwnerRecipients
 from fragancia_api.modules.orders.infrastructure.order_links import HmacOrderLinks
@@ -157,6 +161,11 @@ def status_message(from_: str, to: str, number: int = 1001) -> EventMessage:
     return EventMessage(id=e.event_id, name=e.name, payload=e.payload(), occurred_at=e.occurred_at)
 
 
+def paid_message(number: int = 1001) -> EventMessage:
+    e = OrderPaid(order_id=ORDER_ID, number=number)
+    return EventMessage(id=e.event_id, name=e.name, payload=e.payload(), occurred_at=e.occurred_at)
+
+
 def status_handler(queries: FakeQueries, email: RecordingEmailSender) -> SendOrderStatusEmail:
     return SendOrderStatusEmail(
         queries=queries, links=LINKS, email=email, storefront_url=STOREFRONT
@@ -214,7 +223,7 @@ def test_placed_lists_lines_totals_address_deadline_and_the_link() -> None:
     assert "Entrega: $180.00 MXN" in body
     assert "Total: $2,181.00 MXN" in body
     assert f"Envío a domicilio:\n{ADDRESS_TEXT}" in body
-    assert "Tienes hasta 02/10/2026 06:30 (hora de Ciudad de México) para pagar." in body
+    assert "Tienes hasta 02/10/2026 07:30 (hora de Cancún) para pagar." in body
     assert body.endswith(FOOTER)
 
 
@@ -240,29 +249,39 @@ def test_placed_shows_the_longest_lead_time_only_when_there_is_one() -> None:
     assert "Tiempo de preparación" not in without
 
 
+def test_the_lead_time_is_singular_for_one_day_and_plural_otherwise() -> None:
+    _, one = placed_email(make_detail(lead_time_max_days=1), LINK)
+    _, two = placed_email(make_detail(lead_time_max_days=2), LINK)
+
+    assert "Tiempo de preparación estimado: hasta 1 día." in one
+    assert "1 días" not in one
+    assert "hasta 2 días." in two
+
+
 @pytest.mark.parametrize(
     ("due", "shown"),
     [
-        (datetime(2026, 10, 3, 0, 15, tzinfo=UTC), "02/10/2026 18:15"),  # UTC is already tomorrow
-        (datetime(2026, 10, 3, 5, 59, tzinfo=UTC), "02/10/2026 23:59"),
-        (datetime(2026, 10, 3, 6, 0, tzinfo=UTC), "03/10/2026 00:00"),
-        (datetime(2026, 1, 1, 5, 30, tzinfo=UTC), "31/12/2025 23:30"),  # crosses the year too
+        (datetime(2026, 10, 3, 0, 15, tzinfo=UTC), "02/10/2026 19:15"),  # UTC is already tomorrow
+        (datetime(2026, 10, 3, 4, 59, tzinfo=UTC), "02/10/2026 23:59"),
+        (datetime(2026, 10, 3, 5, 0, tzinfo=UTC), "03/10/2026 00:00"),
+        (datetime(2026, 1, 1, 4, 30, tzinfo=UTC), "31/12/2025 23:30"),  # crosses the year too
+        (datetime(2026, 7, 1, 12, 0, tzinfo=UTC), "01/07/2026 07:00"),  # no daylight saving
     ],
 )
-def test_the_deadline_is_shown_in_mexico_city_time_even_when_utc_crossed_midnight(
+def test_the_deadline_is_shown_in_cancun_time_even_when_utc_crossed_midnight(
     due: datetime, shown: str
 ) -> None:
     _, body = placed_email(make_detail(payment_due_at=due), LINK)
 
-    assert f"Tienes hasta {shown} (hora de Ciudad de México) para pagar." in body
+    assert f"Tienes hasta {shown} (hora de Cancún) para pagar." in body
 
 
 def test_a_deadline_with_another_offset_is_converted_not_printed_as_is() -> None:
-    due = datetime(2026, 10, 2, 20, 0, tzinfo=timezone(timedelta(hours=2)))  # 12:00 in Mexico City
+    due = datetime(2026, 10, 2, 20, 0, tzinfo=timezone(timedelta(hours=2)))  # 13:00 in Cancún
 
     _, body = placed_email(make_detail(payment_due_at=due), LINK)
 
-    assert "Tienes hasta 02/10/2026 12:00" in body
+    assert "Tienes hasta 02/10/2026 13:00" in body
 
 
 # --- paid / preparing / shipped / pickup / delivered -----------------------------------------
@@ -614,9 +633,7 @@ async def test_a_shop_cancel_email_sent_by_the_handler_never_carries_the_typed_r
 async def test_every_active_owner_gets_one_email_when_the_order_is_paid() -> None:
     email = RecordingEmailSender()
 
-    await owners_handler(FakeQueries(make_detail()), email, ANA, LUIS)(
-        status_message("pending_payment", "paid")
-    )
+    await owners_handler(FakeQueries(make_detail()), email, ANA, LUIS)(paid_message())
 
     assert [m.to for m in email.sent] == ["ana@owners.test", "luis@owners.test"]
     assert email.sent[0].body.startswith("Hola Ana:\n")
@@ -624,26 +641,11 @@ async def test_every_active_owner_gets_one_email_when_the_order_is_paid() -> Non
     assert {m.subject for m in email.sent} == {"Pedido pagado: LFI-1001 — $2,181.00 MXN"}
 
 
-@pytest.mark.parametrize(
-    ("from_", "to"), [m for m in MOVES if m[1] != "paid"] + [("cancelled", "cancelled")]
-)
-async def test_the_owners_hear_only_about_paid_never_about_other_moves(from_: str, to: str) -> None:
-    email = RecordingEmailSender()
-    queries = FakeQueries(make_detail())
-
-    await owners_handler(queries, email, ANA)(status_message(from_, to))
-
-    assert email.sent == []
-    assert queries.asked == []
-
-
 async def test_with_no_active_owner_nothing_is_sent_and_it_is_logged() -> None:
     email = RecordingEmailSender()
 
     with structlog.testing.capture_logs() as logs:
-        await owners_handler(FakeQueries(make_detail()), email)(
-            status_message("pending_payment", "paid")
-        )
+        await owners_handler(FakeQueries(make_detail()), email)(paid_message())
 
     assert email.sent == []
     [log] = [e for e in logs if e["event"] == "orders.paid_email_no_owner"]
@@ -654,7 +656,7 @@ async def test_the_owner_handler_logs_and_returns_when_the_order_is_missing() ->
     email = RecordingEmailSender()
 
     with structlog.testing.capture_logs() as logs:
-        await owners_handler(FakeQueries(), email, ANA)(status_message("pending_payment", "paid"))
+        await owners_handler(FakeQueries(), email, ANA)(paid_message())
 
     assert email.sent == []
     assert [e for e in logs if e["event"] == "orders.email_order_missing"] != []
@@ -665,9 +667,7 @@ async def test_the_owner_handler_raises_on_a_send_failure() -> None:
     email.fail = True
 
     with pytest.raises(ConnectionError):
-        await owners_handler(FakeQueries(make_detail()), email, ANA)(
-            status_message("pending_payment", "paid")
-        )
+        await owners_handler(FakeQueries(make_detail()), email, ANA)(paid_message())
 
 
 async def test_a_rejected_owner_is_logged_and_skipped_and_the_next_still_gets_it() -> None:
@@ -680,13 +680,21 @@ async def test_a_rejected_owner_is_logged_and_skipped_and_the_next_still_gets_it
     email = RejectsAna()
 
     with structlog.testing.capture_logs() as logs:
-        await owners_handler(FakeQueries(make_detail()), email, ANA, LUIS)(
-            status_message("pending_payment", "paid")
-        )
+        await owners_handler(FakeQueries(make_detail()), email, ANA, LUIS)(paid_message())
 
     assert [m.to for m in email.sent] == ["luis@owners.test"]
     [log] = [e for e in logs if e["event"] == "orders.paid_email_rejected"]
     assert log["address"] == "ana@owners.test"
+
+
+async def test_the_owners_handler_needs_no_status_filter_it_reads_the_paid_event() -> None:
+    email = RecordingEmailSender()
+    queries = FakeQueries(make_detail())
+
+    await owners_handler(queries, email, ANA)(paid_message())
+
+    assert len(email.sent) == 1
+    assert queries.asked == [1001]
 
 
 # --- the link token opens the order through the real view ------------------------------------
