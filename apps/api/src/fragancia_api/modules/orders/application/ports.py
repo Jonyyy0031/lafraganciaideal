@@ -1,6 +1,7 @@
 """Read-side ports of the orders module (queries run outside any transaction)."""
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
@@ -97,6 +98,22 @@ class OrderQueries(Protocol):
         ...
 
     async def detail(self, number: int) -> AdminOrderDetail | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class Recipient:
+    """Someone who gets the paid-order email."""
+
+    name: str
+    email: str
+
+
+class OwnerRecipients(Protocol):
+    """Orders' view of the owners, in orders' terms (implemented by an adapter)."""
+
+    async def active_owners(self) -> list[Recipient]:
+        """The active owners, ordered by name."""
+        ...
 
 
 class CartReader(Protocol):

@@ -109,3 +109,5 @@ ignore_imports =
     fragancia_api.modules.orders.module -> fragancia_api.modules.catalog
     fragancia_api.modules.orders.infrastructure.stock_holds -> fragancia_api.modules.inventory
     fragancia_api.modules.orders.module -> fragancia_api.modules.inventory
+    fragancia_api.modules.orders.infrastructure.identity_owners -> fragancia_api.modules.identity
+    fragancia_api.modules.orders.module -> fragancia_api.modules.identity

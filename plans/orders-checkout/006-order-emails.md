@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["005"]
@@ -211,6 +211,9 @@ Orders are placed through `POST /checkout` and moved through the panel routes of
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+None. No existing test broke, so no test file was touched; the tester writes the layered tests
+(templates, handlers, settings validator, relay integration) in the next phase.
 
 ## Test coverage
 

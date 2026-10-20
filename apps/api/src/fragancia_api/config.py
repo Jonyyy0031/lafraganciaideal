@@ -66,6 +66,8 @@ class Settings(DatabaseSettings):
     invitation_ttl_hours: int = Field(default=72, ge=1)
     password_reset_ttl_minutes: int = Field(default=60, ge=1)
     admin_web_url: str = "http://localhost:4200"
+    # The storefront's base URL: the customer emails link to `{storefront_url}/pedido#token=...`.
+    storefront_url: str = "http://localhost:4200"
     smtp_host: str = "127.0.0.1"
     smtp_port: int = Field(default=1026, ge=1, le=65535)
     smtp_username: str | None = None
@@ -102,6 +104,15 @@ class Settings(DatabaseSettings):
         url = self.admin_web_url
         if not url.startswith(("http://", "https://")) or url.endswith("/"):
             raise ValueError("ADMIN_WEB_URL must start with http:// or https:// and not end with /")
+        return self
+
+    @model_validator(mode="after")
+    def _check_storefront_url(self) -> Self:
+        url = self.storefront_url
+        if not url.startswith(("http://", "https://")) or url.endswith("/"):
+            raise ValueError(
+                "STOREFRONT_URL must start with http:// or https:// and not end with /"
+            )
         return self
 
     @model_validator(mode="after")
