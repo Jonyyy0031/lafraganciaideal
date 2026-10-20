@@ -27,7 +27,8 @@ from fragancia_api.shared.application.events import EventMessage
 _log = structlog.get_logger(__name__)
 
 ORDER_PAGE_PATH = "/pedido"
-SHOP_TIMEZONE = ZoneInfo("America/Mexico_City")
+# The shop's zone, as catalog decision 66 fixed it (UTC-5 all year); decision 48.
+SHOP_TIMEZONE = ZoneInfo("America/Cancun")
 
 FOOTER = "Consulta tu pedido aquí:\n{link}\n\nSi tienes dudas, responde a este correo.\n"
 GREETING = "Hola {name}:\n\n"
@@ -88,7 +89,9 @@ def _lines(order: AdminOrderDetail) -> str:
 def _lead_time(order: AdminOrderDetail) -> str:
     if order.lead_time_max_days is None:
         return ""
-    return f"Tiempo de preparación estimado: hasta {order.lead_time_max_days} días.\n"
+    days = order.lead_time_max_days
+    unit = "día" if days == 1 else "días"
+    return f"Tiempo de preparación estimado: hasta {days} {unit}.\n"
 
 
 def _wrap(order: AdminOrderDetail, link: str, text: str) -> str:
@@ -104,7 +107,7 @@ def placed_email(order: AdminOrderDetail, link: str) -> Template:
         f"Entrega: {money(order.delivery_cents)}\n"
         f"Total: {money(order.total_cents)}\n\n"
         f"{_delivery(order)}\n\n"
-        f"Tienes hasta {due} (hora de Ciudad de México) para pagar.\n"
+        f"Tienes hasta {due} (hora de Cancún) para pagar.\n"
         f"{_lead_time(order)}"
     )
     return f"Recibimos tu pedido {order.number}", _wrap(order, link, text)
@@ -251,7 +254,7 @@ class SendOrderStatusEmail:
 
 
 class SendPaidOrderToOwners:
-    """`orders.order.status_changed` to `paid`: one email per active owner."""
+    """`orders.order.paid`: one email per active owner (its own outbox row, decision 47)."""
 
     def __init__(
         self,
@@ -267,8 +270,6 @@ class SendPaidOrderToOwners:
         self._admin_web_url = admin_web_url
 
     async def __call__(self, message: EventMessage) -> None:
-        if str(message.payload["to_status"]) != "paid":
-            return
         number = int(str(message.payload["number"]))
         order = await self._queries.detail(number)
         if order is None:

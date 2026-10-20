@@ -212,7 +212,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         ),
     )
     platform.subscriptions.subscribe(
-        "orders.order.status_changed",
+        "orders.order.paid",
         SendPaidOrderToOwners(
             queries=order_queries,
             owners=owners,

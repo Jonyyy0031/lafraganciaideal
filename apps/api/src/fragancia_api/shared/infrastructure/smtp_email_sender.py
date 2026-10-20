@@ -48,5 +48,8 @@ class SmtpEmailSender:
                 if all(code >= 500 for code, _ in error.recipients.values()):
                     raise EmailRejected(str(error)) from error
                 raise
+            except smtplib.SMTPNotSupportedError as error:
+                # The server cannot take a non-ASCII address without SMTPUTF8: no retry helps.
+                raise EmailRejected(str(error)) from error
             # Sender, helo and DATA failures are not caught here: they propagate and the
             # event is retried.

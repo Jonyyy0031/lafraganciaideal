@@ -216,6 +216,16 @@ class OrderStatusChanged(DomainEvent):
     to_status: str
 
 
+@dataclass(frozen=True, kw_only=True)
+class OrderPaid(DomainEvent):
+    """Published once when the order is marked paid; the owners' email (plan 006, decision 47)
+    subscribes to it so that it has its own outbox row."""
+
+    name: ClassVar[str] = "orders.order.paid"
+    order_id: UUID
+    number: int
+
+
 @dataclass(frozen=True, slots=True)
 class OrderEvent:
     """One history row: who moved the order, when, and the data entered."""
@@ -342,6 +352,7 @@ class Order(AggregateRoot):
             case Ok(clean):
                 pass
         self._move(OrderStatus.PAID, actor, now, note=clean)
+        self.record(OrderPaid(order_id=self.id, number=self.number))
         return Ok(None)
 
     def start_preparing(self, actor: str, now: datetime) -> Result[None, DomainError]:

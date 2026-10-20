@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["005"]
@@ -226,7 +226,7 @@ Orders are placed through `POST /checkout` and moved through the panel routes of
 - [ ] **Placed.**
   - About one relay cycle after a checkout, Mailpit has "Recibimos tu pedido LFI-n" for the
     customer's email.
-  - It lists the lines and totals, the address, and the deadline in Mexico City time.
+  - It lists the lines and totals, the address, and the deadline in Cancún time (decision 48).
   - Its link, `{STOREFRONT_URL}/pedido#token=…`, carries a token that `POST /orders/view`
     accepts.
 - [ ] **Paid.**
@@ -289,8 +289,8 @@ code touched. Files: `tests/unit/orders/test_order_emails.py`,
 | Relay delivers placed and status_changed with real `SqlOrderQueries`, `IdentityOwners` over the real facade and a capturing sender: placed, paid (customer + active owners only, not inactive/staff), preparing/shipped (Estafeta/123456)/delivered, pickup ready, customer / overdue-job / shop / paid cancel, refund done sends no email, all rows published with no failure, no owner still emails the customer | handlers over SQL | integration | `test_order_emails_flow.py` (10 tests) | CONFIRMED |
 | Real SMTP delivery to Mailpit; the relay retry after an SMTP failure for these handlers | `SmtpEmailSender` | integration | not written: a capturing sender was requested; the retry mechanism is proven for inventory by `test_low_stock_email_flow.py` and the raise-on-failure branch by unit tests here | NOT CONFIRMED (not exercised) |
 
-Notes: the token digest is a plain SHA-256 of the token, independent of the link secret, so the
-view accepts a token whatever secret the handler used (no test assumes otherwise).
+Notes: the token digest is a plain SHA-256 of the token, independent of the view's secret, so the
+view accepts any token whose digest was stored at checkout (no test assumes otherwise).
 
 ## Review findings
 
@@ -414,5 +414,30 @@ worktree; no PR yet.
 
 **Result:** M1 needs a user decision, either a code change or a recorded acceptance, so the
 status stays `review`.
+
+## Repair log
+
+Step 5 implemented 2026-10-20, after the review (M1, L1; L2 and M1-B accepted).
+
+- **M1:** `OrderPaid` (`orders.order.paid`, `{order_id, number}`) is recorded by `Order.mark_paid`
+  after `OrderStatusChanged`; `SendPaidOrderToOwners` no longer filters on `to_status` and is
+  subscribed to `orders.order.paid` only. Documented in the orders `__init__.py` and in
+  `docs/architecture.md`.
+- **M1-A:** `SmtpEmailSender._send_blocking` maps `SMTPNotSupportedError` to `EmailRejected`.
+- **L1:** `SHOP_TIMEZONE = ZoneInfo("America/Cancun")`; the label is "hora de Cancún".
+- **Info:** `_lead_time` says "1 día" and "N días"; the digest note and the placed acceptance
+  criterion are reworded.
+- **Tests updated:** Cancún expectations (unit and integration), `mark_paid` now records two
+  events (`test_mark_paid_*`; the full-walk test filters `OrderStatusChanged`), owners' handler
+  tests use a `paid_message()` and the "only about paid" parametrized test became
+  `test_the_owners_handler_needs_no_status_filter_*`, wiring (status_changed has one handler,
+  `orders.order.paid` has the owners'), integration relay subscribes the owners' handler to
+  `orders.order.paid`.
+- **Tests added:** `OrderPaid` payload and order (domain), singular lead time, a no-DST Cancún
+  case, `SMTPNotSupportedError` becomes `EmailRejected`, and two relay tests: a customer send
+  failing on the paid row still lets the owners' email go out from its own row (status row
+  retried, `attempts == 1`), and the reverse.
+- **Results:** `just check` green (3617 passed, 3 skipped; harness 685); `just test-integration`
+  1040 passed, 5 skipped. Real SMTP to Mailpit not exercised (as before).
 
 ## Verification

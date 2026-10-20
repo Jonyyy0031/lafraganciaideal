@@ -9,6 +9,9 @@ Events (published through the outbox; other modules subscribe by name, never by 
   pickup, delivered, cancelled) and when a refund is marked done (then `from_status` and
   `to_status` are both `cancelled`). Payload: `order_id` (UUID string), `number` (int),
   `from_status` and `to_status` (status names such as `pending_payment` or `paid`).
+- `orders.order.paid`: once, when an order is marked paid (in addition to `status_changed`).
+  Payload: `order_id` (UUID string) and `number` (int). It gives the owners' email its own outbox
+  row.
 
 Orders itself consumes both events in the worker to send plain-text emails (decisions 44 to 46):
 the customer's "pedido recibido" and one email per status (none for the refund mark), and a
