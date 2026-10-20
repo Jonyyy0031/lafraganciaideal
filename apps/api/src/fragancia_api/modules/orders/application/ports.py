@@ -1,13 +1,14 @@
 """Read-side ports of the orders module (queries run outside any transaction)."""
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
 from fragancia_api.modules.orders.contracts import (
     AdminOrderDetail,
     AdminOrderPage,
+    CustomerOrderView,
     OrderStatusName,
 )
 from fragancia_api.modules.orders.domain.cart import Cart, Offer
@@ -102,3 +103,22 @@ class CartReader(Protocol):
     """Read side: a cart outside any transaction (`Database.reader()`)."""
 
     async def by_token(self, token_digest: str) -> Cart | None: ...
+
+
+class CustomerOrderQueries(Protocol):
+    """Read side of the customer's page (`Database.reader()`)."""
+
+    async def by_access_digest(self, digest: str) -> CustomerOrderView | None: ...
+
+    async def match(self, number: int, email: str) -> tuple[UUID, int] | None:
+        """The order id and number when that number exists and its stored email equals `email`
+        (already normalized); None otherwise."""
+        ...
+
+
+class LookupThrottle(Protocol):
+    """Fixed-window attempt counters for the order lookup. Joins the active transaction."""
+
+    async def hit(self, key: str, now: datetime, window: timedelta) -> int:
+        """Count one attempt; the attempts in the current window, this one included."""
+        ...

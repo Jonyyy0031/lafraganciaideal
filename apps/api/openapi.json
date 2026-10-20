@@ -6161,6 +6161,179 @@
           }
         }
       }
+    },
+    "/api/v1/orders/lookup": {
+      "post": {
+        "tags": [
+          "orders · customer"
+        ],
+        "summary": "Look Up Order",
+        "description": "Find an order again with its number (`LFI-1001` or `1001`) and the email it was placed\nwith (any case, spaces trimmed); answers the private-link token (decision 39). The token is a\nsecret that opens the order. A wrong email and an unknown number answer the same 404\n`ORDERS_LOOKUP_NOT_FOUND`. Attempts are limited per IP and per order number: 429\n`ORDERS_LOOKUP_RATE_LIMITED`.",
+        "operationId": "look_up_order",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderLookupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderLookupResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{access_token}": {
+      "get": {
+        "tags": [
+          "orders · customer"
+        ],
+        "summary": "Get Customer Order",
+        "description": "The customer's page of an order, by the private-link token from checkout (decisions 13\nand 40). The token is a secret: whoever has it sees the order, address and phone included.\nNo internal notes, admin ids or cancel reason. 404 `ORDERS_ORDER_NOT_FOUND`.",
+        "operationId": "get_customer_order",
+        "parameters": [
+          {
+            "name": "access_token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "title": "Access Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerOrderView"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{access_token}/cancel": {
+      "post": {
+        "tags": [
+          "orders · customer"
+        ],
+        "summary": "Cancel Order By Customer",
+        "description": "The customer cancels their own order while it is `pending_payment` (decision 41); its\nreserved units are released. The token is a secret. 404 `ORDERS_ORDER_NOT_FOUND`; 409\n`ORDERS_TRANSITION_INVALID` once the order is paid or cancelled.",
+        "operationId": "cancel_order_by_customer",
+        "parameters": [
+          {
+            "name": "access_token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "title": "Access Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -8401,6 +8574,305 @@
         ],
         "title": "CreatedResponse"
       },
+      "CustomerOrderLine": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "ml": {
+            "type": "integer",
+            "title": "Ml"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity"
+          },
+          "unit_price_cents": {
+            "type": "integer",
+            "title": "Unit Price Cents"
+          },
+          "line_total_cents": {
+            "type": "integer",
+            "title": "Line Total Cents"
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "in_stock",
+              "made_to_order"
+            ],
+            "title": "Availability"
+          },
+          "lead_time_min_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Min Days"
+          },
+          "lead_time_max_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Max Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "ml",
+          "quantity",
+          "unit_price_cents",
+          "line_total_cents",
+          "availability",
+          "lead_time_min_days",
+          "lead_time_max_days"
+        ],
+        "title": "CustomerOrderLine"
+      },
+      "CustomerOrderStep": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending_payment",
+              "paid",
+              "preparing",
+              "shipped",
+              "ready_for_pickup",
+              "delivered",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "at"
+        ],
+        "title": "CustomerOrderStep",
+        "description": "The order reached `status` at `at`."
+      },
+      "CustomerOrderView": {
+        "properties": {
+          "number": {
+            "type": "string",
+            "title": "Number",
+            "examples": [
+              "LFI-1001"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending_payment",
+              "paid",
+              "preparing",
+              "shipped",
+              "ready_for_pickup",
+              "delivered",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "payment_due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Payment Due At"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerOrderLine"
+            },
+            "type": "array",
+            "title": "Lines"
+          },
+          "subtotal_cents": {
+            "type": "integer",
+            "title": "Subtotal Cents"
+          },
+          "delivery_cents": {
+            "type": "integer",
+            "title": "Delivery Cents"
+          },
+          "total_cents": {
+            "type": "integer",
+            "title": "Total Cents"
+          },
+          "lead_time_max_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Time Max Days"
+          },
+          "delivery_method": {
+            "type": "string",
+            "enum": [
+              "home",
+              "local",
+              "pickup"
+            ],
+            "title": "Delivery Method"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdminOrderAddress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pickup_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Address"
+          },
+          "pickup_hours": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Hours"
+          },
+          "invoice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdminOrderInvoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shipping_carrier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipping Carrier"
+          },
+          "tracking_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Number"
+          },
+          "refund_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "done"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refund Status"
+          },
+          "cancelled_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "system",
+                  "shop"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled By"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerOrderStep"
+            },
+            "type": "array",
+            "title": "Timeline"
+          },
+          "can_cancel": {
+            "type": "boolean",
+            "title": "Can Cancel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "number",
+          "status",
+          "created_at",
+          "payment_due_at",
+          "lines",
+          "subtotal_cents",
+          "delivery_cents",
+          "total_cents",
+          "lead_time_max_days",
+          "delivery_method",
+          "address",
+          "pickup_address",
+          "pickup_hours",
+          "invoice",
+          "shipping_carrier",
+          "tracking_number",
+          "refund_status",
+          "cancelled_by",
+          "timeline",
+          "can_cancel"
+        ],
+        "title": "CustomerOrderView",
+        "description": "The customer's page of an order (decisions 13, 40 and 41). No internal notes, no actor\nids, no cancel reason, no reservation id, no email or token digests. `timeline` is oldest\nfirst and starts with `pending_payment` at `created_at`; the refund mark is not an entry\n(`refund_status` says it). `cancelled_by` says who cancelled, not why."
+      },
       "DeliveryOptions": {
         "properties": {
           "home": {
@@ -8837,6 +9309,43 @@
         ],
         "title": "MovementRequest",
         "description": "One stock movement. `quantity` is positive for restock, return and loss, signed and\nnon-zero for an adjustment, and the absolute count (0 or more) for a count."
+      },
+      "OrderLookupRequest": {
+        "properties": {
+          "number": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Number",
+            "examples": [
+              "LFI-1001"
+            ]
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "number",
+          "email"
+        ],
+        "title": "OrderLookupRequest"
+      },
+      "OrderLookupResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token"
+        ],
+        "title": "OrderLookupResponse",
+        "description": "The private-link token: a secret that opens the order."
       },
       "OrderNoteRequest": {
         "properties": {

@@ -288,6 +288,63 @@ class AdminOrderDetail(BaseModel):
     notes: list[AdminOrderNote]
 
 
+class CustomerOrderLine(BaseModel):
+    label: str
+    ml: int
+    quantity: int
+    unit_price_cents: int
+    line_total_cents: int
+    availability: Literal["in_stock", "made_to_order"]
+    lead_time_min_days: int | None
+    lead_time_max_days: int | None
+
+
+class CustomerOrderStep(BaseModel):
+    """The order reached `status` at `at`."""
+
+    status: OrderStatusName
+    at: datetime
+
+
+class CustomerOrderView(BaseModel):
+    """The customer's page of an order (decisions 13, 40 and 41). No internal notes, no actor
+    ids, no cancel reason, no reservation id, no email or token digests. `timeline` is oldest
+    first and starts with `pending_payment` at `created_at`; the refund mark is not an entry
+    (`refund_status` says it). `cancelled_by` says who cancelled, not why."""
+
+    number: str = Field(examples=["LFI-1001"])
+    status: OrderStatusName
+    created_at: datetime
+    payment_due_at: datetime
+    lines: list[CustomerOrderLine]
+    subtotal_cents: int
+    delivery_cents: int
+    total_cents: int
+    lead_time_max_days: int | None
+    delivery_method: Literal["home", "local", "pickup"]
+    address: AdminOrderAddress | None
+    pickup_address: str | None
+    pickup_hours: str | None
+    invoice: AdminOrderInvoice | None
+    shipping_carrier: str | None
+    tracking_number: str | None
+    refund_status: RefundStatusName | None
+    cancelled_by: Literal["customer", "system", "shop"] | None
+    timeline: list[CustomerOrderStep]
+    can_cancel: bool
+
+
+class OrderLookupRequest(BaseModel):
+    number: str = Field(max_length=100, examples=["LFI-1001"])
+    email: str = Field(max_length=300)
+
+
+class OrderLookupResponse(BaseModel):
+    """The private-link token: a secret that opens the order."""
+
+    access_token: str
+
+
 # The rules (required, 1 to 300 characters, who may ship what) live in the domain; these models
 # only bound the payload.
 class MarkPaidRequest(BaseModel):

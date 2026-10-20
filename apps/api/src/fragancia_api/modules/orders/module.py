@@ -9,6 +9,10 @@ from fragancia_api.modules.orders.application.commands.cart import (
     SetCartLine,
 )
 from fragancia_api.modules.orders.application.commands.checkout import PlaceOrder
+from fragancia_api.modules.orders.application.commands.customer_order import (
+    CancelOrderByCustomer,
+    LookUpOrder,
+)
 from fragancia_api.modules.orders.application.commands.delivery import UpdateDeliveryOptions
 from fragancia_api.modules.orders.application.commands.lifecycle import (
     AddOrderNote,
@@ -21,6 +25,7 @@ from fragancia_api.modules.orders.application.commands.lifecycle import (
     OrderMove,
 )
 from fragancia_api.modules.orders.application.queries.cart import GetCart
+from fragancia_api.modules.orders.application.queries.customer_order import GetCustomerOrder
 from fragancia_api.modules.orders.application.queries.delivery import (
     GetDeliveryOptions,
     GetPublicDeliveryOptions,
@@ -37,10 +42,12 @@ from fragancia_api.modules.orders.infrastructure.sql_cart_repository import (
     SqlCartReader,
     SqlCartRepository,
 )
+from fragancia_api.modules.orders.infrastructure.sql_customer_orders import SqlCustomerOrders
 from fragancia_api.modules.orders.infrastructure.sql_delivery_settings_repository import (
     SqlDeliverySettingsReader,
     SqlDeliverySettingsRepository,
 )
+from fragancia_api.modules.orders.infrastructure.sql_lookup_throttle import SqlLookupThrottle
 from fragancia_api.modules.orders.infrastructure.sql_order_queries import SqlOrderQueries
 from fragancia_api.modules.orders.infrastructure.sql_order_repository import (
     SqlOrderReader,
@@ -158,6 +165,24 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     order_queries = SqlOrderQueries(platform.database)
     services.add(ListOrders, ListOrders(order_queries))
     services.add(GetOrder, GetOrder(order_queries))
+    customer_queries = SqlCustomerOrders(platform.database)
+    services.add(GetCustomerOrder, GetCustomerOrder(queries=customer_queries, links=links))
+    services.add(
+        LookUpOrder,
+        LookUpOrder(
+            queries=customer_queries,
+            links=links,
+            throttle=SqlLookupThrottle(platform.database),
+            transactions=platform.transactions,
+            clock=platform.clock,
+        ),
+    )
+    services.add(
+        CancelOrderByCustomer,
+        CancelOrderByCustomer(
+            queries=customer_queries, links=links, cancel=services.get(CancelUnpaidOrder)
+        ),
+    )
     services.add(
         CartCookie,
         CartCookie(

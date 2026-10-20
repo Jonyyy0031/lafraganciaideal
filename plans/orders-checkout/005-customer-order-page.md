@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: orders
 min_implementer: mid
 depends_on: ["004"]
@@ -234,6 +234,8 @@ Run with the API and the worker on the development database. Orders are placed t
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+None. (Cosmetic note: `GetCustomerOrder` and `CancelOrderByCustomer` are wired in `module.py` with the `SqlCustomerOrders` instance; the in-memory customer fake builds the view from `InMemoryOrders` for the tester.)
 
 ## Test coverage
 

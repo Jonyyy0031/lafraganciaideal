@@ -42,6 +42,13 @@ CARRIER_MAX = 60
 TRACKING_NUMBER_MAX = 60
 AUTO_CANCEL_REASON = "No pagado a tiempo"
 SYSTEM_ACTOR = "system"
+CUSTOMER_ACTOR = "customer"
+CUSTOMER_CANCEL_REASON = "Cancelado por el cliente"
+
+# Order lookup by number and email (decision 39): attempts per window.
+LOOKUP_WINDOW = timedelta(minutes=15)
+LOOKUP_IP_MAX = 20
+LOOKUP_NUMBER_MAX = 5
 
 
 class OrderStatus(StrEnum):
@@ -79,6 +86,15 @@ ALLOWED_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
 
 
 NOTE_TEXT_MAX = 1000
+
+
+def cancelled_by(actor: str) -> Literal["customer", "system", "shop"]:
+    """Who cancelled, from the actor of the cancelling move (decision 41)."""
+    if actor == CUSTOMER_ACTOR:
+        return "customer"
+    if actor == SYSTEM_ACTOR:
+        return "system"
+    return "shop"
 
 
 def parse_order_number(raw: str) -> int | None:
