@@ -203,6 +203,13 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
     belongs to the web phase.
 46. (2026-10-20) **The customer also gets an email when the order goes into preparation,** besides
     the moves in decision 12. Marking a refund done sends no email.
+47. (2026-10-20) **The owners' "pedido pagado" email travels on its own event,
+    `orders.order.paid`.**
+    - A problem with the customer's address can never delay or repeat it, and the reverse holds
+      too.
+    - An address the mail server can never accept is skipped instead of retried.
+48. (2026-10-20) **Times in the emails are the shop's, in Cancún** (`America/Cancun`, as catalog
+    decision 66), labelled "hora de Cancún".
 
 ## Delivered
 

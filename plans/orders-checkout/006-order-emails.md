@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: orders
 min_implementer: mid
 depends_on: ["005"]
@@ -173,6 +173,51 @@ The customer hears about their order by email, and the owners hear about every p
        or the fake sender used by inventory's tests.
    - Observable result: `uv run just check` and `uv run just test-integration` pass.
 
+5. **Review repair (added 2026-10-20 after the first review; decisions 47 and 48)**
+   - Files: `apps/api/src/fragancia_api/modules/orders/domain/order.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/application/handlers/order_emails.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/module.py` (modify),
+     `apps/api/src/fragancia_api/modules/orders/__init__.py` (modify),
+     `apps/api/src/fragancia_api/shared/infrastructure/smtp_email_sender.py` (modify),
+     `docs/architecture.md` (modify),
+     `apps/api/tests/unit/orders/` (modify), `apps/api/tests/integration/orders/` (modify),
+     `apps/api/tests/unit/test_smtp_email_sender.py` (modify)
+   - Do:
+     - **M1, the owners' email gets its own outbox row (decision 47).**
+       - `Order.mark_paid` also records `OrderPaid(DomainEvent)`, with
+         `name = "orders.order.paid"` and `{order_id, number}`.
+       - `SendPaidOrderToOwners` subscribes to `orders.order.paid` instead of
+         `orders.order.status_changed`, so it no longer filters on `to_status`.
+       - Each outbox row now has exactly one orders email handler. A failure on the customer's
+         address can no longer block or repeat the owners' email, and the reverse holds too.
+       - Document the event in the orders `__init__.py` docstring.
+     - **M1-A at the source.** In `SmtpEmailSender._send_blocking`, an
+       `smtplib.SMTPNotSupportedError` raised by `send_message` becomes `EmailRejected`: the
+       server cannot take a non-ASCII address without SMTPUTF8, so no retry will help.
+       - Comment it next to the existing `SMTPRecipientsRefused` rule.
+     - **M1-B is accepted:** a temporary refusal of one owner's address still resends the
+       owners' email to the owners already served, within its own row only. This matches the
+       low-stock email (inventory decision 36).
+     - **L1, the shop's time zone (decision 48).** `SHOP_TIMEZONE = ZoneInfo("America/Cancun")`,
+       as catalog decision 66 fixed the shop's days (`modules/catalog/domain/import_cells.py:64`).
+       The deadline is labelled "hora de Cancún". Update the tests' expected times: Cancún is
+       UTC−5 all year.
+     - **L2 is accepted:** emails describe the order as it is when they are sent, under
+       at-least-once delivery.
+     - **Info.** `_lead_time` says "1 día" in the singular and "N días" otherwise. The plan's
+       test-coverage note about the token digest is reworded to "independent of the view's
+       secret".
+     - **Docs:** `docs/architecture.md` (orders row) names `orders.order.paid` for the owners'
+       email.
+   - Observable result:
+     - Tests show that `mark_paid` records both events.
+     - The owners' handler is subscribed to `orders.order.paid` only.
+     - In the relay flow, a customer send failing on the paid status row still lets the owners'
+       email go out from its own row.
+     - `SMTPNotSupportedError` becomes `EmailRejected`.
+     - The deadline is shown in Cancún time.
+     - `check`, `test-integration` and `plans-scope` are clean.
+
 ## Acceptance criteria
 
 Run with the API, the worker and Mailpit (http://127.0.0.1:8026) on the development database.
@@ -248,5 +293,126 @@ Notes: the token digest is a plain SHA-256 of the token, independent of the link
 view accepts a token whatever secret the handler used (no test assumes otherwise).
 
 ## Review findings
+
+Reviewed 2026-10-20 (reviewer subagent), diff `main..HEAD` (cbe3ac0, f2f4458, 831ff71); clean
+worktree; no PR yet.
+
+**Checklist: 14/15 pass, 1 not applicable yet (PR body).**
+
+- [x] `plans-scope`: "Every change is inside the plan" (17 changed / 14 declared, the rest
+      allowed). `.importlinter` hot-file edit is append-only (two lines at the end of the
+      orders block).
+- [x] `uv run just check` green: 3620 passed, 3 skipped; harness 685 passed; lint, types, arch,
+      plans-lint, adapter drift all pass.
+- [x] `uv run just test-integration`: green, 1038 passed, 5 skipped (the 10 tests in `test_order_emails_flow.py` included).
+- [x] Business rules: none in adapters. Templates and handlers sit in `application/handlers/`
+      as inventory's low-stock email does; the cancel wording reuses domain `cancelled_by`.
+- [x] CQRS-lite: the handlers only read through the `OrderQueries` port; no command or
+      repository change.
+- [x] Contracts: no contract change; `openapi.json` correctly untouched.
+- [x] Errors: no new `Result` paths; handlers raise on failure on purpose (outbox retry).
+- [x] Money: integer cents, formatted only at the boundary (`money()`); datetimes come from
+      the DB as aware UTC; no new ids.
+- [x] No schema change, no migration.
+- [x] No routes added.
+- [x] Wiring: `test_order_emails_wiring.py` and `test_container.py` green; identity comes
+      before orders in `MODULES`, so `services.get(OwnerDirectory)` resolves; adapters are
+      built only in `module.py`.
+- [x] No secrets or real personal data. Tests use `example.com`/`.test` and a literal test
+      secret.
+- [x] `## Deviations` ("None") holds up. Spot check: the plan says local shipping has "no
+      tracking number", and the code prints tracking whenever it is set. The domain
+      (`order.py:354-376`) refuses carrier and tracking for local, so the result matches.
+- [x] Docs: the orders row, the `notifications` row and the paid flow in
+      `docs/architecture.md`, the orders `__init__.py` docstring, `.env.example` and README
+      decisions 44–46 are updated.
+- [ ] PR body: no PR exists yet (N/A at this point; the main session writes it).
+
+**Focus areas asked for (all checked, no defect unless listed below):**
+
+- *No internal data in customer emails.* No customer template reads `history[].note`,
+  `history[].actor` (only through `cancelled_by`), `notes`, `invoice` or admin ids. The cancel
+  wording comes from `CANCEL_REASONS[cancelled_by(...)]`. Tests show the typed reason is absent
+  on all templates, on the handler path and on the SQL path.
+- *`cancelled_by` source row.* `cancelled_actor` (`order_emails.py:146-151`) takes the latest
+  history row with `to_status == "cancelled"` and `from_status != "cancelled"`, so the refund
+  mark (cancelled → cancelled) is skipped. Forward-only transitions allow only one such row,
+  so this matches `SqlCustomerOrders` (first move to cancelled, `sql_customer_orders.py:49`).
+  The default `"system"` for an empty history cannot happen (a cancelled order always has its
+  row).
+- *Reads inside the relay transaction.* `SqlOrderQueries.detail` opens its own
+  `Database.reader()` session, not the relay's unit of work. The order rows were committed
+  together with the outbox row, so the reader always sees them. There is no lock interplay:
+  the relay only locks the outbox row. Each delivery uses two pooled connections, the same as
+  inventory. The email reflects the order's state at delivery time, not at event time; the
+  plan intends this.
+- *Owner email.* It carries the customer's name, email and phone, the lines, the delivery and
+  address, and `{admin_web_url}/admin/pedidos/LFI-n`, with no customer link. This is intended.
+- *`storefront_url` validator.* It is a faithful copy of `_check_admin_web_url`, and
+  `order_link` concatenates without a double slash. Like ADMIN_WEB_URL, there is no
+  production guard against the localhost default (an existing pattern, not a regression).
+- *Time zone.* `payment_due_at.astimezone(ZoneInfo("America/Mexico_City"))`. `tzdata` is a
+  declared dependency (slim image is fine), and the label says "hora de Ciudad de México", so
+  the text is correct as written. See L1 for the consistency question.
+- *Tester's note on the digest.* `HmacOrderLinks.digest` is `sha256(token)` with no secret,
+  so `GetCustomerOrder` verifies a token whatever secret its own `links` holds. The note's
+  wording ("whatever secret the handler used") overstates this: the handler's token only
+  matches if the handler's secret equals the one `PlaceOrder` used at checkout. This holds in
+  practice. `module.py` passes the same `links` instance to checkout and to the handlers, and
+  the API and the worker both read `ORDER_LINK_SECRET` (required in production; the same dev
+  fallback otherwise). The integration test uses the same secret for checkout and handler.
+  Documentation imprecision only; no test depends on the wrong reading.
+
+### Medium
+
+- **M1: the customer and owner handlers share one outbox row, so a customer-address failure
+  withholds the owners' "pedido pagado" and an owner-side failure resends the customer
+  email.** Location: `module.py:205-222` (two subscribers on `orders.order.status_changed`)
+  with `outbox.py:135-144` (one transaction per row; any exception rolls back and retries the
+  whole row, up to `MAX_ATTEMPTS = 295` over about 24 h).
+  - Failure scenario A (uncertain: depends on the production SMTP server). `CustomerEmail`
+    (`domain/customer.py:53-66`) accepts non-ASCII addresses such as `josé@example.com`.
+    `smtplib.send_message` raises `SMTPNotSupportedError` when the server does not advertise
+    SMTPUTF8, and `SmtpEmailSender` does not map that to `EmailRejected`. So the `paid` row
+    raises in `SendOrderStatusEmail`, which is subscribed first, and `SendPaidOrderToOwners`
+    never runs. The owners get no paid notice for about 24 hours, then never (row
+    `failed_at`), against decision 12. The same applies to a persistent 4xx for the customer's
+    RCPT (mailbox full) when the server delivers directly.
+  - Failure scenario B. One owner's address returns a temporary 4xx. Every retry of the row
+    resends "Confirmamos el pago" to the customer and "Pedido pagado" to the owners ahead in
+    the loop, up to 295 times. The plan's out-of-scope note accepts "may send the same email
+    twice", not this amplification. Inventory had the owner-loop half of this; the coupling to
+    customer input is new here.
+  - Needs a decision from the user. Either accept and record it as a deviation/finding, or
+    isolate it in code (for example, run the owner handler first, catch non-rejection errors
+    per handler, map `SMTPNotSupportedError` to `EmailRejected`, or give each audience its own
+    event). The reviewer does not choose.
+
+### Low
+
+- **L1 (uncertain, plan-level): the deadline time zone differs from the shop's established
+  zone.** Catalog decision 66 fixes the shop's days in `America/Cancun` (UTC-5,
+  `catalog/domain/import_cells.py:64`), and the pickup examples are in Cancún. This plan
+  formats the payment deadline in `America/Mexico_City` (UTC-6, `order_emails.py:30,99`).
+  - Scenario: a Cancún customer reads "hasta 20/10/2026 14:30 (hora de Ciudad de México)",
+    which is 15:30 on their clock. The text is accurate as labeled, but it is one hour off
+    from the shop's local time and adds a second shop zone.
+  - Confirm with the user which zone is intended. If it is Cancún, change the constant and
+    the label.
+- **L2: a delayed or retried event can describe a stale situation.** The templates read the
+  current order. If the "placed" row is delivered late (an SMTP outage past the 30-minute
+  deadline, or after the customer cancels), the email still says "Tienes hasta … para pagar"
+  for an order that is already cancelled. Retries with backoff also let later rows go first,
+  so "preparando" can arrive before "pago confirmado". Accepted by the at-least-once design;
+  recorded only so verify does not treat it as new.
+
+### Info
+
+- `_lead_time` prints "hasta 1 días" when `lead_time_max_days == 1` (grammar only).
+- Tester's digest note: see the focus area above; consider rewording it to "independent of
+  the view's secret".
+
+**Result:** M1 needs a user decision, either a code change or a recorded acceptance, so the
+status stays `review`.
 
 ## Verification
