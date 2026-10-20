@@ -453,3 +453,61 @@ Step 5 implemented 2026-10-20, after the review (M1, L1; L2 and M1-B accepted).
     `verify`.
 
 ## Verification
+
+2026-10-20, main session, live against the development database, with Mailpit receiving every
+email through the real `SmtpEmailSender`.
+- **Setup:** the API on :8100 and an arq worker started from this branch.
+- **Scripts:** `scratchpad/qa_inv/qa_emails.py` and `qa_emails_refund.py`. Mailpit's API was
+  queried by recipient.
+- **Accounts:**
+  - three active owners: `example@example.com`, `verifier007@example.test` and
+    `verifier@example.test`;
+  - a fresh customer address per run.
+- **Delivery options:** set for the run (home 18000, free from 250000; pickup on) and restored.
+
+**A stale worker.** A first attempt sent no email. A worker left running from an earlier QA
+session, with the code from before this plan, was also relaying, and it published the events with
+no handler. Once it was stopped, the run below used only this branch's worker.
+
+- [x] **Placed.**
+  - About one relay cycle after the checkout of `LFI-1017`, Mailpit had "Recibimos tu pedido
+    LFI-1017" for the customer.
+  - It listed the line ($1,899.50 MXN), the subtotal, delivery $180.00 and total $2,079.50 MXN,
+    and the home address.
+  - It said "Tienes hasta 20/10/2026 15:32 (hora de Cancún) para pagar". The database has
+    `payment_due_at` 20:32 UTC, which is 15:32 in Cancún (UTC−5).
+  - Its link `http://localhost:4200/pedido#token=…` carries a token that `POST /orders/view`
+    accepted (200).
+- [x] **Paid.**
+  - The customer got "Confirmamos el pago de tu pedido LFI-1017".
+  - Each of the three owners got "Pedido pagado: LFI-1017 — $2,079.50 MXN", with the
+    customer's name, email and phone, the line, the address and
+    `http://localhost:4200/admin/pedidos/LFI-1017`.
+  - The owners' emails come from the separate `orders.order.paid` rows.
+- [x] **Moves.**
+  - preparing, shipped (Estafeta / 123456) and delivered each sent one email: "Estamos
+    preparando…", "Tu pedido LFI-1017 va en camino" (with Estafeta and 123456 in the body) and
+    "Entregamos tu pedido LFI-1017".
+  - `LFI-1018` (pickup) marked ready_for_pickup sent "Tu pedido LFI-1018 está listo para
+    recoger", with "Av. Tulum 123" and the hours.
+- [x] **Cancelled.**
+  - Customer cancel (`LFI-1019`): "fue cancelado … a tu solicitud".
+  - Shop cancel with the typed reason "MOTIVO-INTERNO-QA" (`LFI-1020`): "por la tienda".
+  - Overdue job (`LFI-1021`): "porque no recibimos el pago a tiempo".
+  - Paid cancellation (`LFI-1022`): "por la tienda. Te reembolsaremos el pago completo."
+  - "MOTIVO-INTERNO-QA" appears in none of the customer's emails.
+  - Marking `LFI-1022`'s refund done sent no further email (still 3 after 20 s).
+- [x] **Outbox.** For the run, `orders.order.placed` ×6, `orders.order.status_changed` ×9 and
+  `orders.order.paid` ×2. All of them are published, with 0 failures.
+  - The first run's placed event was published by the stale worker, without an email.
+  - `LFI-1018` was not cancelled in this run, because a ready-for-pickup order cannot be
+    cancelled (409, plan 004). The script's mistake was covered by `LFI-1022`.
+
+NOT VERIFIED live:
+- the relay retry after an SMTP failure, and an address refused for SMTPUTF8 (both
+  integration-tested);
+- delivery through a production SMTP server.
+
+The orders `LFI-1017` to `LFI-1022` stay in the development database. Two units really sold
+(`LFI-1017`'s 50 ml and `LFI-1018`'s made-to-order bottle); the rest were cancelled or
+released.
