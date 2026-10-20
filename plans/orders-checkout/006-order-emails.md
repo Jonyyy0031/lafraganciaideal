@@ -1,5 +1,5 @@
 ---
-status: testing
+status: verify
 module: orders
 min_implementer: mid
 depends_on: ["005"]
@@ -439,5 +439,17 @@ Step 5 implemented 2026-10-20, after the review (M1, L1; L2 and M1-B accepted).
   retried, `attempts == 1`), and the reverse.
 - **Results:** `just check` green (3617 passed, 3 skipped; harness 685); `just test-integration`
   1040 passed, 5 skipped. Real SMTP to Mailpit not exercised (as before).
+- **Re-review (2026-10-20, main session).**
+  - **M1:** the owners' handler is subscribed only to `orders.order.paid` (`module.py`).
+    `mark_paid` records both events. The two relay tests prove each row fails and retries
+    alone.
+  - **M1-A:** `SMTPNotSupportedError` is caught around `send_message` only, where it means the
+    message needs SMTPUTF8. The sender address is configured ASCII, so it can only come from a
+    recipient.
+  - **L1** uses `America/Cancun` and the "hora de Cancún" label.
+  - **Info** is fixed.
+  - No new defect found. The changes are one event, one subscription, one `except` and the time
+    zone, all pinned by tests, so there is no separate tester round. The status moves to
+    `verify`.
 
 ## Verification
