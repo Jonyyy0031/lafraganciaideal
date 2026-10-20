@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: orders
 min_implementer: mid
 depends_on: ["005"]
@@ -216,6 +216,36 @@ None. No existing test broke, so no test file was touched; the tester writes the
 (templates, handlers, settings validator, relay integration) in the next phase.
 
 ## Test coverage
+
+Baseline (before any test): `uv run just check` green (3519 passed, 3 skipped);
+`uv run just test-integration` green (1028 passed, 5 skipped). Closing: `just check` 3620 passed,
+3 skipped; `just test-integration` 1038 passed, 5 skipped. No GAP, no NOT CONFIRMED, no product
+code touched. Files: `tests/unit/orders/test_order_emails.py`,
+`tests/unit/orders/test_order_emails_wiring.py`, `tests/unit/test_settings.py` (appended),
+`tests/integration/orders/test_order_emails_flow.py`.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| `storefront_url` refuses no scheme / trailing slash, accepts a base URL, default local | `config.py` `_check_storefront_url` | application (settings) | `test_settings.py::test_storefront_url_*` | CONFIRMED |
+| Money `$1,899.50 MXN`; link `{storefront}/pedido#token=` | `order_emails.py` `money`, `order_link` | application | `test_order_emails.py::test_money_*`, `test_the_link_puts_the_token_*` | CONFIRMED |
+| Placed: lines, subtotal/delivery/total, address per method (home, local, pickup point + hours), lead time only when present | `placed_email`, `_delivery` | application | `test_placed_*` | CONFIRMED |
+| Deadline in Mexico City time, incl. UTC already next day, midnight, year crossing, non-UTC offset | `placed_email` | application | `test_the_deadline_is_shown_in_mexico_city_time_*`, `test_a_deadline_with_another_offset_*` | CONFIRMED |
+| paid per method; preparing lead time; shipped home (carrier+tracking) / local (none); ready_for_pickup address+hours; delivered | `STATUS_TEMPLATES` | application | `test_paid_*`, `test_preparing_*`, `test_shipped_*`, `test_ready_for_pickup_*`, `test_delivered_*` | CONFIRMED |
+| Every customer template x 3 methods: greeting, link footer; exactly six statuses | `_wrap`, `STATUS_TEMPLATES` | application | `test_every_customer_template_*`, `test_the_customer_templates_cover_*` | CONFIRMED |
+| Cancelled wording from `cancelled_by` (customer / system / shop); refund sentence only when pending; wording survives the refund history row | `cancelled_email`, `cancelled_actor` | application | `test_cancelled_*`, `test_a_pending_refund_*`, `test_without_a_pending_refund_*`, `test_after_the_refund_mark_*` | CONFIRMED |
+| The shop's typed reason never in any customer email (all templates, handler path, SQL path) | `order_emails.py` | application, integration | `test_the_typed_cancel_reason_*`, `test_the_cancel_reason_is_absent_from_every_customer_template`, `test_a_shop_cancel_email_sent_by_the_handler_*`, `test_a_shop_cancel_says_por_la_tienda_*`, `test_a_paid_cancel_promises_the_refund_*` | CONFIRMED |
+| Owner email: subject with total, customer data, lines, method, admin link, no customer link | `owners_paid_email` | application | `test_the_owner_email_*` | CONFIRMED |
+| Handlers: placed / status send to the customer; missing order logged (`orders.email_order_missing`); send failure raises; `EmailRejected` logged and skipped | `SendOrderPlacedEmail`, `SendOrderStatusEmail` | application | `test_the_placed_handler_*`, `test_the_status_handler_*`, `test_a_move_sends_the_template_*` | CONFIRMED |
+| Refund row (cancelled to cancelled) sends nothing and reads nothing; status without template sends nothing | `SendOrderStatusEmail` | application | `test_the_refund_row_*`, `test_a_status_without_a_template_*` | CONFIRMED |
+| Owners only on `paid`; one email per active owner; none logged (`orders.paid_email_no_owner`); missing order; failure raises; rejected owner skipped | `SendPaidOrderToOwners` | application | `test_every_active_owner_*`, `test_the_owners_hear_only_about_paid_*`, `test_with_no_active_owner_*`, `test_the_owner_handler_*`, `test_a_rejected_owner_*` | CONFIRMED |
+| Link token from the email accepted by the real `GetCustomerOrder` and `POST /api/v1/orders/view`; tampered token refused | `HmacOrderLinks`, `GetCustomerOrder`, router | application | `test_the_token_in_the_email_link_is_accepted_*`, `test_a_tampered_token_*` | CONFIRMED |
+| Same token from a real checkout opens `GetCustomerOrder` over `SqlCustomerOrders` | `SqlCustomerOrders` | integration | `test_order_emails_flow.py::test_a_checkout_emails_the_customer_*` | CONFIRMED |
+| Container subscribes the three handlers to the two events with the configured URLs and real adapters; `IdentityOwners` maps only active owners | `module.py`, `identity_owners.py` | application (wiring) | `test_order_emails_wiring.py` | CONFIRMED |
+| Relay delivers placed and status_changed with real `SqlOrderQueries`, `IdentityOwners` over the real facade and a capturing sender: placed, paid (customer + active owners only, not inactive/staff), preparing/shipped (Estafeta/123456)/delivered, pickup ready, customer / overdue-job / shop / paid cancel, refund done sends no email, all rows published with no failure, no owner still emails the customer | handlers over SQL | integration | `test_order_emails_flow.py` (10 tests) | CONFIRMED |
+| Real SMTP delivery to Mailpit; the relay retry after an SMTP failure for these handlers | `SmtpEmailSender` | integration | not written: a capturing sender was requested; the retry mechanism is proven for inventory by `test_low_stock_email_flow.py` and the raise-on-failure branch by unit tests here | NOT CONFIRMED (not exercised) |
+
+Notes: the token digest is a plain SHA-256 of the token, independent of the link secret, so the
+view accepts a token whatever secret the handler used (no test assumes otherwise).
 
 ## Review findings
 

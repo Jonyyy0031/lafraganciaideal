@@ -77,6 +77,25 @@ def test_admin_web_url_accepts_a_base_url(url: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "url", ["localhost:4200", "ftp://x", "//x", "http://x/", "https://tienda.example.test/", ""]
+)
+def test_storefront_url_needs_a_scheme_and_no_trailing_slash(url: str) -> None:
+    with pytest.raises(ValidationError, match="STOREFRONT_URL must start with http"):
+        make_settings(storefront_url=url)
+
+
+@pytest.mark.parametrize(
+    "url", ["http://x", "https://tienda.example.test", "http://localhost:4200"]
+)
+def test_storefront_url_accepts_a_base_url(url: str) -> None:
+    assert make_settings(storefront_url=url).storefront_url == url
+
+
+def test_storefront_url_defaults_to_the_local_storefront() -> None:
+    assert make_settings().storefront_url == "http://localhost:4200"
+
+
+@pytest.mark.parametrize(
     "override",
     [
         {"invitation_ttl_hours": 0},
