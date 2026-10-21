@@ -196,8 +196,65 @@ Payment itself (Mercado Pago Checkout Pro, webhooks, refunds) is the next initia
     - So it never reaches server or proxy logs, nor the `Referer` header.
 43. (2026-10-20) **The customer's page also shows the customer's name and phone,** as decision 40
     meant: everything except internal data.
+44. (2026-10-20) **The orders module sends its own emails,** through outbox subscribers like
+    inventory's low-stock email. A `notifications` module comes with the second channel
+    (WhatsApp), and can take them over.
+45. (2026-10-20) **The emails are plain text,** like the existing ones. The branded HTML design
+    belongs to the web phase.
+46. (2026-10-20) **The customer also gets an email when the order goes into preparation,** besides
+    the moves in decision 12. Marking a refund done sends no email.
+47. (2026-10-20) **The owners' "pedido pagado" email travels on its own event,
+    `orders.order.paid`.**
+    - A problem with the customer's address can never delay or repeat it, and the reverse holds
+      too.
+    - An address the mail server can never accept is skipped instead of retried.
+48. (2026-10-20) **Times in the emails are the shop's, in Cancún** (`America/Cancun`, as catalog
+    decision 66), labelled "hora de Cancún".
 
 ## Delivered
+
+The series closed on 2026-10-21, when all six plans were `done`.
+- **Where it lives:** the `orders` module (`apps/api/src/fragancia_api/modules/orders/`), plus a
+  catalog facade (`PresentationOffers`), an inventory operation (`return_sold`), two identity
+  permissions and the `STOREFRONT_URL` / `ORDER_LINK_SECRET` settings.
+- **The contract:** `apps/api/openapi.json`.
+
+What each plan shipped:
+- **Delivery options (001):** home delivery (flat rate, free from an amount), local delivery by
+  postal code, and one pickup point. A public quote, and `delivery:manage` for owners.
+- **Cart (002):** a server-side cart behind the `fragancia_cart` cookie. It shows current
+  prices and availability. It flags changed prices until acknowledged, and marks sold-out or
+  hidden lines. It has at most 10 units per line, and a 30-day purge.
+- **Checkout (003):** `POST /checkout`.
+  - It takes guest contact details, a Mexican address and optional SAT-validated invoice data.
+  - It quotes the delivery and refuses a changed total.
+  - It reserves the in-stock units for 30 minutes and numbers the order gaplessly from
+    `LFI-1001`.
+  - The private link is HMAC-derived, and a lost response can be replayed.
+- **Lifecycle in the panel (004):**
+  - the list, the detail, history and notes;
+  - forward-only states, and payment marked by hand (`orders:finance`);
+  - ship with a carrier and tracking number, or ready for pickup;
+  - cancel unpaid (the units are released) or paid (the units are returned, and the refund is
+    tracked);
+  - an overdue job that cancels unpaid orders.
+- **Customer page (005):**
+  - `POST /orders/view` and `POST /orders/cancel`, with the token in the body, never in a URL
+    path;
+  - a lookup by number and email, throttled per IP and per number;
+  - no internal data on the page.
+- **Emails (006):** plain-text outbox subscribers.
+  - The customer gets order received (with the link and the deadline in Cancún time) and every
+    state change.
+  - The owners get every paid order, on its own `orders.order.paid` event.
+
+**Handed to the payments initiative** (see "Dependency notes"):
+- the webhook that marks orders paid;
+- automatic refunds;
+- the OXXO and SPEI extensions;
+- the overdue job's handling of webhook-committed reservations.
+
+**Open finding:** `platform-client-ip-behind-proxy`, for the deployment plan.
 
 ## Considered and discarded
 

@@ -1,6 +1,7 @@
 """Wiring of the orders module for the composition root."""
 
 from fragancia_api.modules.catalog import PresentationOffers
+from fragancia_api.modules.identity import OwnerDirectory
 from fragancia_api.modules.inventory import StockReservations
 from fragancia_api.modules.orders.application.commands.cart import (
     AcknowledgeCartPrices,
@@ -24,6 +25,11 @@ from fragancia_api.modules.orders.application.commands.lifecycle import (
     MarkOrderRefunded,
     OrderMove,
 )
+from fragancia_api.modules.orders.application.handlers.order_emails import (
+    SendOrderPlacedEmail,
+    SendOrderStatusEmail,
+    SendPaidOrderToOwners,
+)
 from fragancia_api.modules.orders.application.queries.cart import GetCart
 from fragancia_api.modules.orders.application.queries.customer_order import GetCustomerOrder
 from fragancia_api.modules.orders.application.queries.delivery import (
@@ -37,6 +43,7 @@ from fragancia_api.modules.orders.http.cart_cookie import CartCookie
 from fragancia_api.modules.orders.http.router import routers
 from fragancia_api.modules.orders.infrastructure.cart_tokens import SecureCartTokens
 from fragancia_api.modules.orders.infrastructure.catalog_offers import CatalogOffersAdapter
+from fragancia_api.modules.orders.infrastructure.identity_owners import IdentityOwners
 from fragancia_api.modules.orders.infrastructure.order_links import HmacOrderLinks
 from fragancia_api.modules.orders.infrastructure.sql_cart_repository import (
     SqlCartReader,
@@ -181,6 +188,36 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         CancelOrderByCustomer,
         CancelOrderByCustomer(
             queries=customer_queries, links=links, cancel=services.get(CancelUnpaidOrder)
+        ),
+    )
+    # Identity registers before orders (MODULES order), so its facade is available.
+    owners = IdentityOwners(services.get(OwnerDirectory))
+    storefront_url = platform.settings.storefront_url
+    platform.subscriptions.subscribe(
+        "orders.order.placed",
+        SendOrderPlacedEmail(
+            queries=order_queries,
+            links=links,
+            email=platform.email,
+            storefront_url=storefront_url,
+        ),
+    )
+    platform.subscriptions.subscribe(
+        "orders.order.status_changed",
+        SendOrderStatusEmail(
+            queries=order_queries,
+            links=links,
+            email=platform.email,
+            storefront_url=storefront_url,
+        ),
+    )
+    platform.subscriptions.subscribe(
+        "orders.order.paid",
+        SendPaidOrderToOwners(
+            queries=order_queries,
+            owners=owners,
+            email=platform.email,
+            admin_web_url=platform.settings.admin_web_url,
         ),
     )
     services.add(

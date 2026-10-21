@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from fragancia_api.modules.orders.application.ports import Recipient
 from fragancia_api.modules.orders.contracts import (
     AdminOrderAddress,
     AdminOrderInvoice,
@@ -295,3 +296,13 @@ class InMemoryLookupThrottle:
             attempts, started = 0, now
         self.counters[key] = (attempts + 1, started)
         return attempts + 1
+
+
+class InMemoryOwnerRecipients:
+    """The `OwnerRecipients` port over a fixed list."""
+
+    def __init__(self, owners: Sequence[Recipient] = ()) -> None:
+        self.owners = list(owners)
+
+    async def active_owners(self) -> list[Recipient]:
+        return list(self.owners)
