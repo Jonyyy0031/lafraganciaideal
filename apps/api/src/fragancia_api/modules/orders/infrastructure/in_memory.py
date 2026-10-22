@@ -5,7 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from fragancia_api.modules.orders.application.ports import Recipient
+from fragancia_api.modules.orders.application.ports import PayableLine, PayableOrder, Recipient
 from fragancia_api.modules.orders.contracts import (
     AdminOrderAddress,
     AdminOrderInvoice,
@@ -275,6 +275,30 @@ class InMemoryCustomerOrders:
                 *(CustomerOrderStep(status=event.to_status.value, at=event.at) for event in moves),
             ],
             can_cancel=order.status == OrderStatus.PENDING_PAYMENT,
+        )
+
+    async def payable_by_access_digest(self, digest: str) -> PayableOrder | None:
+        order = next((o for o in self._store.orders if o.access_token_digest == digest), None)
+        if order is None:
+            return None
+        return PayableOrder(
+            order_id=order.id,
+            number=format_order_number(order.number),
+            status=order.status.value,
+            payment_due_at=order.payment_due_at,
+            customer_name=order.name.value,
+            customer_email=order.email.value,
+            lines=[
+                PayableLine(
+                    presentation_id=line.presentation_id,
+                    label=line.label,
+                    quantity=line.quantity,
+                    unit_price_cents=line.unit_price_cents,
+                )
+                for line in order.lines
+            ],
+            delivery_cents=order.delivery.cost_cents,
+            total_cents=order.total_cents,
         )
 
     async def match(self, number: int, email: str) -> tuple[UUID, int] | None:

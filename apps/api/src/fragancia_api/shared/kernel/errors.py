@@ -48,3 +48,8 @@ class UnauthenticatedError(DomainError):
 @dataclass(frozen=True)
 class RateLimitedError(DomainError):
     """Too many attempts; try again later (HTTP 429)."""
+
+
+@dataclass(frozen=True)
+class ServiceUnavailableError(DomainError):
+    """An upstream service failed or is not configured; try again later (HTTP 503)."""

@@ -31,10 +31,22 @@ The checkout (`POST /api/v1/checkout`) turns the cart into an order in `pending_
 reserves the in-stock units for 30 minutes through inventory's `StockReservations`, takes the
 next gapless number, freezes the prices and empties the cart.
 
-Public API for other modules: nothing yet.
+Public API for other modules:
+- `OrderPayments`: a query facade. `payable(access_token)` answers a `PayableOrder` (id, number,
+  status, payment deadline, customer name and email, lines, delivery cost and total) or None
+  when the token matches no order. It is the only way other modules (payments) read an order
+  to charge it. The token is a secret: only its digest is looked up.
 
 The cart is identified by the `fragancia_cart` cookie, shows current prices and availability, and
 never reserves stock. The worker job `orders_purge_carts` deletes carts untouched for 30 days.
 
 The composition root wires `module.module`.
 """
+
+from fragancia_api.modules.orders.application.queries.order_payments import (
+    OrderPayments,
+    PayableLine,
+    PayableOrder,
+)
+
+__all__ = ["OrderPayments", "PayableLine", "PayableOrder"]

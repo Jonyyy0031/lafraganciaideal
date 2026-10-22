@@ -6330,6 +6330,78 @@
           }
         }
       }
+    },
+    "/api/v1/payments/checkout": {
+      "post": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Start Checkout",
+        "description": "The Mercado Pago URL that pays an order (decisions 2 and 4, ADR 0004). The order's\nprivate-link token is a secret and travels in the body, never in a URL. Only cards, in one\ninstallment. The link expires with the order's payment window, and a second request reuses\nit while it is valid. The browser's return from Mercado Pago never confirms a payment.\n404 `PAYMENTS_ORDER_NOT_FOUND`; 409 `PAYMENTS_ORDER_NOT_PAYABLE` (`details.status`: the\norder is not waiting for payment or its window passed); 503\n`PAYMENTS_GATEWAY_UNAVAILABLE` (Mercado Pago failed or is not configured).",
+        "operationId": "start_checkout",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartCheckoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartCheckoutResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -10502,6 +10574,35 @@
         ],
         "title": "SetCartLineRequest",
         "description": "The quantity bounds (1 to 10) are a domain rule; the payload is only kept sane."
+      },
+      "StartCheckoutRequest": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Access Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token"
+        ],
+        "title": "StartCheckoutRequest",
+        "description": "The order's private-link token, in the body so it never travels in a URL."
+      },
+      "StartCheckoutResponse": {
+        "properties": {
+          "redirect_url": {
+            "type": "string",
+            "title": "Redirect Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "redirect_url"
+        ],
+        "title": "StartCheckoutResponse",
+        "description": "Where to send the guest to pay: the Mercado Pago checkout."
       },
       "StockLine": {
         "properties": {

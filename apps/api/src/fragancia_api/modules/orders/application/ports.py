@@ -122,10 +122,39 @@ class CartReader(Protocol):
     async def by_token(self, token_digest: str) -> Cart | None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class PayableLine:
+    """One line of an order, as a payment needs it."""
+
+    presentation_id: UUID
+    label: str
+    quantity: int
+    unit_price_cents: int
+
+
+@dataclass(frozen=True, slots=True)
+class PayableOrder:
+    """What other modules (payments) may know about an order to charge it."""
+
+    order_id: UUID
+    number: str
+    status: str
+    payment_due_at: datetime
+    customer_name: str
+    customer_email: str
+    lines: list[PayableLine]
+    delivery_cents: int
+    total_cents: int
+
+
 class CustomerOrderQueries(Protocol):
     """Read side of the customer's page (`Database.reader()`)."""
 
     async def by_access_digest(self, digest: str) -> CustomerOrderView | None: ...
+
+    async def payable_by_access_digest(self, digest: str) -> PayableOrder | None:
+        """The order facts a payment needs, found by the digest of its private-link token."""
+        ...
 
     async def match(self, number: int, email: str) -> tuple[UUID, int] | None:
         """The order id and number when that number exists and its stored email equals `email`

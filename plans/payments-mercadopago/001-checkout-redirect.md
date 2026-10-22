@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: payments
 min_implementer: mid
 depends_on: ["orders-checkout/006"]
@@ -300,6 +300,19 @@ placed through `POST /checkout`.
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+- **`PayableOrder` / `PayableLine` live in `orders/application/ports.py`,** not in
+  `queries/order_payments.py` (step 2). The `CustomerOrderQueries` port returns them, and the
+  query module imports the ports, so defining them in the query module would be a cycle.
+  `order_payments.py` and `orders/__init__.py` re-export them. Cosmetic.
+- **Existing tests updated because production settings now require Mercado Pago** (step 4's
+  validators), outside the plan's Files lines:
+  - `apps/api/tests/unit/orders/test_cart_wiring.py`: production cases pass a token and
+    `mercadopago_sandbox=False`.
+  - `apps/api/tests/unit/orders/test_customer_order.py`: the `LoggingQueries` wrapper gained
+    `payable_by_access_digest` (the port grew a method).
+- `apps/api/tests/unit/test_settings.py` gained three minimal settings tests alongside the
+  fixes to the production cases (it is in step 5's list).
 
 ## Test coverage
 

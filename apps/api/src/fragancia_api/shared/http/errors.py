@@ -1,6 +1,6 @@
 """One place that turns errors into HTTP responses: always `{code, message, details?}`.
 
-- `Err(DomainError)` from a use case → `unwrap()` → status by category (401/404/409/422/429).
+- `Err(DomainError)` from a use case → `unwrap()` → status by category (401/404/409/422/429/503).
 - Invalid input (Pydantic) → 422 `VALIDATION_ERROR` with per-field issues.
 - Missing/unknown credentials → 401 `AUTHENTICATION_REQUIRED`; not allowed → 403 `FORBIDDEN`.
 - Unknown route / method → 404 `NOT_FOUND` / 405 `METHOD_NOT_ALLOWED`.
@@ -25,6 +25,7 @@ from fragancia_api.shared.kernel import (
     Ok,
     RateLimitedError,
     Result,
+    ServiceUnavailableError,
     UnauthenticatedError,
 )
 
@@ -56,6 +57,7 @@ _STATUS_BY_CATEGORY: tuple[tuple[type[DomainError], int], ...] = (
     (BusinessRuleViolationError, 422),
     (UnauthenticatedError, 401),
     (RateLimitedError, 429),
+    (ServiceUnavailableError, 503),
 )
 
 _HTTP_CODES = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}

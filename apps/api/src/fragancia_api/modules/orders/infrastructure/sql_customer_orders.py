@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from fragancia_api.modules.orders.application.ports import PayableLine, PayableOrder
 from fragancia_api.modules.orders.contracts import (
     AdminOrderAddress,
     AdminOrderInvoice,
@@ -111,6 +112,40 @@ class SqlCustomerOrders:
                 ),
             ],
             can_cancel=row.status == "pending_payment",
+        )
+
+    async def payable_by_access_digest(self, digest: str) -> PayableOrder | None:
+        async with self._database.reader() as session:
+            row = (
+                await session.execute(select(orders).where(orders.c.access_token_digest == digest))
+            ).first()
+            if row is None:
+                return None
+            lines = (
+                await session.execute(
+                    select(order_lines)
+                    .where(order_lines.c.order_id == row.id)
+                    .order_by(order_lines.c.position)
+                )
+            ).all()
+        return PayableOrder(
+            order_id=row.id,
+            number=format_order_number(row.number),
+            status=row.status,
+            payment_due_at=row.payment_due_at,
+            customer_name=row.customer_name,
+            customer_email=row.customer_email,
+            lines=[
+                PayableLine(
+                    presentation_id=line.presentation_id,
+                    label=line.label,
+                    quantity=line.quantity,
+                    unit_price_cents=line.unit_price_cents,
+                )
+                for line in lines
+            ],
+            delivery_cents=row.delivery_cents,
+            total_cents=row.total_cents,
         )
 
     async def match(self, number: int, email: str) -> tuple[UUID, int] | None:
