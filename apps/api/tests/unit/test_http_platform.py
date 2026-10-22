@@ -211,7 +211,14 @@ async def test_docs_are_served_outside_production(client: AsyncClient) -> None:
 
 
 async def test_production_app_hides_the_docs() -> None:
-    container = build_container(make_settings(app_env="production", order_link_secret="p" * 32))
+    container = build_container(
+        make_settings(
+            app_env="production",
+            order_link_secret="p" * 32,
+            mercadopago_access_token="APP_USR-test",
+            mercadopago_sandbox=False,
+        )
+    )
     app = create_app(container)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         assert (await c.get("/api/v1/docs")).status_code == 404
