@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: payments
 min_implementer: mid
 depends_on: ["orders-checkout/006"]
@@ -262,6 +262,44 @@ order to paid.
      - The tester writes the layered tests.
    - Observable result: `uv run just check` and `uv run just test-integration` pass.
 
+6. **Review repair (added 2026-10-23 after the first review)**
+   - Files: `apps/api/src/fragancia_api/modules/payments/infrastructure/mercadopago_gateway.py` (modify),
+     `apps/api/src/fragancia_api/modules/payments/module.py` (modify),
+     `apps/api/src/fragancia_api/modules/payments/domain/checkout.py` (modify),
+     `apps/api/src/fragancia_api/modules/payments/domain/errors.py` (modify),
+     `apps/api/src/fragancia_api/modules/payments/application/commands/start_checkout.py` (modify),
+     `apps/api/src/fragancia_api/config.py` (modify),
+     `apps/api/README.md` (modify),
+     `apps/api/openapi.json` (modify),
+     `apps/api/tests/unit/payments/` (modify), `apps/api/tests/integration/payments/` (modify),
+     `apps/api/tests/unit/test_settings.py` (modify)
+   - Do:
+     - **M1, the HTTP client.** The gateway opens an `httpx.AsyncClient` per call, with
+       `async with`, a 10 s timeout and `trust_env=False`. It copies the catalog downloader
+       (`modules/catalog/infrastructure/http_image_downloader.py:169-172`).
+       - For tests, the constructor takes a `transport: httpx.AsyncBaseTransport | None`
+         instead of a client.
+       - `module.py` no longer creates a long-lived client, so nothing is left unclosed.
+     - **M2, the timestamp.** `expiration_date_to` is sent with milliseconds and the offset,
+       `expires_at.isoformat(timespec="milliseconds")` (for example
+       `2026-10-23T15:32:44.222-05:00`), as Mercado Pago documents.
+     - **L1, reuse without a margin.** Drop `REUSE_MARGIN`. A stored checkout is reused when
+       `expires_at == order.payment_due_at and expires_at > now`. A new link is made only when
+       there is none, or when the deadline changed (plan 003 extends it).
+     - **L2.** `PaymentOrderNotFound` says "No encontramos ese pedido".
+     - **L3.** `apps/api/README.md:62` lists 503 (upstream unavailable) among the error
+       categories.
+     - **L4.** Replace the bare `assert` on the items' sum with an explicit check that raises
+       `ValueError` (a programming error, never a guest error).
+     - **L5.** In production, `mercadopago_api_url` must start with `https://`.
+     - **Info, for plan 002.** One preference can be paid more than once, and concurrent
+       requests can create two. Plan 002 matches payments by `external_reference` and handles
+       a second approved payment for an order that is already paid. This is recorded in the
+       initiative README's "Dependency notes".
+     - **Tests.** Update the MockTransport tests to inject a transport, the timestamp
+       expectations and the reuse tests, and add tests for L4 and L5.
+   - Observable result: `check`, `test-integration` and `plans-scope` are clean.
+
 ## Acceptance criteria
 
 Run with the API on the development database. Delivery options are configured, and an order is
@@ -359,5 +397,160 @@ Notes: PostgreSQL 18 lists `NOT NULL` as `contype 'n'` rows in `pg_constraint`; 
 tests exclude them. No product code was touched.
 
 ## Review findings
+
+Reviewed 2026-10-23, diff `main...HEAD` (4da31b0), tree clean.
+
+**Checklist: 14 of 15 applicable items passed. 1 failed (stale doc). 1 n/a (PR body).**
+
+- [x] `plans-scope`: "Every change is inside the plan" (42 declared, 55 changed, all covered).
+  The hot files are append-only: `.importlinter` has one container line and two ignore lines,
+  `container.py` has an import and `payments` appended to `MODULES`, and `modules.json` flips
+  `planned` to `active`.
+- [x] `uv run just check` green: lint, types, every import-linter contract KEPT (12 ignored
+  imports), 3748 passed and 3 skipped, harness 685 passed.
+- [x] `uv run just test-integration` green: 1074 passed, 5 skipped.
+- [x] Business rules: `Checkout.reusable` is in the domain. The "payable" rule
+  (`pending_payment` and before the deadline) is in `StartCheckout`
+  (`start_checkout.py:72`), as step 3 prescribes. It is a cross-module status string, so it
+  is accepted here.
+- [x] CQRS-lite: the read and the upsert run inside `transactions.run`, the result is a
+  `Result`, and the repository has no screen-specific methods.
+- [x] Contracts come from `payments/contracts.py`, and `openapi.json` was regenerated (no
+  drift in `check`).
+- [x] Errors: `PAYMENTS_ORDER_NOT_FOUND`, `PAYMENTS_ORDER_NOT_PAYABLE` and
+  `PAYMENTS_GATEWAY_UNAVAILABLE`. No internals leak: the 503 body is `{code, message}`.
+- [x] Money: integer cents throughout. The only float is `unit_price` on the wire, which is
+  where the plan puts it (see the bug hunt).
+- [x] Migration 0023: `CREATE SCHEMA`, no FK, reversible (the round trip is tested).
+- [x] Route in `public_router`; no bare `APIRouter`.
+- [x] Wiring resolves (`test_payments_wiring.py`). `payments` comes after `orders`, and the
+  adapters are built only in `module.py`.
+- [x] No secrets: the tests use `APP_USR-test` placeholders, and `.env.example` has empty values.
+- [x] Deviations are honest. Spot check: `PayableOrder`/`PayableLine` are defined in
+  `orders/application/ports.py:125-148` and re-exported from `queries/order_payments.py`
+  and `orders/__init__.py`.
+- [ ] **Docs: `apps/api/README.md:62` still lists the error categories as
+  "401/404/409/422/429" and omits the new 503 `ServiceUnavailableError`.** That file is not
+  in the plan's file list, so fixing it needs a deviation line.
+- n/a PR body: the reviewer saw no PR (`gh` was not available in this run).
+
+**Focus areas checked and found correct:**
+- **Boundaries.** Nothing under `modules/orders` imports `modules.payments`. Payments reaches
+  orders only from `infrastructure/order_payments.py` and `module.py`, both through the
+  public `fragancia_api.modules.orders`, with exactly the two declared ignore lines.
+  `PayableOrders` is payments' own port with its own dataclasses, and the adapter copies
+  every field.
+- **Cents to pesos.** `round(cents / 100, 2)` (`mercadopago_gateway.py:79`) is exact for
+  any integer cents below 2**53. `cents / 100` is the correctly rounded double, and `json`
+  serializes it with the shortest repr, which is exactly the 2-decimal string (for example
+  `1005` gives `10.05`). The `round` is a no-op. Mercado Pago's total is
+  quantity × unit_price on decimals of 2 places, so there is no drift. The items' sum is
+  checked against `total_cents`, which `Order` builds as subtotal plus delivery
+  (`order.py:316-335`).
+- **Secrets.** The token is a `SecretStr`, unwrapped once in `module.py:22`. It travels
+  only in the `Authorization` header. The logs carry only the status and the exception class
+  name (`mercadopago_gateway.py:47,50,54`). The gateway has no repr of its fields. httpx
+  0.28.1 does not log headers.
+- **Production validators** (`config.py:107-115`). In production a missing or empty token
+  fails, and so does `sandbox=true`; both are tested.
+- **503 category.** `ServiceUnavailableError` is independent of the other categories, so
+  its position in `_STATUS_BY_CATEGORY` cannot shadow anything. It is exported from the
+  kernel, which stays stdlib-only (KEPT).
+- **Preference body** against the fields cited in the Context: `items[]` (`id`, `title`,
+  `quantity`, `unit_price`, `currency_id`), `payer{name,email}`, `external_reference`,
+  `back_urls` with all three keys, `auto_return`, `payment_methods.excluded_payment_types[{id}]`
+  and `installments`, `expires` and `expiration_date_to`. No `notification_url`. This
+  matches the plan. The one exception is the timestamp format (M2).
+
+### Findings
+
+**Medium**
+
+- **M1 — The module's `httpx.AsyncClient` is never closed**
+  (`modules/payments/module.py:24`; `container.py:49-51`).
+  - What fails: `register` creates the client, and nothing ever closes it.
+    `Container.close()` closes Valkey and the database only, and `AppModule`/`Platform` have
+    no shutdown hook.
+  - Where it runs: every process that builds the container creates one. That covers the API
+    (in `create_app`, synchronously, before the loop), the worker
+    (`main/worker.py:33`, which never uses it) and the CLI (`main/cli.py:31`). Every
+    `build_container` in the tests creates another.
+  - Failure scenario: at API shutdown, the keep-alive connections to `api.mercadopago.com`
+    are dropped without a clean close. Long test runs accumulate unclosed clients.
+  - Safety across processes: correct today. Each process gets its own client, and httpx
+    binds connections lazily on first use, inside that process's single loop. It is fragile,
+    though. Any entrypoint that runs `asyncio.run` twice over one container (the CLI
+    pattern) would reuse pooled connections across event loops.
+  - The plan's "owned by the module" has no owner lifecycle. It also uses httpx's default
+    `trust_env=True`, so `HTTP(S)_PROXY`/`SSL_CERT_FILE` from the environment apply. The
+    catalog downloader sets `trust_env=False` (`http_image_downloader.py:169-173`).
+  - In-scope fix: build the client per call with `async with httpx.AsyncClient(...)` inside
+    the gateway, as the catalog downloader does. Tests can still inject a transport factory.
+    The alternative, a container close hook for module resources, touches
+    `shared/module.py` and `container.py`, which is outside this plan's file list and needs a
+    user decision.
+
+- **M2 (uncertain) — The format of `expiration_date_to`** (`mercadopago_gateway.py:97`).
+  - What fails: `request.expires_at.isoformat()` emits microseconds, because
+    `payment_due_at` comes from `timestamptz`, for example `2026-10-22T18:30:12.345678+00:00`.
+    Mercado Pago's API reference documents the format `yyyy-MM-dd'T'HH:mm:ss.SSSZ` (example
+    `2016-02-28T12:00:00.000-04:00`), which has milliseconds.
+  - Uncertain: the reviewer could not confirm whether Mercado Pago rejects 6 fractional
+    digits or tolerates them.
+  - Failure scenario: if it rejects them, every real preference request answers 400. Users
+    get 503 `PAYMENTS_GATEWAY_UNAVAILABLE` and no one can pay.
+  - The tests and the verifier's local fake check our own format, so neither would catch
+    this. Only the sandbox run (still NOT VERIFIED) would.
+  - Suggested fix: `isoformat(timespec="milliseconds")`.
+
+**Low**
+
+- **L1 — The 2-minute margin replaces a link with one that expires at the same instant**
+  (`domain/checkout.py:20`, `start_checkout.py:79,93,105`).
+  - In the last 2 minutes before `payment_due_at`, `reusable` is false. The command then
+    creates a new preference with the same `expires_at = payment_due_at`.
+  - So every request in that window calls Mercado Pago and overwrites the row, and the new
+    link is just as close to expiring as the one it replaced. The stated reason ("the guest
+    could land on an expired page") is not served.
+  - Suggestion: answer `PAYMENTS_ORDER_NOT_PAYABLE` when `payment_due_at - REUSE_MARGIN <= now`,
+    or reuse until expiry. Either is a small behavior decision for the user.
+- **L2 — The customer-facing 404 message is in English** (`domain/errors.py:9`, "Order not
+  found"). The guest's page shows it. The orders equivalents are Spanish ("No encontramos ese
+  pedido", `orders/domain/errors.py:110`), and the backend conventions require Spanish for
+  customer-facing messages.
+- **L3 — The stale doc** listed in the checklist (`apps/api/README.md:62`).
+- **L4 — The total check is a bare `assert`** (`start_checkout.py:38`). It is stripped
+  under `python -O`, and when it fires it is a 500. The plan prescribes an assert and the
+  totals are consistent by construction (`order.py:335`), so this is only a note.
+- **L5 — `MERCADOPAGO_API_URL` is not validated in production** (`config.py:68`). A leftover
+  fake URL, or a plain `http://` one, would send the production access token there. A
+  production validator requiring `https://api.mercadopago.com` (or at least `https://`)
+  would stop it.
+
+**Info (no code change in this plan)**
+
+- **Concurrent `StartCheckout` calls** (two tabs, double click).
+  - Both read "no checkout" and both call the gateway. Two preferences are created and the
+    last upsert wins, so the first caller gets a valid link that is not stored. Both carry
+    `external_reference = order id` and expire at `payment_due_at`.
+  - Harmless for 001: no row is corrupted (PK plus `ON CONFLICT`), and the extra preference
+    expires.
+  - **Input for plan 002:** match payments by `external_reference`, never by the stored
+    `preference_id`. Treat a second approved payment for an already paid order as a refund
+    case. A single Checkout Pro preference can also be paid more than once, so double payment
+    is possible even without the race.
+  - Suggest the main session file this under `plans/findings/` or in plan 002's Context. The
+    reviewer writes only to this plan.
+- **Order cancelled between the read and the gateway call.** A preference can be created and
+  stored for an order that was just cancelled. Paying it is the late-payment refund of plan
+  004 (decision 3). Accepted by design.
+- **For verify against the sandbox (uncertain, from Mercado Pago integration experience):**
+  - Mercado Pago may reject `auto_return` when `back_urls.success` is a `localhost` URL.
+  - With test credentials, a real `payer.email` can make the checkout refuse ("una de las
+    partes es de prueba").
+  - Both would show up as 503 locally and are not product bugs of this plan.
+
+**Status stays `review`:** M1 needs a code change, and M2 should be resolved before the
+sandbox run. L1, L2, L3 and L5 are small and go in the same repair pass if the user agrees.
 
 ## Verification

@@ -33,6 +33,13 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
 - **The overdue job (orders-checkout 004).** It stops its run at an order whose release is
   refused. Plan 002 must keep a payment-committed reservation from leaving an order
   `pending_payment` (orders-checkout README, "Dependency notes").
+- **One order can collect more than one payment.** A Checkout Pro preference can be paid more
+  than once, and two concurrent requests can create two preferences for one order.
+  - Plan 002 matches payments by `external_reference` (the order id).
+  - A second approved payment for an order that is already paid must be detected, and refunded
+    by plan 004.
+
+  (Plan 001 review, info.)
 - **Live verification needs a Mercado Pago test account:**
   - test credentials (`TEST-…` access token, webhook secret);
   - a buyer test user;
