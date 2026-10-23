@@ -6,7 +6,7 @@ from fragancia_api.shared.kernel import ConflictError, NotFoundError, ServiceUna
 @dataclass(frozen=True)
 class PaymentOrderNotFound(NotFoundError):
     code: str = "PAYMENTS_ORDER_NOT_FOUND"
-    message: str = "Order not found"
+    message: str = "No encontramos ese pedido"
 
 
 @dataclass(frozen=True)

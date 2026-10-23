@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: payments
 min_implementer: mid
 depends_on: ["orders-checkout/006"]
@@ -552,5 +552,35 @@ Reviewed 2026-10-23, diff `main...HEAD` (4da31b0), tree clean.
 
 **Status stays `review`:** M1 needs a code change, and M2 should be resolved before the
 sandbox run. L1, L2, L3 and L5 are small and go in the same repair pass if the user agrees.
+
+## Repair log
+
+Step 6, 2026-10-23, after the first review. The first review, test and coverage evidence above
+is superseded where it names the 2-minute margin, the injected client, the microsecond
+timestamp or the `assert`; testing, review and verify repeat on the repaired code.
+
+- **M1.** `MercadoPagoGateway` opens an `httpx.AsyncClient(timeout=10, trust_env=False)` per
+  call inside `async with`; the constructor takes `transport` (default None) instead of
+  `client`. `module.py` creates no client.
+- **M2.** `expiration_date_to` is `isoformat(timespec="milliseconds")`.
+- **L1.** `REUSE_MARGIN` removed. `Checkout.reusable(payment_due_at, now)` is
+  `expires_at == payment_due_at and expires_at > now`; `StartCheckout` passes the order's
+  deadline. (The signature gained the deadline argument.)
+- **L2.** `PaymentOrderNotFound.message` is "No encontramos ese pedido".
+- **L3.** `apps/api/README.md` lists 503 (upstream unavailable).
+- **L4.** The items-sum check raises `ValueError`; no `assert` remains in `start_checkout.py`.
+- **L5.** Production requires `mercadopago_api_url` to start with `https://`.
+- **Info.** Already recorded in the initiative README's "Dependency notes" (no change).
+- **Tests updated:** `test_mercadopago_gateway.py` (transport injection, millisecond
+  timestamps), `test_checkout_domain.py` and `test_start_checkout.py` (deadline-based reuse
+  replaces the margin tests; `ValueError` replaces `AssertionError`), `test_settings.py`.
+- **Tests added:** milliseconds vs microseconds; a client opened per call with
+  `trust_env=False` and the 10 s timeout; no `REUSE_MARGIN`; reuse in the last second and
+  replacement for another deadline; reuse until the deadline then not payable; the Spanish 404
+  message; no `assert` in `start_checkout.py`; production `https://` validation (4 invalid
+  URLs, the default accepted, a local fake allowed outside production).
+- **Results:** `uv run just check` green (harness 685 passed); `uv run just test-integration`
+  1074 passed, 5 skipped; `plans-scope` run below.
+- `openapi.json` unchanged (no contract change); no file outside the step 6 list was touched.
 
 ## Verification

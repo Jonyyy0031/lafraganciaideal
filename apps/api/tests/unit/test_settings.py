@@ -191,6 +191,29 @@ def test_production_requires_the_mercadopago_sandbox_off() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "url", ["http://api.mercadopago.com", "http://127.0.0.1:9999", "api.mercadopago.com", ""]
+)
+def test_production_requires_an_https_mercadopago_api_url(url: str) -> None:
+    with pytest.raises(ValidationError, match="MERCADOPAGO_API_URL must start with https://"):
+        make_settings(
+            app_env="production",
+            order_link_secret=PROD_SECRET,
+            mercadopago_api_url=url,
+            **PROD_MP,
+        )
+
+
+def test_production_accepts_the_https_mercadopago_api_url() -> None:
+    settings = make_settings(app_env="production", order_link_secret=PROD_SECRET, **PROD_MP)
+    assert settings.mercadopago_api_url == "https://api.mercadopago.com"
+
+
+def test_a_local_fake_mercadopago_api_url_is_allowed_outside_production() -> None:
+    settings = make_settings(mercadopago_api_url="http://127.0.0.1:9999")
+    assert settings.mercadopago_api_url == "http://127.0.0.1:9999"
+
+
 def test_mercadopago_is_optional_outside_production() -> None:
     settings = make_settings()
     assert settings.mercadopago_access_token is None

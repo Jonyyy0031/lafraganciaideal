@@ -1,9 +1,6 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from uuid import UUID
-
-# A link about to expire is not reused: the guest could land on an expired page.
-REUSE_MARGIN = timedelta(minutes=2)
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,5 +13,7 @@ class Checkout:
     expires_at: datetime
     created_at: datetime
 
-    def reusable(self, now: datetime) -> bool:
-        return self.expires_at - REUSE_MARGIN > now
+    def reusable(self, payment_due_at: datetime, now: datetime) -> bool:
+        """Valid while it expires with the order's current deadline and has not expired. A new
+        link is made only when there is none or the deadline changed."""
+        return self.expires_at == payment_due_at and self.expires_at > now

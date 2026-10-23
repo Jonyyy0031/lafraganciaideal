@@ -55,8 +55,12 @@ def gateway_for(
     token: str | None = ACCESS_TOKEN,
     api_url: str = API,
 ) -> MercadoPagoGateway:
-    client = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
-    return MercadoPagoGateway(api_url=api_url, access_token=token, sandbox=sandbox, client=client)
+    return MercadoPagoGateway(
+        api_url=api_url,
+        access_token=token,
+        sandbox=sandbox,
+        transport=httpx.MockTransport(recorder),
+    )
 
 
 def body_of(request: httpx.Request) -> dict[str, Any]:
@@ -100,7 +104,7 @@ async def test_it_posts_the_exact_preference_body() -> None:
             "installments": 1,
         },
         "expires": True,
-        "expiration_date_to": "2026-10-22T18:30:00+00:00",
+        "expiration_date_to": "2026-10-22T18:30:00.000+00:00",
     }
 
 
@@ -223,8 +227,38 @@ async def test_the_expiration_keeps_the_offset_of_the_datetime() -> None:
     await gateway_for(recorder).create_checkout(make_request(expires_at=expires))
 
     body = body_of(recorder.sent)
-    assert body["expiration_date_to"] == "2026-10-22T12:30:00-06:00"
+    assert body["expiration_date_to"] == "2026-10-22T12:30:00.000-06:00"
     assert body["expires"] is True
+
+
+async def test_the_expiration_has_milliseconds_not_microseconds() -> None:
+    recorder = answering()
+    expires = datetime(2026, 10, 23, 15, 32, 44, 222_456, tzinfo=timezone(timedelta(hours=-5)))
+
+    await gateway_for(recorder).create_checkout(make_request(expires_at=expires))
+
+    assert body_of(recorder.sent)["expiration_date_to"] == "2026-10-23T15:32:44.222-05:00"
+
+
+async def test_each_call_opens_its_own_client_without_reading_the_proxy_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[dict[str, Any]] = []
+    real = httpx.AsyncClient
+
+    def spy(**kwargs: Any) -> httpx.AsyncClient:
+        opened.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", spy)
+    gateway = gateway_for(answering())
+
+    await gateway.create_checkout(make_request())
+    await gateway.create_checkout(make_request())
+
+    assert len(opened) == 2
+    assert all(kwargs["trust_env"] is False for kwargs in opened)
+    assert all(kwargs["timeout"] == TIMEOUT_SECONDS for kwargs in opened)
 
 
 async def test_the_external_reference_is_the_order_id() -> None:

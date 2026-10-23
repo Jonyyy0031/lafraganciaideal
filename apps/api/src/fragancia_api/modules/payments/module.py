@@ -1,7 +1,5 @@
 """Wiring of the payments module for the composition root."""
 
-import httpx
-
 from fragancia_api.modules.orders import OrderPayments
 from fragancia_api.modules.payments.application.commands.start_checkout import StartCheckout
 from fragancia_api.modules.payments.http.router import routers
@@ -21,7 +19,6 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         api_url=settings.mercadopago_api_url,
         access_token=token.get_secret_value() if token is not None else None,
         sandbox=settings.mercadopago_sandbox,
-        client=httpx.AsyncClient(),
     )
     # Orders registers before payments (MODULES order), so its facade is available.
     services.add(

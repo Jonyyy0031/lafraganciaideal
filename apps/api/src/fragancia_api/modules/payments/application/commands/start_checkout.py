@@ -35,7 +35,8 @@ def checkout_items(order: PayableOrder) -> list[CheckoutItem]:
     if order.delivery_cents > 0:
         items.append(CheckoutItem(SHIPPING_ITEM_ID, SHIPPING_TITLE, 1, order.delivery_cents))
     total = sum(item.quantity * item.unit_price_cents for item in items)
-    assert total == order.total_cents, "the items must add up to the order total"  # noqa: S101
+    if total != order.total_cents:
+        raise ValueError("the items must add up to the order total")
     return items
 
 
@@ -76,7 +77,7 @@ class StartCheckout:
             return Ok(await self._checkouts.get_for_order(order.order_id))
 
         match await self._transactions.run(read):
-            case Ok(stored) if stored is not None and stored.reusable(now):
+            case Ok(stored) if stored is not None and stored.reusable(order.payment_due_at, now):
                 return Ok(stored.redirect_url)
             case Err(error):
                 return Err(error)

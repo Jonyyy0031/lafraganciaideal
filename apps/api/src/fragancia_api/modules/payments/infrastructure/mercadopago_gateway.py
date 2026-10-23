@@ -23,12 +23,12 @@ class MercadoPagoGateway:
         api_url: str,
         access_token: str | None,
         sandbox: bool,
-        client: httpx.AsyncClient,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._api_url = api_url.rstrip("/")
         self._access_token = access_token
         self._sandbox = sandbox
-        self._client = client
+        self._transport = transport
 
     async def create_checkout(
         self, request: CheckoutRequest
@@ -37,12 +37,16 @@ class MercadoPagoGateway:
             _log.error("payments.gateway_not_configured")
             return Err(PaymentGatewayUnavailable())
         try:
-            response = await self._client.post(
-                f"{self._api_url}/checkout/preferences",
-                json=self._body(request),
-                headers={"Authorization": f"Bearer {self._access_token}"},
-                timeout=TIMEOUT_SECONDS,
-            )
+            # One client per call, like the catalog downloader: nothing long-lived to close,
+            # and the proxy environment variables are ignored.
+            async with httpx.AsyncClient(
+                transport=self._transport, timeout=TIMEOUT_SECONDS, trust_env=False
+            ) as client:
+                response = await client.post(
+                    f"{self._api_url}/checkout/preferences",
+                    json=self._body(request),
+                    headers={"Authorization": f"Bearer {self._access_token}"},
+                )
         except httpx.HTTPError as error:
             _log.error("payments.gateway_error", status=None, error=type(error).__name__)
             return Err(PaymentGatewayUnavailable())
@@ -94,5 +98,5 @@ class MercadoPagoGateway:
                 "installments": 1,
             },
             "expires": True,
-            "expiration_date_to": request.expires_at.isoformat(),
+            "expiration_date_to": request.expires_at.isoformat(timespec="milliseconds"),
         }

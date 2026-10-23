@@ -112,6 +112,8 @@ class Settings(DatabaseSettings):
                 raise ValueError("MERCADOPAGO_ACCESS_TOKEN is required in production")
             if self.mercadopago_sandbox:
                 raise ValueError("MERCADOPAGO_SANDBOX must be false in production")
+            if not self.mercadopago_api_url.startswith("https://"):
+                raise ValueError("MERCADOPAGO_API_URL must start with https:// in production")
         return self
 
     @model_validator(mode="after")
