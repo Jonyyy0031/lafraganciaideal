@@ -594,3 +594,49 @@ timestamp or the `assert`; testing, review and verify repeat on the repaired cod
     round. The status moves to `verify`.
 
 ## Verification
+
+2026-10-23, main session, live against the development database.
+
+**Setup:**
+- **The fake Mercado Pago.** `scratchpad/qa_pay/fake_mercadopago.py`, on 127.0.0.1:8199. It
+  records every `POST /checkout/preferences` and answers `id`, `init_point` and
+  `sandbox_init_point`. It can be switched to answer 500.
+- **The API.** It ran on :8101 through `scratchpad/qa_pay/api_with_fake_mp.py`, which builds the
+  usual `Settings` and overrides only `mercadopago_api_url`, a fake `TEST-` token and
+  `mercadopago_sandbox=true` in code. The guard hook refuses inline environment assignments.
+- **The QA script.** `scratchpad/qa_pay/qa_checkout_redirect.py`.
+- **Delivery.** Home delivery for 18000, free from 500000, was set for the run and restored
+  afterwards.
+- **Orders left behind.** `LFI-1023` to `LFI-1027` stay in the database: one paid link, one
+  cancelled order, one past its deadline, and two for the failure test.
+
+- [x] **Link.** `POST /api/v1/payments/checkout` with `LFI-1023`'s token answered 200 with
+  `https://sandbox.mercadopago.com.mx/…?pref_id=qa-…` (the sandbox URL, as configured).
+  - The fake received one preference, with `Authorization: Bearer TEST-…`.
+  - Items:
+    - the 50 ml at 1899.5;
+    - the 200 ml at 3000.0;
+    - "Envío" (`id` shipping) at 180.0, all quantity 1 in MXN.
+
+    They sum to 5079.5, which is the order total of 507950 cents.
+  - `external_reference` equals the order id.
+  - `payment_methods` excludes ticket, atm and bank_transfer, with `installments: 1`.
+  - `expires: true`, and `expiration_date_to: 2026-10-23T20:35:10.002+00:00` (milliseconds,
+    equal to `payment_due_at`).
+  - Every back URL is `http://localhost:4200/pedido/pago`, with `auto_return: approved` and
+    the payer's name and email. There is no `notification_url`.
+  - One `payments.checkouts` row holds the preference id, the URL and `expires_at` =
+    `payment_due_at`.
+- [x] **Reuse.** A second call answered the same URL, and the fake still had 1 preference.
+- [x] **Refusals.**
+  - An unknown token gave 404 `PAYMENTS_ORDER_NOT_FOUND`, "No encontramos ese pedido".
+  - A cancelled order, and one past its deadline, gave 409 `PAYMENTS_ORDER_NOT_PAYABLE`.
+  - With the fake answering 500, the call gave 503 `PAYMENTS_GATEWAY_UNAVAILABLE` and stored no
+    row. After the fake recovered, the same order got a link (200).
+  - The API log has `payments.gateway_error`, and never the access token.
+- [ ] **Sandbox: NOT VERIFIED.** The developer's Mercado Pago test account does not exist yet
+  (decision 1). The real API's acceptance of the body, including the millisecond
+  `expiration_date_to` (review M2) and `localhost` back URLs, is unproven until then.
+
+Also NOT VERIFIED live: "no access token configured gives 503". The development `.env` may hold
+a token, and this run injected one. Unit tests cover it.
