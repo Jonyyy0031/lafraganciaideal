@@ -1,5 +1,5 @@
 ---
-status: testing
+status: verify
 module: payments
 min_implementer: mid
 depends_on: ["orders-checkout/006"]
@@ -582,5 +582,15 @@ timestamp or the `assert`; testing, review and verify repeat on the repaired cod
 - **Results:** `uv run just check` green (harness 685 passed); `uv run just test-integration`
   1074 passed, 5 skipped; `plans-scope` run below.
 - `openapi.json` unchanged (no contract change); no file outside the step 6 list was touched.
+- **Re-review (2026-10-23, main session).**
+  - **M1:** one `httpx.AsyncClient` per call inside `async with`, with `trust_env=False`;
+    `module.py` holds no client.
+  - **M2:** `isoformat(timespec="milliseconds")`.
+  - **L1:** `reusable(payment_due_at, now)` compares two `timestamptz` values read from the
+    database, at the same microsecond precision, so equality is exact.
+  - **L5:** the production check is in `config.py`.
+  - **L2–L4:** fixed as described above.
+  - No new defect found. The change is small and pinned by tests, so there is no separate tester
+    round. The status moves to `verify`.
 
 ## Verification
