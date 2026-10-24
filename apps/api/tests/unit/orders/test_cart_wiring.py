@@ -42,7 +42,14 @@ async def test_the_container_resolves_every_cart_service(service: type) -> None:
 async def test_the_registered_cookie_is_secure_only_in_production(
     environment: str, secure: bool
 ) -> None:
-    container = build_container(make_settings(app_env=environment, order_link_secret="x" * 32))
+    container = build_container(
+        make_settings(
+            app_env=environment,
+            order_link_secret="x" * 32,
+            mercadopago_access_token="APP_USR-test",
+            mercadopago_sandbox=environment != "production",
+        )
+    )
 
     cookie = container.services.get(CartCookie)
 
@@ -72,7 +79,12 @@ async def wired_links(**settings: object) -> HmacOrderLinks:
 async def test_the_configured_order_link_secret_is_what_the_links_are_derived_from(
     environment: str,
 ) -> None:
-    links = await wired_links(app_env=environment, order_link_secret=CONFIGURED_SECRET)
+    links = await wired_links(
+        app_env=environment,
+        order_link_secret=CONFIGURED_SECRET,
+        mercadopago_access_token="APP_USR-test",
+        mercadopago_sandbox=environment != "production",
+    )
 
     assert links.token(ORDER_ID) == HmacOrderLinks(CONFIGURED_SECRET).token(ORDER_ID)
     assert links.token(ORDER_ID) != DEV_LINKS.token(ORDER_ID)

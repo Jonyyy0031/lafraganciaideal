@@ -37,6 +37,7 @@ from fragancia_api.modules.orders.application.queries.delivery import (
     GetPublicDeliveryOptions,
     QuoteDelivery,
 )
+from fragancia_api.modules.orders.application.queries.order_payments import OrderPayments
 from fragancia_api.modules.orders.application.queries.orders import GetOrder, ListOrders
 from fragancia_api.modules.orders.domain.cart import CART_LIFETIME
 from fragancia_api.modules.orders.http.cart_cookie import CartCookie
@@ -174,6 +175,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     services.add(GetOrder, GetOrder(order_queries))
     customer_queries = SqlCustomerOrders(platform.database)
     services.add(GetCustomerOrder, GetCustomerOrder(queries=customer_queries, links=links))
+    services.add(OrderPayments, OrderPayments(queries=customer_queries, links=links))
     services.add(
         LookUpOrder,
         LookUpOrder(

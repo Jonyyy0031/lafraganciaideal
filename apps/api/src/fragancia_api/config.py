@@ -62,6 +62,11 @@ class Settings(DatabaseSettings):
     # Secret behind the private order links (orders, decision 31). Never rotate it: rotating
     # breaks every link already sent.
     order_link_secret: SecretStr | None = None
+    # Mercado Pago (payments). Development uses the TEST- credentials of a test application;
+    # the API URL is overridable so tests and local QA can point at a fake.
+    mercadopago_access_token: SecretStr | None = None
+    mercadopago_api_url: str = "https://api.mercadopago.com"
+    mercadopago_sandbox: bool = True
     # Account emails (identity) and SMTP.
     invitation_ttl_hours: int = Field(default=72, ge=1)
     password_reset_ttl_minutes: int = Field(default=60, ge=1)
@@ -97,6 +102,18 @@ class Settings(DatabaseSettings):
             secret = self.order_link_secret
             if secret is None or len(secret.get_secret_value()) < 32:
                 raise ValueError("ORDER_LINK_SECRET must have at least 32 characters in production")
+        return self
+
+    @model_validator(mode="after")
+    def _check_mercadopago(self) -> Self:
+        if self.is_production:
+            token = self.mercadopago_access_token
+            if token is None or not token.get_secret_value():
+                raise ValueError("MERCADOPAGO_ACCESS_TOKEN is required in production")
+            if self.mercadopago_sandbox:
+                raise ValueError("MERCADOPAGO_SANDBOX must be false in production")
+            if not self.mercadopago_api_url.startswith("https://"):
+                raise ValueError("MERCADOPAGO_API_URL must start with https:// in production")
         return self
 
     @model_validator(mode="after")

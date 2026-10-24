@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from tests.support import make_settings
 
 PROD_SECRET = "p" * 32
+PROD_MP = {"mercadopago_access_token": "APP_USR-test", "mercadopago_sandbox": False}
 
 
 def test_valid_settings() -> None:
@@ -14,17 +15,19 @@ def test_valid_settings() -> None:
 
 
 def test_production_settings_are_valid() -> None:
-    assert make_settings(app_env="production", order_link_secret=PROD_SECRET).is_production
+    assert make_settings(
+        app_env="production", order_link_secret=PROD_SECRET, **PROD_MP
+    ).is_production
 
 
 @pytest.mark.parametrize("secret", [None, "", "s" * 31])
 def test_production_requires_an_order_link_secret_of_32_characters(secret: str | None) -> None:
     with pytest.raises(ValidationError, match="ORDER_LINK_SECRET must have at least 32"):
-        make_settings(app_env="production", order_link_secret=secret)
+        make_settings(app_env="production", order_link_secret=secret, **PROD_MP)
 
 
 def test_a_32_character_order_link_secret_is_accepted_in_production() -> None:
-    assert make_settings(app_env="production", order_link_secret="s" * 32).is_production
+    assert make_settings(app_env="production", order_link_secret="s" * 32, **PROD_MP).is_production
 
 
 def test_the_order_link_secret_is_optional_outside_production() -> None:
@@ -166,3 +169,52 @@ def test_the_s3_secret_key_is_a_secret_that_does_not_show_in_the_repr() -> None:
     assert settings.s3_secret_key is not None
     assert settings.s3_secret_key.get_secret_value() == "s3cret-key-value"
     assert "s3cret-key-value" not in repr(settings)
+
+
+@pytest.mark.parametrize("token", [None, ""])
+def test_production_requires_a_mercadopago_access_token(token: str | None) -> None:
+    with pytest.raises(ValidationError, match="MERCADOPAGO_ACCESS_TOKEN is required"):
+        make_settings(
+            app_env="production",
+            order_link_secret=PROD_SECRET,
+            mercadopago_access_token=token,
+            mercadopago_sandbox=False,
+        )
+
+
+def test_production_requires_the_mercadopago_sandbox_off() -> None:
+    with pytest.raises(ValidationError, match="MERCADOPAGO_SANDBOX must be false"):
+        make_settings(
+            app_env="production",
+            order_link_secret=PROD_SECRET,
+            mercadopago_access_token="APP_USR-test",
+        )
+
+
+@pytest.mark.parametrize(
+    "url", ["http://api.mercadopago.com", "http://127.0.0.1:9999", "api.mercadopago.com", ""]
+)
+def test_production_requires_an_https_mercadopago_api_url(url: str) -> None:
+    with pytest.raises(ValidationError, match="MERCADOPAGO_API_URL must start with https://"):
+        make_settings(
+            app_env="production",
+            order_link_secret=PROD_SECRET,
+            mercadopago_api_url=url,
+            **PROD_MP,
+        )
+
+
+def test_production_accepts_the_https_mercadopago_api_url() -> None:
+    settings = make_settings(app_env="production", order_link_secret=PROD_SECRET, **PROD_MP)
+    assert settings.mercadopago_api_url == "https://api.mercadopago.com"
+
+
+def test_a_local_fake_mercadopago_api_url_is_allowed_outside_production() -> None:
+    settings = make_settings(mercadopago_api_url="http://127.0.0.1:9999")
+    assert settings.mercadopago_api_url == "http://127.0.0.1:9999"
+
+
+def test_mercadopago_is_optional_outside_production() -> None:
+    settings = make_settings()
+    assert settings.mercadopago_access_token is None
+    assert settings.mercadopago_sandbox is True

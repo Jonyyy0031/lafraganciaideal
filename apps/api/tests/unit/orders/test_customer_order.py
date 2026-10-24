@@ -23,6 +23,7 @@ from fragancia_api.modules.orders.application.commands.lifecycle import (
     MarkOrderPaid,
     MarkOrderRefunded,
 )
+from fragancia_api.modules.orders.application.ports import PayableOrder
 from fragancia_api.modules.orders.application.queries.customer_order import GetCustomerOrder
 from fragancia_api.modules.orders.contracts import CustomerOrderView
 from fragancia_api.modules.orders.domain.errors import (
@@ -524,6 +525,9 @@ class LoggingQueries:
 
     async def by_access_digest(self, digest: str) -> CustomerOrderView | None:
         return await self._inner.by_access_digest(digest)
+
+    async def payable_by_access_digest(self, digest: str) -> PayableOrder | None:
+        return await self._inner.payable_by_access_digest(digest)
 
 
 class LoggingRunner:

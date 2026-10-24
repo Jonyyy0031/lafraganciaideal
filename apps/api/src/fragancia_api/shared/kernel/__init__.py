@@ -8,6 +8,7 @@ from fragancia_api.shared.kernel.errors import (
     InvalidValueError,
     NotFoundError,
     RateLimitedError,
+    ServiceUnavailableError,
     UnauthenticatedError,
 )
 from fragancia_api.shared.kernel.events import DomainEvent
@@ -28,6 +29,7 @@ __all__ = [
     "Ok",
     "RateLimitedError",
     "Result",
+    "ServiceUnavailableError",
     "UnauthenticatedError",
     "new_id",
 ]
