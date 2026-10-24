@@ -108,6 +108,10 @@ class InMemoryOrders:
         found = self._find(number)
         return deepcopy(found) if found is not None else None
 
+    async def get_by_id_for_update(self, order_id: UUID) -> Order | None:
+        found = next((o for o in self.orders if o.id == order_id), None)
+        return deepcopy(found) if found is not None else None
+
     async def claim_overdue(self, now: datetime, limit: int) -> list[Order]:
         due = sorted(
             (
