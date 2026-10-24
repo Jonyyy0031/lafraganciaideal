@@ -1,5 +1,6 @@
 ---
-status: open # open → deferred | planned | resolved | discarded (the user decides)
+status: planned # open → deferred | planned | resolved | discarded (the user decides)
+plan: payments-mercadopago/002
 module: payments
 found: 2026-10-24
 ---

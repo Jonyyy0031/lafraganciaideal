@@ -32,7 +32,10 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
   Mercado Pago.
 - **The overdue job (orders-checkout 004).** It stops its run at an order whose release is
   refused. Plan 002 must keep a payment-committed reservation from leaving an order
-  `pending_payment` (orders-checkout README, "Dependency notes").
+  `pending_payment` (orders-checkout README, "Dependency notes"). **Resolved by plan 002:**
+  orders' `OrderPaymentConfirmations` commits the reservation and moves the order to paid in
+  one transaction, and a refused commit cancels the order and releases the reservation in that
+  same transaction.
 - **One order can collect more than one payment.** A Checkout Pro preference can be paid more
   than once, and two concurrent requests can create two preferences for one order.
   - Plan 002 matches payments by `external_reference` (the order id).

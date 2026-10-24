@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: payments
 min_implementer: high
 depends_on: ["001"]
@@ -244,7 +244,7 @@ and its adapter `modules/payments/infrastructure/order_payments.py`; the move sh
      idempotent redelivery, and the raise paths.
 
 5. **Infrastructure: gateway fetch, payments table, migration, adapters and settings**
-   - Files: `apps/api/src/fragancia_api/modules/payments/infrastructure/mercadopago_gateway.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/tables.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/sql_payment_repository.py` (create), `apps/api/src/fragancia_api/modules/payments/infrastructure/order_payments.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/identity_owners.py` (create), `apps/api/src/fragancia_api/modules/payments/infrastructure/in_memory.py` (modify), `apps/api/migrations/versions/0024_payments_payments.py` (create), `apps/api/src/fragancia_api/config.py` (modify), `apps/api/.env.example` (modify)
+   - Files: `apps/api/src/fragancia_api/modules/payments/infrastructure/mercadopago_gateway.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/tables.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/sql_payment_repository.py` (create), `apps/api/src/fragancia_api/modules/payments/infrastructure/order_payments.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/identity_owners.py` (create), `apps/api/src/fragancia_api/modules/payments/infrastructure/in_memory.py` (modify), `apps/api/migrations/versions/0024_payments_payments.py` (create), `apps/api/src/fragancia_api/config.py` (modify), `apps/api/.env.example` (modify), `apps/api/tests/unit/test_settings.py` (modify), `apps/api/tests/unit/test_http_platform.py` (modify), `apps/api/tests/unit/orders/test_cart_wiring.py` (modify) (the three tests added at implementation, Deviation 1)
    - Do:
      - `get_payment`: `GET {api_url}/v1/payments/{id}` with the same client settings and bearer
        header; 404 → `Ok(None)`; other non-2xx, transport errors or a body without `id`,
@@ -326,6 +326,38 @@ and its adapter `modules/payments/infrastructure/order_payments.py`; the move sh
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+Implemented 2026-10-24, steps 6/6. Citations spot-checked (gateway `_body`, `OrderMove._apply`,
+`get_by_number_for_update` SQL and in-memory, `SendPaidOrderToOwners`, outbox relay, nested
+`transactions.run`, `config.py` checks): all matched.
+
+1. **Out-of-scope test fixtures (scope).** The new production check
+   (`MERCADOPAGO_WEBHOOK_SECRET is required in production`) broke 11 existing unit tests that
+   build production settings without it. Each got only the extra
+   `mercadopago_webhook_secret="webhook-secret"` argument (no assertion changed):
+   `apps/api/tests/unit/test_settings.py` (`PROD_MP` and the sandbox test),
+   `apps/api/tests/unit/test_http_platform.py`, `apps/api/tests/unit/orders/test_cart_wiring.py`.
+   `plans-scope` lists these three files as out of scope; the main session decides whether to
+   accept them here or move them to the testing phase.
+2. **Flagged email money (cosmetic).** The plan writes the money as `$1,234.50 MXN`; the
+   handler prints the payment's own `currency` (`$1,234.50 {currency}`), so a currency mismatch
+   shows the currency Mercado Pago charged in. For MXN the text is exactly the plan's.
+3. **Log key (cosmetic).** `payments.webhook_signature_invalid` and `payments.webhook_ignored`
+   log Mercado Pago's id as `x_request_id`, not `request_id`, which would shadow the platform's
+   own request-id log field.
+4. **Signature comparison (cosmetic).** `hmac.compare_digest` compares the hex digests as
+   bytes, so a non-ASCII `v1` is a mismatch (401) instead of a `TypeError` (500).
+5. **Small additions not named in the plan (cosmetic):** `confirm_payment.CURRENCY = "MXN"`;
+   `PaymentConfirmation.number`/`status` default to None; `OrderPaymentsAdapter` now takes both
+   facades in its constructor; `WebhookAck.received` defaults to true; the in-memory
+   `FakeGateway` takes `payments` and records `fetched`; `InMemoryPayments` is the in-memory
+   `PaymentRepository`.
+
+Not done here: the layered tests (testing phase). Only a throwaway smoke in the session
+scratchpad exercised the facade outcomes, the handler (applied once, redelivery no-op, raise on
+gateway failure), the receive command, the webhook route (401/503/200 ignored) and the gateway
+fetch over `httpx.MockTransport`. The migration was applied to the development and test
+databases; its downgrade was not run (development database must not be downgraded).
 
 ## Test coverage
 
