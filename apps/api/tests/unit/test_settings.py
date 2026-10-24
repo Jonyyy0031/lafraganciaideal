@@ -186,6 +186,30 @@ def test_production_requires_a_mercadopago_access_token(token: str | None) -> No
         )
 
 
+@pytest.mark.parametrize("secret", [None, ""])
+def test_production_requires_a_mercadopago_webhook_secret(secret: str | None) -> None:
+    with pytest.raises(ValidationError, match="MERCADOPAGO_WEBHOOK_SECRET is required"):
+        make_settings(
+            app_env="production",
+            order_link_secret=PROD_SECRET,
+            mercadopago_access_token="APP_USR-test",
+            mercadopago_sandbox=False,
+            mercadopago_webhook_secret=secret,
+        )
+
+
+def test_the_mercadopago_webhook_secret_is_optional_outside_production() -> None:
+    assert make_settings().mercadopago_webhook_secret is None
+
+
+def test_the_mercadopago_webhook_secret_is_never_printed() -> None:
+    settings = make_settings(mercadopago_webhook_secret="whsec-visible-check")
+
+    assert "whsec-visible-check" not in repr(settings)
+    assert settings.mercadopago_webhook_secret is not None
+    assert settings.mercadopago_webhook_secret.get_secret_value() == "whsec-visible-check"
+
+
 def test_production_requires_the_mercadopago_sandbox_off() -> None:
     with pytest.raises(ValidationError, match="MERCADOPAGO_SANDBOX must be false"):
         make_settings(

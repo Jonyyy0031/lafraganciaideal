@@ -13,11 +13,11 @@ from tests.integration.orders.test_migration_0017_delivery_settings import (  # 
 
 @pytest.fixture(autouse=True)
 async def clean_payments(container: Container) -> AsyncIterator[None]:
-    """No checkouts before and after each test."""
+    """No checkouts and no payments before and after each test."""
 
     async def reset() -> None:
         async with container.database.engine.begin() as connection:
-            await connection.execute(text("TRUNCATE payments.checkouts"))
+            await connection.execute(text("TRUNCATE payments.checkouts, payments.payments"))
 
     await reset()
     yield
