@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: payments
 min_implementer: mid
 depends_on: ["orders-checkout/006"]
