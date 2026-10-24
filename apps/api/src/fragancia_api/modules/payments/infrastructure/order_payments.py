@@ -1,12 +1,21 @@
-"""Anti-corruption layer: payments' `PayableOrders` over orders' `OrderPayments` facade."""
+"""Anti-corruption layer: payments' `PayableOrders` and `OrderConfirmations` over orders'
+`OrderPayments` and `OrderPaymentConfirmations` facades."""
 
-from fragancia_api.modules.orders import OrderPayments
-from fragancia_api.modules.payments.application.ports import PayableLine, PayableOrder
+from uuid import UUID
+
+from fragancia_api.modules.orders import OrderPaymentConfirmations, OrderPayments
+from fragancia_api.modules.payments.application.ports import (
+    Confirmation,
+    PayableLine,
+    PayableOrder,
+)
+from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 
 
 class OrderPaymentsAdapter:
-    def __init__(self, orders: OrderPayments) -> None:
+    def __init__(self, orders: OrderPayments, confirmations: OrderPaymentConfirmations) -> None:
         self._orders = orders
+        self._confirmations = confirmations
 
     async def payable(self, access_token: str) -> PayableOrder | None:
         order = await self._orders.payable(access_token)
@@ -31,3 +40,14 @@ class OrderPaymentsAdapter:
             delivery_cents=order.delivery_cents,
             total_cents=order.total_cents,
         )
+
+    async def confirm(
+        self, order_id: UUID, payment_id: str, amount_cents: int, currency: str
+    ) -> Result[Confirmation, DomainError]:
+        match await self._confirmations.confirm(order_id, payment_id, amount_cents, currency):
+            case Err(error):
+                return Err(error)
+            case Ok(confirmation):
+                return Ok(
+                    Confirmation(outcome=confirmation.outcome.value, number=confirmation.number)
+                )

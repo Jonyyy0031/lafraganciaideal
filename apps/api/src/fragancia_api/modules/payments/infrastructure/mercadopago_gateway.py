@@ -1,12 +1,19 @@
-"""Mercado Pago Checkout Pro adapter: creates a *preference* and answers its redirect URL."""
+"""Mercado Pago adapter: creates a Checkout Pro *preference* and answers its redirect URL, and
+fetches a payment's current state."""
 
+from datetime import datetime
 from typing import Any
 
 import httpx
 import structlog
 
-from fragancia_api.modules.payments.application.ports import CheckoutLink, CheckoutRequest
+from fragancia_api.modules.payments.application.ports import (
+    CheckoutLink,
+    CheckoutRequest,
+    GatewayPayment,
+)
 from fragancia_api.modules.payments.domain.errors import PaymentGatewayUnavailable
+from fragancia_api.modules.payments.domain.payment import amount_to_cents
 from fragancia_api.shared.kernel import Err, Ok, Result
 
 _log = structlog.get_logger(__name__)
@@ -59,6 +66,73 @@ class MercadoPagoGateway:
             return Err(PaymentGatewayUnavailable())
         return Ok(link)
 
+    async def get_payment(
+        self, payment_id: str
+    ) -> Result[GatewayPayment | None, PaymentGatewayUnavailable]:
+        if not self._access_token:
+            _log.error("payments.gateway_not_configured")
+            return Err(PaymentGatewayUnavailable())
+        try:
+            async with httpx.AsyncClient(
+                transport=self._transport, timeout=TIMEOUT_SECONDS, trust_env=False
+            ) as client:
+                response = await client.get(
+                    f"{self._api_url}/v1/payments/{payment_id}",
+                    headers={"Authorization": f"Bearer {self._access_token}"},
+                )
+        except httpx.HTTPError as error:
+            _log.error("payments.gateway_error", status=None, error=type(error).__name__)
+            return Err(PaymentGatewayUnavailable())
+        if response.status_code == httpx.codes.NOT_FOUND:
+            return Ok(None)
+        if not response.is_success:
+            _log.error("payments.gateway_error", status=response.status_code)
+            return Err(PaymentGatewayUnavailable())
+        payment = self._payment(response)
+        if payment is None:
+            _log.error("payments.gateway_error", status=response.status_code, error="bad_body")
+            return Err(PaymentGatewayUnavailable())
+        return Ok(payment)
+
+    @staticmethod
+    def _payment(response: httpx.Response) -> GatewayPayment | None:
+        try:
+            data = response.json()
+            payment_id = data["id"]
+            status = data["status"]
+            amount = data["transaction_amount"]
+            currency = data["currency_id"]
+            status_detail = data.get("status_detail")
+            reference = data.get("external_reference")
+            payment_type = data.get("payment_type_id")
+            date_approved = data.get("date_approved")
+        except ValueError, KeyError, TypeError, AttributeError:
+            return None
+        if isinstance(payment_id, bool) or not isinstance(payment_id, int | str):
+            return None
+        if isinstance(amount, bool) or not isinstance(amount, int | float):
+            return None
+        if not isinstance(status, str) or not status or not isinstance(currency, str):
+            return None
+        optional = (status_detail, reference, payment_type, date_approved)
+        if not all(value is None or isinstance(value, str) for value in optional):
+            return None
+        try:
+            approved_at = datetime.fromisoformat(date_approved) if date_approved else None
+            amount_cents = amount_to_cents(amount)
+        except ValueError, ArithmeticError:
+            return None
+        return GatewayPayment(
+            payment_id=str(payment_id),
+            status=status,
+            status_detail=status_detail,
+            external_reference=reference,
+            amount_cents=amount_cents,
+            currency=currency,
+            payment_type=payment_type,
+            approved_at=approved_at,
+        )
+
     def _link(self, response: httpx.Response) -> CheckoutLink | None:
         try:
             data = response.json()
@@ -74,7 +148,7 @@ class MercadoPagoGateway:
 
     @staticmethod
     def _body(request: CheckoutRequest) -> dict[str, Any]:
-        return {
+        body: dict[str, Any] = {
             "items": [
                 {
                     "id": item.id,
@@ -92,7 +166,6 @@ class MercadoPagoGateway:
                 "pending": request.back_url,
                 "failure": request.back_url,
             },
-            "auto_return": "approved",
             "payment_methods": {
                 "excluded_payment_types": [{"id": kind} for kind in _EXCLUDED_PAYMENT_TYPES],
                 "installments": 1,
@@ -100,3 +173,9 @@ class MercadoPagoGateway:
             "expires": True,
             "expiration_date_to": request.expires_at.isoformat(timespec="milliseconds"),
         }
+        # Mercado Pago answers `400 invalid_auto_return` when `auto_return` comes with a success
+        # URL that is not https (decision 8). In development the guest returns with the
+        # "Volver al sitio" button instead.
+        if request.back_url.startswith("https://"):
+            body["auto_return"] = "approved"
+        return body

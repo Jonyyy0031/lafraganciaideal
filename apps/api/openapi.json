@@ -6402,6 +6402,124 @@
           }
         }
       }
+    },
+    "/api/v1/payments/webhooks/mercadopago": {
+      "post": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Receive Mercadopago Webhook",
+        "description": "Mercado Pago's webhook (ADR 0004: payments are confirmed only by verified webhooks).\nCalled by Mercado Pago, not by the storefront. The `x-signature` header is checked against\nthe webhook secret over `data.id` (query), `x-request-id` and its timestamp; the body is not\nread. A `type=payment` notification is queued and the worker fetches the payment from\nMercado Pago and applies it; other types are acknowledged and ignored. 200 `received`;\n401 `PAYMENTS_WEBHOOK_SIGNATURE_INVALID`; 503 `PAYMENTS_GATEWAY_UNAVAILABLE` (no webhook\nsecret configured).",
+        "operationId": "receive_mercadopago_webhook",
+        "parameters": [
+          {
+            "name": "data.id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Data.Id"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "name": "x-signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Signature"
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookAck"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -10908,6 +11026,18 @@
         ],
         "title": "UpdateConcentrationRequest",
         "description": "Payload to change both texts of a concentration (both required)."
+      },
+      "WebhookAck": {
+        "properties": {
+          "received": {
+            "type": "boolean",
+            "title": "Received",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "WebhookAck",
+        "description": "The webhook was accepted (or ignored on purpose): Mercado Pago must not retry it."
       }
     },
     "securitySchemes": {

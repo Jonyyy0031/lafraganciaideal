@@ -47,6 +47,7 @@ async def test_the_registered_cookie_is_secure_only_in_production(
             app_env=environment,
             order_link_secret="x" * 32,
             mercadopago_access_token="APP_USR-test",
+            mercadopago_webhook_secret="webhook-secret",
             mercadopago_sandbox=environment != "production",
         )
     )
@@ -83,6 +84,7 @@ async def test_the_configured_order_link_secret_is_what_the_links_are_derived_fr
         app_env=environment,
         order_link_secret=CONFIGURED_SECRET,
         mercadopago_access_token="APP_USR-test",
+        mercadopago_webhook_secret="webhook-secret",
         mercadopago_sandbox=environment != "production",
     )
 

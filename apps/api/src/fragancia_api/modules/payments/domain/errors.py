@@ -1,6 +1,11 @@
 from dataclasses import dataclass
 
-from fragancia_api.shared.kernel import ConflictError, NotFoundError, ServiceUnavailableError
+from fragancia_api.shared.kernel import (
+    ConflictError,
+    NotFoundError,
+    ServiceUnavailableError,
+    UnauthenticatedError,
+)
 
 
 @dataclass(frozen=True)
@@ -21,3 +26,9 @@ class PaymentOrderNotPayable(ConflictError):
 class PaymentGatewayUnavailable(ServiceUnavailableError):
     code: str = "PAYMENTS_GATEWAY_UNAVAILABLE"
     message: str = "No pudimos conectar con Mercado Pago; intenta de nuevo"
+
+
+@dataclass(frozen=True)
+class PaymentWebhookSignatureInvalid(UnauthenticatedError):
+    code: str = "PAYMENTS_WEBHOOK_SIGNATURE_INVALID"
+    message: str = "Firma inválida"

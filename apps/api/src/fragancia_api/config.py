@@ -67,6 +67,8 @@ class Settings(DatabaseSettings):
     mercadopago_access_token: SecretStr | None = None
     mercadopago_api_url: str = "https://api.mercadopago.com"
     mercadopago_sandbox: bool = True
+    # The secret that signs the webhooks (the panel's "Webhooks" page).
+    mercadopago_webhook_secret: SecretStr | None = None
     # Account emails (identity) and SMTP.
     invitation_ttl_hours: int = Field(default=72, ge=1)
     password_reset_ttl_minutes: int = Field(default=60, ge=1)
@@ -110,6 +112,9 @@ class Settings(DatabaseSettings):
             token = self.mercadopago_access_token
             if token is None or not token.get_secret_value():
                 raise ValueError("MERCADOPAGO_ACCESS_TOKEN is required in production")
+            secret = self.mercadopago_webhook_secret
+            if secret is None or not secret.get_secret_value():
+                raise ValueError("MERCADOPAGO_WEBHOOK_SECRET is required in production")
             if self.mercadopago_sandbox:
                 raise ValueError("MERCADOPAGO_SANDBOX must be false in production")
             if not self.mercadopago_api_url.startswith("https://"):

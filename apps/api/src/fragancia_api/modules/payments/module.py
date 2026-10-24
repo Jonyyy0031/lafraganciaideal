@@ -1,12 +1,30 @@
 """Wiring of the payments module for the composition root."""
 
-from fragancia_api.modules.orders import OrderPayments
+from fragancia_api.modules.identity import OwnerDirectory
+from fragancia_api.modules.orders import OrderPaymentConfirmations, OrderPayments
+from fragancia_api.modules.payments.application.commands.receive_notification import (
+    ReceivePaymentNotification,
+)
 from fragancia_api.modules.payments.application.commands.start_checkout import StartCheckout
+from fragancia_api.modules.payments.application.handlers.flagged_payment_email import (
+    SendFlaggedPaymentToOwners,
+)
+from fragancia_api.modules.payments.application.handlers.process_payment import (
+    ProcessPaymentNotification,
+)
+from fragancia_api.modules.payments.domain.events import (
+    PaymentFlagged,
+    PaymentNotificationReceived,
+)
 from fragancia_api.modules.payments.http.router import routers
+from fragancia_api.modules.payments.infrastructure.identity_owners import IdentityOwners
 from fragancia_api.modules.payments.infrastructure.mercadopago_gateway import MercadoPagoGateway
 from fragancia_api.modules.payments.infrastructure.order_payments import OrderPaymentsAdapter
 from fragancia_api.modules.payments.infrastructure.sql_checkout_repository import (
     SqlCheckoutRepository,
+)
+from fragancia_api.modules.payments.infrastructure.sql_payment_repository import (
+    SqlPaymentRepository,
 )
 from fragancia_api.shared.http.services import ServiceRegistry
 from fragancia_api.shared.module import AppModule, Platform
@@ -20,16 +38,46 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         access_token=token.get_secret_value() if token is not None else None,
         sandbox=settings.mercadopago_sandbox,
     )
-    # Orders registers before payments (MODULES order), so its facade is available.
+    # Orders registers before payments (MODULES order), so its facades are available.
+    orders = OrderPaymentsAdapter(
+        services.get(OrderPayments), services.get(OrderPaymentConfirmations)
+    )
     services.add(
         StartCheckout,
         StartCheckout(
-            orders=OrderPaymentsAdapter(services.get(OrderPayments)),
+            orders=orders,
             checkouts=SqlCheckoutRepository(platform.database),
             gateway=gateway,
             transactions=platform.transactions,
             clock=platform.clock,
             back_url=f"{settings.storefront_url}/pedido/pago",
+        ),
+    )
+    secret = settings.mercadopago_webhook_secret
+    services.add(
+        ReceivePaymentNotification,
+        ReceivePaymentNotification(
+            secret=secret.get_secret_value() if secret is not None else None,
+            events=platform.events,
+            transactions=platform.transactions,
+        ),
+    )
+    platform.subscriptions.subscribe(
+        PaymentNotificationReceived.name,
+        ProcessPaymentNotification(
+            gateway=gateway,
+            payments=SqlPaymentRepository(platform.database),
+            orders=orders,
+            transactions=platform.transactions,
+            events=platform.events,
+            clock=platform.clock,
+        ),
+    )
+    # Identity registers before payments (MODULES order), so its facade is available.
+    platform.subscriptions.subscribe(
+        PaymentFlagged.name,
+        SendFlaggedPaymentToOwners(
+            owners=IdentityOwners(services.get(OwnerDirectory)), email=platform.email
         ),
     )
 

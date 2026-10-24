@@ -4,7 +4,11 @@ from pydantic import ValidationError
 from tests.support import make_settings
 
 PROD_SECRET = "p" * 32
-PROD_MP = {"mercadopago_access_token": "APP_USR-test", "mercadopago_sandbox": False}
+PROD_MP = {
+    "mercadopago_access_token": "APP_USR-test",
+    "mercadopago_sandbox": False,
+    "mercadopago_webhook_secret": "webhook-secret",
+}
 
 
 def test_valid_settings() -> None:
@@ -188,6 +192,7 @@ def test_production_requires_the_mercadopago_sandbox_off() -> None:
             app_env="production",
             order_link_secret=PROD_SECRET,
             mercadopago_access_token="APP_USR-test",
+            mercadopago_webhook_secret="webhook-secret",
         )
 
 

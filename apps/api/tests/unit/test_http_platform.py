@@ -216,6 +216,7 @@ async def test_production_app_hides_the_docs() -> None:
             app_env="production",
             order_link_secret="p" * 32,
             mercadopago_access_token="APP_USR-test",
+            mercadopago_webhook_secret="webhook-secret",
             mercadopago_sandbox=False,
         )
     )
