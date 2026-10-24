@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: payments
 min_implementer: high
 depends_on: ["001"]
@@ -273,6 +273,7 @@ and its adapter `modules/payments/infrastructure/order_payments.py`; the move sh
 
 6. **HTTP, wiring and docs**
    - Files: `apps/api/src/fragancia_api/modules/payments/http/router.py` (modify), `apps/api/src/fragancia_api/modules/payments/contracts.py` (modify), `apps/api/src/fragancia_api/modules/payments/module.py` (modify), `apps/api/src/fragancia_api/modules/payments/__init__.py` (modify), `apps/api/.importlinter` (modify), `apps/api/openapi.json` (modify), `apps/api/README.md` (modify), `plans/payments-mercadopago/README.md` (modify)
+   - Files: `apps/api/tests/unit/payments/` (modify), `apps/api/tests/integration/payments/` (modify), `apps/api/tests/unit/orders/test_confirm_payment.py` (create), `apps/api/tests/integration/orders/test_payment_confirmation_flow.py` (create) (the layered tests, written in the testing phase)
    - Do:
      - `POST /api/v1/payments/webhooks/mercadopago` on the public router: query
        `data.id` (alias) and `type`, headers `x-signature` and `x-request-id`; the body is not
@@ -360,6 +361,48 @@ fetch over `httpx.MockTransport`. The migration was applied to the development a
 databases; its downgrade was not run (development database must not be downgraded).
 
 ## Test coverage
+
+Tested 2026-10-24 by the tester. Baseline before writing: `uv run just check` green (3760 passed,
+3 skipped) and `uv run just test-integration` green (1074 passed, 5 skipped). Every behavior
+below was confirmed against the code at the cited line or by running the test; the Mercado Pago
+API itself is faked (`httpx.MockTransport`, `FakeGateway`), so nothing here proves the real
+sandbox answers as the fixtures say (that is the verifier's job).
+
+| Behavior (plan / code) | Source | Layer | Test | State |
+| --- | --- | --- | --- | --- |
+| `auto_return` only with an https back URL; the three back URLs always; rest of the body unchanged | `mercadopago_gateway.py:176-180` | application (adapter over `MockTransport`) | `unit/payments/test_mercadopago_get_payment.py::test_without_an_https_back_url_there_is_no_auto_return`, `::test_with_an_https_back_url_auto_return_is_approved`, `::test_the_rest_of_the_body_is_the_same_with_or_without_auto_return` | CONFIRMED |
+| Signature: manifest with/without `x-request-id` and `data.id`, key case/order, `v2` only, missing/empty header, non-digit `ts`, missing `v1`, wrong secret/id/ts, non-ASCII `v1`, no tolerance | `webhook_signature.py:22-40` | domain | `unit/payments/test_payment_domain.py` (signature block) | CONFIRMED |
+| `Payment.refresh` takes reported fields only; `settle` once, raises on the second | `payment.py:42-55` | domain | `test_payment_domain.py::test_refresh_*`, `::test_settle_*` | CONFIRMED |
+| `amount_to_cents` rounds half-up through `Decimal(str(v))` | `payment.py:18-21` | domain | `test_payment_domain.py::test_amount_to_cents_rounds_half_up_through_the_decimal_text` | CONFIRMED |
+| Events names/payloads; signature error is a 401 category with its code | `events.py`, `errors.py:20-23` | domain | `test_payment_domain.py::test_the_events_*`, `::test_the_invalid_signature_error_*` | CONFIRMED |
+| Receive: no secret -> 503 error and nothing stored; bad signature -> 401 error, logs request id only; signature checked before kind; other kinds and malformed/absent ids -> `Ok(False)`; 1 to 20 digit ids accepted; one event | `receive_notification.py:41-63` | application | `unit/payments/test_receive_notification.py` | CONFIRMED |
+| Webhook route: 200 `{"received": true}` accepted and ignored, 401 code/message, 503 without secret, `data.id` alias, body never read, public, GET 405, OpenAPI parameters/responses | `router.py:42-64` | http | `unit/payments/test_webhook_http.py` | CONFIRMED |
+| A notification signed without `x-request-id` is accepted | plan step 3 ("request-id only when present") | http | `test_webhook_http.py::test_a_notification_without_a_request_id_is_accepted_when_signed_that_way` | GAP (strict xfail): the platform middleware injects a generated `X-Request-ID` (`shared/http/middleware.py:56-69`); finding `plans/findings/payments-webhook-request-id-injected-by-platform.md` |
+| Outcome table: `paid` -> `applied`; `not_pending` -> `refund_due`; `stock_gone` -> `refund_due` + flag; `amount_mismatch` -> `amount_mismatch` + flag; `not_found` -> outcome unset + log; any other status recorded, order untouched | `process_payment.py:54-134` | application | `unit/payments/test_process_payment.py` (first block) | CONFIRMED |
+| Idempotent redelivery; a settled payment is never confirmed again; later `refunded` keeps `applied`; refresh keeps first amount/order; pending then approved applies | `process_payment.py:73,88-106` | application | `test_process_payment.py::test_a_redelivered_*`, `::test_a_payment_stored_with_an_outcome_*`, `::test_a_later_refund_*`, `::test_a_refresh_*`, `::test_a_payment_that_was_pending_*` | CONFIRMED |
+| Unknown payment (404) and non-UUID reference are logged and ignored; gateway down and refusals from orders raise (retry), saving nothing; flag without number raises; fetch outside the transaction, apply inside | `process_payment.py:56-86,136-139` | application | `test_process_payment.py` (nothing to apply, failures, transaction shape) | CONFIRMED |
+| Flagged email: exact subject/body for both reasons, `$1,234.50 MXN`, one email per active owner, no-owner log, `EmailRejected` skipped, send failure raises | `flagged_payment_email.py:32-66` | application | `unit/payments/test_flagged_payment_email.py` | CONFIRMED |
+| Facade `confirm`: paid (commit + move, SYSTEM actor, note, events), no reservation, past deadline, by id; not found; not pending for every later status; amount and currency mismatch; stock gone (both inventory codes) cancels + releases; other commit refusals and a refused release pass through unsaved; one transaction | `confirm_payment.py:46-97` | application | `unit/orders/test_confirm_payment.py` | CONFIRMED |
+| `get_by_id_for_update` (in-memory, SQL) finds by id, `None` for unknown | `in_memory.py:111`, `sql_order_repository.py:124` | application / integration | `test_confirm_payment.py::test_each_order_is_found_by_its_own_id`, `integration/orders/test_payment_confirmation_flow.py::test_get_by_id_for_update_finds_the_order_*` | CONFIRMED |
+| `get_by_id_for_update` locks the order against a concurrent payment; two payments (or a manual one plus a webhook one) sell the units once | `sql_order_repository.py:124-131` | integration | `test_payment_confirmation_flow.py::test_get_by_id_for_update_locks_*`, `::test_two_payments_at_once_*`, `::test_a_manual_payment_and_a_webhook_payment_at_once_*` | CONFIRMED |
+| Facade + real inventory in one transaction: commit sells units; expired reservation still pays while units exist; units gone cancel and leave no sale; mismatch and unknown order change nothing; made-to-order only touches no inventory | `confirm_payment.py` | integration | `integration/orders/test_payment_confirmation_flow.py` (facade block) | CONFIRMED |
+| Handler end to end over PostgreSQL: applied once, redelivery no-op, rejected stored, pending then approved, cancelled/paid order -> `refund_due`, mismatch and stock-gone flags in the outbox, unmatched order keeps outcome unset, gateway failure and an inventory refusal leave nothing half-applied | `process_payment.py` | integration | `test_payment_confirmation_flow.py` (handler block) | CONFIRMED |
+| `get_payment`: GET with bearer, no body, 10 s timeout, own client without proxy env; field mapping, cents; 404 -> `Ok(None)`; every bad body, non-2xx, transport error and missing token -> `PaymentGatewayUnavailable`, logged without the token | `mercadopago_gateway.py:69-134` | application (adapter over `MockTransport`) | `unit/payments/test_mercadopago_get_payment.py` | CONFIRMED |
+| Real Mercado Pago answers `GET /v1/payments/{id}` with the fixture shape | plan "Mercado Pago" notes | integration | none | NOT CONFIRMED: needs the sandbox and a real payment (verifier); fixtures follow the SDK `PaymentResponse` type only |
+| Migration 0024: columns/types/limits, PK `payment_id`, non-unique `ix_payments_order_id`, no FK, nulls and limits refused, `checkouts` and orders untouched, downgrade drops only the table, round trip | `0024_payments_payments.py` | integration (scratch DB) | `integration/payments/test_migration_0024_payments_payments.py` | CONFIRMED |
+| `SqlPaymentRepository`: whole round trip, enum outcome, upsert by id keeps `created_at`, `FOR UPDATE` blocks a second transaction, rollback stores nothing, limits | `sql_payment_repository.py` | integration | `integration/payments/test_sql_payments.py` | CONFIRMED |
+| Wiring: container resolves `ReceivePaymentNotification` with the secret, subscribes both handlers, shares the checkout's gateway; `OrderPaymentsAdapter.confirm` maps outcomes; `IdentityOwners` keeps active owners only | `module.py:56-82`, `order_payments.py:44-53`, `identity_owners.py` | application | `unit/payments/test_payments_wiring.py` | CONFIRMED |
+| Production refuses to start without `MERCADOPAGO_WEBHOOK_SECRET`; the secret is not printed | `config.py:115-117` | application | `unit/test_settings.py::test_production_requires_a_mercadopago_webhook_secret`, `::test_the_mercadopago_webhook_secret_is_never_printed` | CONFIRMED |
+| A real signed webhook from Mercado Pago's panel; `APRO`/`OTHE` cards in the sandbox; Mailpit emails | acceptance criteria | e2e | none | NOT CONFIRMED: no e2e infrastructure and needs the sandbox and a tunnel (verifier) |
+
+Notes:
+- Deviation 1 (the three out-of-scope test fixtures) is accepted here: they are test files and
+  the testing phase owns them; `test_settings.py` also gained the missing production test for the
+  webhook secret.
+- Closing runs: `uv run just check` green (4002 passed, 3 skipped, 1 xfailed = the GAP above;
+  baseline 3760 passed, 3 skipped, so +242 unit tests, +1 xfail); `uv run just test-integration`
+  green (1133 passed, 5 skipped; baseline 1074, so +59 integration tests). `plans-scope` was not
+  run by the tester (the main session does it at commit).
 
 ## Review findings
 
