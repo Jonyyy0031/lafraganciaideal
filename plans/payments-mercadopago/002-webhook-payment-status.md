@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: payments
 min_implementer: high
 depends_on: ["001"]
@@ -673,6 +673,38 @@ were live at e37f388 with a clean tree: `plans-scope`, `check` and `test-integra
 **Result:** only R-L1 is open. It is a one-line docstring change, but the stale-doc checklist
 item fails, so status stays `review`. After the fix, a re-review of that line alone is enough.
 No code or test change is needed for H1, L1, L2 or L3.
+
+### Second re-review (2026-10-26, commit 4de770a only)
+
+Scope: only commit 4de770a, which is docs only (`orders/__init__.py`, the `AdminOrderEvent`
+docstring, the `order_events` comment, the regenerated `openapi.json`, the finding
+`orders-history-actor-docs-omit-payments` and this plan). Runs were live at 4de770a with a
+clean tree.
+
+- **R-L1: closed.** `orders/__init__.py:45` now says "cancelled by `payments`", which matches
+  `confirm_payment.py:68`.
+- **The actor finding: resolved correctly.**
+  - `contracts.py:240` and `tables.py:131` now list an admin user id, `system`, `customer`
+    and `payments`. That is every actor the code writes: `SYSTEM_ACTOR`, `CUSTOMER_ACTOR`,
+    `PAYMENTS_ACTOR` (`order.py:44-48`) and the admin ids from the router.
+  - The `openapi.json` change is the one-line `AdminOrderEvent` description, made by the
+    generator. `check` is green, so the committed file matches the generator.
+  - The finding is `status: resolved` with `plan: payments-mercadopago/002`, and
+    `plans-lint` passes.
+- **Scope:** `plans-scope` reports "Every change is inside the plan" (48 declared, 60
+  changed). The new files are declared on step 7's second `Files:` line, and the Repair log
+  has an entry for them.
+- **Runs:**
+  - `uv run just check` green: 4014 passed, 3 skipped, 1 xfailed; harness 685; 7 contracts
+    kept.
+  - `test-integration` was not re-run. The `tables.py` change is a comment only, with no
+    schema or SQL change; the last integration run (e37f388) was green with 1138 passed.
+- I checked for other stale descriptions of `actor`: none remain. `AdminOrderNote`'s "the
+  admin user id" is right, because notes are written only by admins.
+
+**Checklist (superseding the re-review's): 14 of 14 applicable items passed, 1 n/a (PR
+body).** Nothing is open. The only finding carried over is the tester's request-id finding,
+which is a separate finding and does not block. Status → `verify`.
 
 ## Repair log
 
