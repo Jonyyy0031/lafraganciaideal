@@ -84,6 +84,10 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
     customer and the owners.
 12. (2026-10-24) **A rejected payment shows nothing new to the customer**: no email and no
     change to the order page. The order stays pending (decision 2).
+13. (2026-10-26) **When a late payment finds no stock, the customer's cancellation email says
+    so:** "Tu pedido … fue cancelado porque tu pago llegó cuando ya no había existencias. Te
+    reembolsaremos el pago completo." (plan 002 review L2). The customer page still shows the
+    cancellation as by the system.
 
 ## Delivered
 

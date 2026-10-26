@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: payments
 min_implementer: high
 depends_on: ["001"]
@@ -291,6 +291,39 @@ and its adapter `modules/payments/infrastructure/order_payments.py`; the move sh
        by this plan.
    - Observable result: `uv run just check` green; the route is in `openapi.json`.
 
+7. **Review repair (added 2026-10-26 after the first review: H1, L1, L2, L3)**
+   - Files: `apps/api/src/fragancia_api/modules/payments/domain/repositories.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/sql_payment_repository.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/in_memory.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/handlers/process_payment.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/commands/receive_notification.py` (modify), `apps/api/src/fragancia_api/modules/orders/domain/order.py` (modify), `apps/api/src/fragancia_api/modules/orders/application/commands/confirm_payment.py` (modify), `apps/api/src/fragancia_api/modules/orders/application/handlers/order_emails.py` (modify), `docs/architecture.md` (modify)
+   - Files: `apps/api/tests/unit/orders/test_order_emails.py` (modify), `apps/api/tests/unit/orders/test_order_domain.py` (modify), `apps/api/tests/integration/orders/test_payment_confirmation_flow.py` (modify) (regression tests, written in the testing phase)
+   - Do:
+     - **H1 (the row lock must exist before the read).** Replace
+       `PaymentRepository.get_for_update` with `claim(payment: Payment) -> Payment`: insert the
+       given row with `on_conflict_do_nothing(index_elements=[payments.c.payment_id])`, then
+       `select … with_for_update()` and return the stored row (the existing one when it was
+       already there, so its `outcome` is kept). In `ProcessPaymentNotification._stored`, build
+       the fresh `Payment` from the fetched one (as today's `None` branch does), `claim` it,
+       then `refresh` it with the fetched fields. A second delivery of the same payment now
+       waits on the row lock and sees `outcome = applied`, so it never confirms again.
+       `save` stays the upsert. In-memory: `claim` stores the row when absent and returns a
+       copy of the stored one.
+     - **L2 (decision 13).** In `order.py` add `PAYMENTS_ACTOR = "payments"`; `cancelled_by`
+       maps it to `"system"` (the customer page contract keeps its three values). The
+       stock-gone cancel in `confirm_payment.py` uses `PAYMENTS_ACTOR` instead of
+       `SYSTEM_ACTOR`. In `order_emails.py`, when `cancelled_actor(order) == PAYMENTS_ACTOR`
+       the cancellation email says `Tu pedido {number} fue cancelado porque tu pago llegó cuando
+       ya no había existencias.\nTe reembolsaremos el pago completo.\n`; every other case is
+       unchanged.
+     - **L3.** In `ReceivePaymentNotification.execute`, check the kind and the id first:
+       `kind != "payment"` or a bad `data_id` → `Ok(False)` (200, ignored) before the secret
+       and the signature are looked at; they do nothing, so no signature is needed. Then the
+       secret (503) and the signature (401) as today.
+     - **L1.** `docs/architecture.md`: the payments module is active with the webhook; replace
+       the `payments.payment.approved` description with the real flow (webhook →
+       `payments.notification.received` → worker fetches the payment → orders'
+       `OrderPaymentConfirmations`) and list `payments.payment.flagged`.
+   - Observable result: two concurrent deliveries of the same approved payment leave
+     `outcome = applied` and one paid move; a `type=merchant_order` webhook without a signature
+     answers 200; the stock-gone email has the new copy; `uv run just check` green.
+
 ## Acceptance criteria
 
 - [ ] With `STOREFRONT_URL=http://localhost:4200`, `POST /api/v1/payments/checkout` answers 200
@@ -405,5 +438,120 @@ Notes:
   run by the tester (the main session does it at commit).
 
 ## Review findings
+
+Reviewed 2026-10-24 to 2026-10-26, diff `main...HEAD` (c010927), tree clean apart from this
+section. `check` and `plans-scope` were run on 2026-10-24 and `test-integration` on 2026-10-26,
+all at the same HEAD.
+
+**Checklist: 13 of 14 applicable items passed. 1 failed (stale doc). 1 n/a (PR body).**
+
+- [x] `plans-scope`: "Every change is inside the plan" (41 declared, 52 changed, all covered).
+  Hot files: `.importlinter` gains exactly the two planned ignore lines, appended; `container.py`
+  and `docs/modules.json` are untouched.
+- [x] `uv run just check` green: lint, types, 7 import-linter contracts KEPT (14 ignored
+  imports), 4002 passed, 3 skipped, 1 xfailed (the tester's strict xfail), harness 685 passed.
+- [x] `uv run just test-integration` green (live run 2026-10-26 at c010927, the first run was
+  cut off when the session was interrupted): 1133 passed, 5 skipped.
+- [x] Business rules: `Payment.settle` (set once) is in the domain. The amount/currency rule
+  and the outcome mapping live in the orders facade (`confirm_payment.py:59`) and the
+  handler (`process_payment.py:119-133`), as steps 2 and 4 prescribe, following the existing
+  `OrderMove` shape (commit/release orchestration is application code there too). Accepted.
+- [x] CQRS-lite: `ReceivePaymentNotification`, `OrderPaymentConfirmations.confirm` and the
+  handler's apply all run inside `transactions.run` and return `Result`; the repositories have
+  no screen-specific methods.
+- [x] Contracts: `WebhookAck` in `payments/contracts.py`; `openapi.json` regenerated (no drift,
+  `test_openapi.py` green).
+- [x] Errors: `PAYMENTS_WEBHOOK_SIGNATURE_INVALID` (401) and `PAYMENTS_GATEWAY_UNAVAILABLE`
+  (503); the handler raises only for the unexpected (gateway down, refusal from orders), which
+  is the relay's retry contract.
+- [x] Money as integer cents (`amount_to_cents` half-up through `Decimal(str(v))` at the
+  gateway boundary only); datetimes from `Clock`; payment ids are Mercado Pago's.
+- [x] Migration 0024: new table only in the existing `payments` schema, no FK, no drops,
+  downgrade drops only the index and table (round trip tested on a scratch DB).
+- [x] Route on `public_router` (Mercado Pago calls it unauthenticated; the signature is the
+  gate). No bare `APIRouter`.
+- [x] Wiring resolves (`test_payments_wiring.py`, `test_container.py` green); adapters built
+  only in `module.py`; orders and identity register before payments.
+- [x] No secrets: `.env.example` value empty; tests use placeholder secrets; the token and
+  webhook secret are never logged (`receive_notification.py` logs only `x_request_id`/`kind`).
+- [x] Deviations honest. Spot check of Deviation 3: `receive_notification.py` logs
+  `x_request_id=` in both warnings, as stated. Deviation 1 files are listed in step 5.
+- [ ] **Docs: `docs/architecture.md` is stale for this behavior.** Line 65 (`payments` row)
+  still says "Planned: idempotent webhooks", and lines 197-200 describe the flow as
+  `payments.payment.approved` → `orders` subscriber, whereas the built flow is
+  `payments.notification.received` → worker → orders' `OrderPaymentConfirmations` facade in
+  the same transaction. The orders row (line 64) does not list the new public facade either.
+  `docs/architecture.md` is not in the plan's file list, so the fix needs a deviation line.
+- n/a PR body: no PR exists yet (the main session opens it).
+
+**Focus areas checked and found correct:**
+- **Signature.** Manifest built exactly as the cited SDK rules (`id:` from the query
+  `data.id`, `request-id:` only when present, `ts:`), HMAC-SHA256 hex, constant-time compare;
+  a missing/empty header, non-digit `ts` or missing `v1` is invalid. The check runs before
+  the kind/id filter, so an unsigned request can never enqueue anything.
+- **Idempotency (sequential).** A redelivery locks the existing `payments.payments` row
+  (`FOR UPDATE`) and sees `outcome` set; nothing reaches orders. A pending-then-approved
+  payment applies on the second delivery.
+- **Order transitions.** The facade locks the order (`FOR NO KEY UPDATE`, same as the
+  manual mark-paid and the overdue job), so a webhook vs. manual payment vs. overdue
+  cancellation cannot both win; tested against PostgreSQL. Commit + `mark_paid`, or refused
+  commit + `cancel_unpaid` + release, happen in one transaction; any `Err` raises in the
+  handler and the relay rolls the whole transaction back (the nested `transactions.run` joins
+  the relay's and the handler converts `Err` to an exception).
+- **Gateway fetch.** Bearer header only, `trust_env=False`, 10 s timeout, 404 → `Ok(None)`,
+  every malformed body → `PaymentGatewayUnavailable`; the id in the URL is validated as 1-20
+  digits at receipt.
+- **auto_return fix.** Only with an `https://` back URL; the other body fields are unchanged.
+- **Production validator.** Missing or empty `MERCADOPAGO_WEBHOOK_SECRET` refuses to start.
+
+### Findings
+
+**High**
+
+- **H1 — Two concurrent deliveries of a payment seen for the first time can overwrite
+  `applied` with `refund_due`** (`process_payment.py:88-106` with
+  `sql_payment_repository.py:39-55`; the race sits in `_stored`/`save`).
+  `get_for_update` is `SELECT … FOR UPDATE`, which locks nothing when the row does not exist
+  yet. Scenario: Mercado Pago sends `payment.created` and `payment.updated` for the same
+  approved card payment seconds apart, so two `payments.notification.received` outbox rows
+  exist. The relay is an arq cron every 2 s with no per-process lock
+  (`main/worker.py:84`; arq's cron `unique` only dedupes the same tick, and `max_jobs` is
+  10), so two relay runs overlap whenever a batch takes over 2 s (one Mercado Pago GET plus
+  SMTP sends is enough), and `SKIP LOCKED` hands each run one of the two rows. Run A: no
+  payment row → `confirm` → order paid → inserts the row with `outcome=applied` → commits.
+  Run B: also saw no row → `confirm` waits on the order lock, then gets `not_pending` →
+  `settle(REFUND_DUE)` → `INSERT … ON CONFLICT DO UPDATE` (waits for A's commit, then updates)
+  sets `outcome=refund_due`. End state: the order is paid by this payment, but the payment is
+  recorded `refund_due`, so plan 004 would refund the payment that paid the order (the
+  customer gets the goods and the money back). Not covered: the integration tests race two
+  *different* payments (`test_two_payments_at_once_*`), never the same payment twice.
+  Possible directions (the implementer/architect decide): take the row lock before reading
+  (e.g. `INSERT … ON CONFLICT DO NOTHING` then `SELECT … FOR UPDATE`, or a transaction-level
+  advisory lock on the payment id), or make the upsert never replace a non-null `outcome`.
+
+**Low**
+
+- **L1 — `docs/architecture.md:65,197-200` stale** (checklist item above). Scenario: the next
+  plan or module author reads that orders subscribes to `payments.payment.approved`, and builds
+  against an event that does not exist.
+- **L2 (uncertain; design, not a code change) — the stock-gone cancellation email tells a
+  customer who paid that "no recibimos el pago a tiempo"**
+  (`confirm_payment.py:67-68` with `SYSTEM_ACTOR`; copy at
+  `orders/application/handlers/order_emails.py:37`). The plan states this behavior (Context,
+  "Cancelling an unpaid order"; decision 10; Out of scope "customer email copy"), so it is
+  not a deviation. Recorded only so the user consciously accepts the wording until plan 004
+  tells the customer about the refund.
+- **L3 (uncertain) — legacy IPN notifications get 401, not "200 and ignored"**
+  (`receive_notification.py:51-56`). Out of scope says merchant-order and legacy IPN
+  notifications are "answered 200 and ignored", but the signature is checked before the kind,
+  and IPN requests (`?topic=…&id=…`) do not carry `x-signature` as far as the cited SDK shows,
+  so they would get 401 and Mercado Pago would retry them. Only matters if IPN is ever
+  enabled; preferences send no `notification_url`, so today none arrive. Step 4's ordering
+  (signature first) is what the code follows.
+- Already recorded by the tester, not repeated as a review finding: the platform-injected
+  `X-Request-ID` (`plans/findings/payments-webhook-request-id-injected-by-platform.md`).
+
+**Result:** H1 requires a code change (and a regression test racing the same payment id
+twice), L1 a doc change outside the file list. Status stays `review`.
 
 ## Verification
