@@ -87,9 +87,11 @@ class ProcessPaymentNotification:
 
     async def _stored(self, fetched: GatewayPayment, order_id: UUID) -> Payment:
         now = self._clock.now()
-        payment = await self._payments.get_for_update(fetched.payment_id)
-        if payment is None:
-            return Payment(
+        # `claim` takes the row lock before anything is read, even for a payment seen for the
+        # first time, so a concurrent delivery of the same payment waits here and then sees the
+        # `outcome` this one stored (plan 002 review H1).
+        payment = await self._payments.claim(
+            Payment(
                 payment_id=fetched.payment_id,
                 order_id=order_id,
                 status=fetched.status,
@@ -102,6 +104,7 @@ class ProcessPaymentNotification:
                 created_at=now,
                 updated_at=now,
             )
+        )
         payment.refresh(fetched.status, fetched.status_detail, fetched.approved_at, now)
         return payment
 

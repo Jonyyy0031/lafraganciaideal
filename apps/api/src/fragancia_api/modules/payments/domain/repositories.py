@@ -18,8 +18,14 @@ class CheckoutRepository(Protocol):
 class PaymentRepository(Protocol):
     """Write side of the Mercado Pago payments. Joins the active transaction."""
 
-    async def get_for_update(self, payment_id: str) -> Payment | None:
-        """The payment, its row locked `FOR UPDATE`; None when unknown."""
+    async def claim(self, payment: Payment) -> Payment:
+        """Lock the payment's row `FOR UPDATE` and return the stored payment.
+
+        The given payment is inserted first when its id is unknown, so the row lock exists even
+        for a payment seen for the first time and a concurrent delivery of the same payment
+        waits on it. When the row was already there, the stored payment is returned as it is
+        (its `outcome` is kept) and the given one is discarded.
+        """
         ...
 
     async def save(self, payment: Payment) -> None:

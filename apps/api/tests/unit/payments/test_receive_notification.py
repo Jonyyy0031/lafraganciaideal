@@ -99,13 +99,13 @@ async def test_a_refused_signature_logs_the_request_id_and_never_the_header() ->
     assert header not in repr(logs)
 
 
-async def test_the_signature_is_checked_before_the_kind() -> None:
+async def test_the_kind_is_checked_before_the_signature() -> None:
+    # Plan 002 step 7 (review L3): an ignored kind needs no signature.
     use_case, events = command()
 
     result = await use_case.execute("bad", REQUEST_ID, DATA_ID, "merchant_order")
 
-    assert isinstance(result, Err)
-    assert isinstance(result.error, PaymentWebhookSignatureInvalid)
+    assert result == Ok(False)
     assert events.published == []
 
 

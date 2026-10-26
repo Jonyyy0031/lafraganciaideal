@@ -157,7 +157,7 @@ async def test_units_that_are_gone_cancel_the_order_and_release_the_reservation(
     assert (event["from_status"], event["to_status"], event["actor"]) == (
         "pending_payment",
         "cancelled",
-        "system",
+        "payments",
     )
     assert await movements(container, placed.stock, "sale") == []
     assert await table_count(container, "stock_movements") == sales_before

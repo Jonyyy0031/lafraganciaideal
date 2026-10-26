@@ -21,10 +21,11 @@ _PAYMENT_ID = re.compile(r"[0-9]{1,20}")
 class ReceivePaymentNotification:
     """Command: accept a Mercado Pago webhook (ADR 0004, ADR 0006).
 
-    Only the signature is checked here, and a verified `payment` notification is stored as a
-    `payments.notification.received` outbox event; the worker fetches the payment from Mercado
-    Pago and applies it (the body is never trusted). Other kinds (`merchant_order`, legacy IPN)
-    and malformed ids are acknowledged and ignored: `Ok(False)`.
+    Other kinds (`merchant_order`, legacy IPN) and malformed ids are acknowledged and ignored
+    first, `Ok(False)`, without looking at the signature: they store nothing. A `payment`
+    notification must be signed, and is then stored as a `payments.notification.received`
+    outbox event; the worker fetches the payment from Mercado Pago and applies it (the body is
+    never trusted).
     """
 
     def __init__(
@@ -45,15 +46,17 @@ class ReceivePaymentNotification:
         data_id: str | None,
         kind: str | None,
     ) -> Result[bool, DomainError]:
+        # Ignored notifications do nothing, so they need no signature: a legacy IPN request
+        # carries none and would otherwise be retried forever (plan 002 review L3).
+        if kind != PAYMENT_KIND or data_id is None or _PAYMENT_ID.fullmatch(data_id) is None:
+            _log.info("payments.webhook_ignored", kind=kind, x_request_id=x_request_id)
+            return Ok(False)
         if not self._secret:
             _log.error("payments.webhook_not_configured")
             return Err(PaymentGatewayUnavailable())
         if not signature_valid(self._secret, x_signature, x_request_id, data_id):
             _log.warning("payments.webhook_signature_invalid", x_request_id=x_request_id)
             return Err(PaymentWebhookSignatureInvalid())
-        if kind != PAYMENT_KIND or data_id is None or _PAYMENT_ID.fullmatch(data_id) is None:
-            _log.info("payments.webhook_ignored", kind=kind, x_request_id=x_request_id)
-            return Ok(False)
         payment_id = data_id
 
         async def store() -> Result[bool, DomainError]:

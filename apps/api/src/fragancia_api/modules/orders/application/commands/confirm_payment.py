@@ -5,7 +5,7 @@ from enum import StrEnum
 from uuid import UUID
 
 from fragancia_api.modules.orders.application.commands.lifecycle import OrderMove
-from fragancia_api.modules.orders.domain.order import SYSTEM_ACTOR, OrderStatus
+from fragancia_api.modules.orders.domain.order import PAYMENTS_ACTOR, SYSTEM_ACTOR, OrderStatus
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 
 PAID_NOTE = "Pagado con Mercado Pago (pago {payment_id})"
@@ -65,7 +65,7 @@ class OrderPaymentConfirmations(OrderMove):
                 match await self._stocks.commit(order.reservation_id):
                     case Err(refused) if refused.code in _STOCK_GONE_CODES:
                         match order.cancel_unpaid(
-                            STOCK_GONE_REASON.format(payment_id=payment_id), SYSTEM_ACTOR, now
+                            STOCK_GONE_REASON.format(payment_id=payment_id), PAYMENTS_ACTOR, now
                         ):
                             case Err(error):
                                 return Err(error)

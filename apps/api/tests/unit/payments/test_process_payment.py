@@ -380,7 +380,9 @@ async def test_a_refusal_from_orders_raises_with_its_code_and_saves_nothing() ->
     with pytest.raises(RuntimeError, match=r"^payments\.confirm_refused: INVENTORY_RESERVATION"):
         await world.handler(message())
 
-    assert world.payments.by_id == {}
+    # `claim` stored the row before confirming; nothing was applied to it. Over PostgreSQL the
+    # raise rolls the row back too (integration `test_payment_confirmation_flow.py`).
+    assert [p.outcome for p in world.payments.by_id.values()] == [None]
     assert world.flags() == []
 
 

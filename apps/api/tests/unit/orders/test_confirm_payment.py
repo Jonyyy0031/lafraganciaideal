@@ -25,10 +25,12 @@ from fragancia_api.modules.orders.application.commands.confirm_payment import (
     PaymentConfirmationOutcome,
 )
 from fragancia_api.modules.orders.domain.order import (
+    PAYMENTS_ACTOR,
     SYSTEM_ACTOR,
     OrderPaid,
     OrderStatus,
     OrderStatusChanged,
+    cancelled_by,
 )
 from fragancia_api.modules.orders.infrastructure.in_memory import InMemoryStockHolds
 from fragancia_api.shared.kernel import ConflictError, DomainError, Err, Ok, Result
@@ -270,7 +272,7 @@ async def test_units_that_can_no_longer_be_sold_cancel_the_order_and_release_the
         "Pago recibido sin existencias (pago 555000111)"
     )
     assert holds.operations == [("commit", UUID(int=71)), ("release", UUID(int=71))]
-    assert world.history() == [(S.PENDING_PAYMENT, S.CANCELLED, SYSTEM_ACTOR)]
+    assert world.history() == [(S.PENDING_PAYMENT, S.CANCELLED, PAYMENTS_ACTOR)]
     assert world.statuses() == [("pending_payment", "cancelled")]
     assert [e for e in world.events.published if isinstance(e, OrderPaid)] == []
 
@@ -283,7 +285,7 @@ async def test_a_cancelled_for_stock_order_is_cancelled_by_the_system() -> None:
 
     changed = [e for e in world.events.published if isinstance(e, OrderStatusChanged)]
     assert [(e.from_status, e.to_status) for e in changed] == [("pending_payment", "cancelled")]
-    assert world.history()[0][2] == "system"
+    assert cancelled_by(world.history()[0][2]) == "system"
 
 
 @pytest.mark.parametrize(

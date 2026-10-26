@@ -73,10 +73,11 @@ async def test_a_signed_payment_notification_answers_200_and_stores_one_event(
 async def test_the_data_id_is_read_from_the_dotted_query_name(
     client: AsyncClient, events: RecordingEventPublisher
 ) -> None:
-    # The snake-case spelling is not the alias: it is not read, so the signed id is absent.
+    # The snake-case spelling is not the alias: it is not read, so the id is absent and the
+    # notification is ignored (plan 002 step 7: ignored before the signature is looked at).
     response = await client.post(f"{WEBHOOK}?data_id={DATA_ID}&type=payment", headers=headers())
 
-    assert response.status_code == 401
+    assert response.status_code == 200
     assert events.published == []
 
 

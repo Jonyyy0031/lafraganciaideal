@@ -32,9 +32,10 @@ class InMemoryPayments:
     def __init__(self, *payments: Payment) -> None:
         self.by_id: dict[str, Payment] = {p.payment_id: replace(p) for p in payments}
 
-    async def get_for_update(self, payment_id: str) -> Payment | None:
-        found = self.by_id.get(payment_id)
-        return replace(found) if found is not None else None
+    async def claim(self, payment: Payment) -> Payment:
+        if payment.payment_id not in self.by_id:
+            self.by_id[payment.payment_id] = replace(payment)
+        return replace(self.by_id[payment.payment_id])
 
     async def save(self, payment: Payment) -> None:
         self.by_id[payment.payment_id] = replace(payment)

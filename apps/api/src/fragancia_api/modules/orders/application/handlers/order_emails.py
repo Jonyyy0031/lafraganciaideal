@@ -20,7 +20,7 @@ from fragancia_api.modules.orders.application.ports import (
     OwnerRecipients,
 )
 from fragancia_api.modules.orders.contracts import AdminOrderAddress, AdminOrderDetail
-from fragancia_api.modules.orders.domain.order import cancelled_by
+from fragancia_api.modules.orders.domain.order import PAYMENTS_ACTOR, cancelled_by
 from fragancia_api.shared.application.email import EmailMessage, EmailRejected, EmailSender
 from fragancia_api.shared.application.events import EventMessage
 
@@ -37,6 +37,10 @@ CANCEL_REASONS = {
     "system": "porque no recibimos el pago a tiempo",
     "shop": "por la tienda",
 }
+STOCK_GONE_TEXT = (
+    "Tu pedido {number} fue cancelado porque tu pago llegó cuando ya no había existencias.\n"
+    "Te reembolsaremos el pago completo.\n"
+)
 DELIVERY_NAMES = {
     "home": "Envío a domicilio",
     "local": "Entrega local",
@@ -155,7 +159,12 @@ def cancelled_actor(order: AdminOrderDetail) -> str:
 
 
 def cancelled_email(order: AdminOrderDetail, link: str) -> Template:
-    reason = CANCEL_REASONS[cancelled_by(cancelled_actor(order))]
+    actor = cancelled_actor(order)
+    if actor == PAYMENTS_ACTOR:
+        # A late payment that found no stock (payments decision 13): the customer paid.
+        text = STOCK_GONE_TEXT.format(number=order.number)
+        return f"Tu pedido {order.number} fue cancelado", _wrap(order, link, text)
+    reason = CANCEL_REASONS[cancelled_by(actor)]
     text = f"Tu pedido {order.number} fue cancelado {reason}.\n"
     if order.refund_status == "pending":
         text += "Te reembolsaremos el pago completo.\n"

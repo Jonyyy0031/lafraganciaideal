@@ -49,8 +49,16 @@ async def put(container: Container, payment: Payment) -> None:
 
 
 async def get(container: Container, payment_id: str = "1234567890") -> Payment | None:
+    """The stored payment, read through `claim` (which keeps a stored row as it is); None
+    when the payment has no row (checked first, since `claim` would insert one)."""
+    found = await row(
+        container, "SELECT count(*) AS n FROM payments.payments WHERE payment_id = :p", p=payment_id
+    )
+    if int(found["n"]) == 0:
+        return None
     repo = SqlPaymentRepository(container.database)
-    return await in_transaction(container, lambda: repo.get_for_update(payment_id))
+    probe = make_payment(payment_id, status="probe")
+    return await in_transaction(container, lambda: repo.claim(probe))
 
 
 async def count(container: Container) -> int:
@@ -194,7 +202,7 @@ async def test_a_committed_save_is_visible_to_the_next_transaction(container: Co
     assert await count(container) == 1
 
 
-async def test_get_for_update_locks_the_row_until_the_transaction_ends(
+async def test_claim_locks_the_row_until_the_transaction_ends(
     container: Container,
 ) -> None:
     await put(container, make_payment())
@@ -204,7 +212,7 @@ async def test_get_for_update_locks_the_row_until_the_transaction_ends(
     order_of_events: list[str] = []
 
     async def first() -> Result[None, DomainError]:
-        found = await repo.get_for_update("1234567890")
+        found = await repo.claim(make_payment())
         assert found is not None
         first_holds.set()
         await asyncio.wait_for(release_first.wait(), 10)
@@ -213,7 +221,7 @@ async def test_get_for_update_locks_the_row_until_the_transaction_ends(
 
     async def second() -> Result[None, DomainError]:
         order_of_events.append("second asks")
-        found = await repo.get_for_update("1234567890")
+        found = await repo.claim(make_payment())
         assert found is not None
         order_of_events.append("second got it")
         return Ok(None)

@@ -14,14 +14,27 @@ class SqlPaymentRepository:
     def __init__(self, database: Database) -> None:
         self._database = database
 
-    async def get_for_update(self, payment_id: str) -> Payment | None:
+    async def claim(self, payment: Payment) -> Payment:
+        # Insert first so the row (and its lock) exists even for a payment seen for the first
+        # time: `SELECT … FOR UPDATE` alone locks nothing when there is no row, and two
+        # concurrent deliveries would both confirm (plan 002 review H1). A concurrent insert of
+        # the same id waits here until the other transaction ends.
+        await self._database.session.execute(
+            insert(payments)
+            .values(
+                payment_id=payment.payment_id,
+                created_at=payment.created_at,
+                **self._values(payment),
+            )
+            .on_conflict_do_nothing(index_elements=[payments.c.payment_id])
+        )
         row = (
             await self._database.session.execute(
-                select(payments).where(payments.c.payment_id == payment_id).with_for_update()
+                select(payments)
+                .where(payments.c.payment_id == payment.payment_id)
+                .with_for_update()
             )
-        ).first()
-        if row is None:
-            return None
+        ).one()
         return Payment(
             payment_id=row.payment_id,
             order_id=row.order_id,
@@ -37,7 +50,17 @@ class SqlPaymentRepository:
         )
 
     async def save(self, payment: Payment) -> None:
-        values: dict[str, Any] = {
+        values = self._values(payment)
+        await self._database.session.execute(
+            insert(payments)
+            .values(payment_id=payment.payment_id, created_at=payment.created_at, **values)
+            .on_conflict_do_update(index_elements=[payments.c.payment_id], set_=values)
+        )
+
+    @staticmethod
+    def _values(payment: Payment) -> dict[str, Any]:
+        """Every column but `payment_id` and `created_at`."""
+        return {
             "order_id": payment.order_id,
             "status": payment.status,
             "status_detail": payment.status_detail,
@@ -48,8 +71,3 @@ class SqlPaymentRepository:
             "outcome": payment.outcome.value if payment.outcome is not None else None,
             "updated_at": payment.updated_at,
         }
-        await self._database.session.execute(
-            insert(payments)
-            .values(payment_id=payment.payment_id, created_at=payment.created_at, **values)
-            .on_conflict_do_update(index_elements=[payments.c.payment_id], set_=values)
-        )

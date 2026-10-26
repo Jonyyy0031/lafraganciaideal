@@ -43,6 +43,9 @@ TRACKING_NUMBER_MAX = 60
 AUTO_CANCEL_REASON = "No pagado a tiempo"
 SYSTEM_ACTOR = "system"
 CUSTOMER_ACTOR = "customer"
+# A move made for a payment (a late payment that found no stock cancels the order, payments
+# decision 13); shown to the customer as the system's.
+PAYMENTS_ACTOR = "payments"
 CUSTOMER_CANCEL_REASON = "Cancelado por el cliente"
 
 # Order lookup by number and email (decision 39): attempts per window.
@@ -92,7 +95,7 @@ def cancelled_by(actor: str) -> Literal["customer", "system", "shop"]:
     """Who cancelled, from the actor of the cancelling move (decision 41)."""
     if actor == CUSTOMER_ACTOR:
         return "customer"
-    if actor == SYSTEM_ACTOR:
+    if actor in (SYSTEM_ACTOR, PAYMENTS_ACTOR):
         return "system"
     return "shop"
 
