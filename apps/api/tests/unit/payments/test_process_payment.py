@@ -414,3 +414,53 @@ async def test_the_payment_is_fetched_outside_the_transaction_and_applied_inside
     assert world.gateway.fetched_inside == [False]
     assert seen_inside == [True]
     assert world.runner.runs == 1
+
+
+# --- `InMemoryPayments.claim` (plan 002 step 7, H1) ---------------------------------------------
+
+
+def stored_payment(**overrides: object) -> Payment:
+    values: dict[str, object] = {
+        "payment_id": PAYMENT_ID,
+        "order_id": ORDER_ID,
+        "status": "approved",
+        "status_detail": "accredited",
+        "amount_cents": 268_000,
+        "currency": "MXN",
+        "payment_type": "credit_card",
+        "approved_at": NOW,
+        "outcome": None,
+        "created_at": NOW,
+        "updated_at": NOW,
+    }
+    values.update(overrides)
+    return Payment(**values)  # type: ignore[arg-type]
+
+
+async def test_claim_stores_an_unknown_payment_and_returns_it() -> None:
+    payments = InMemoryPayments()
+    fresh = stored_payment()
+
+    claimed = await payments.claim(fresh)
+
+    assert claimed == fresh
+    assert payments.by_id[PAYMENT_ID] == fresh
+
+
+async def test_claim_keeps_the_stored_row_and_its_outcome_over_the_one_offered() -> None:
+    payments = InMemoryPayments(stored_payment(outcome=PaymentOutcome.APPLIED))
+
+    claimed = await payments.claim(stored_payment(status="pending", outcome=None))
+
+    assert claimed.outcome is PaymentOutcome.APPLIED
+    assert claimed.status == "approved"
+    assert payments.by_id[PAYMENT_ID].status == "approved"
+
+
+async def test_claim_hands_out_its_own_copy() -> None:
+    payments = InMemoryPayments()
+
+    claimed = await payments.claim(stored_payment())
+    claimed.settle(PaymentOutcome.APPLIED, NOW)
+
+    assert payments.by_id[PAYMENT_ID].outcome is None

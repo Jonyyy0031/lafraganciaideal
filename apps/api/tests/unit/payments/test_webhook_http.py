@@ -173,6 +173,28 @@ async def test_a_signed_notification_of_another_type_answers_200_and_stores_noth
     assert events.published == []
 
 
+@pytest.mark.parametrize("kind", ["merchant_order", "topic_merchant_order_wh", "plan"])
+async def test_an_unsigned_notification_of_another_type_answers_200_not_401(
+    client: AsyncClient, events: RecordingEventPublisher, kind: str
+) -> None:
+    # Plan 002 step 7 (L3): the kind and the id are checked before the signature, so Mercado
+    # Pago's unsigned merchant_order topics are acknowledged instead of retried.
+    response = await client.post(f"{WEBHOOK}?data.id={DATA_ID}&type={kind}")
+
+    assert response.status_code == 200
+    assert response.json() == {"received": True}
+    assert events.published == []
+
+
+async def test_an_unsigned_payment_notification_is_still_401(
+    client: AsyncClient, events: RecordingEventPublisher
+) -> None:
+    response = await client.post(f"{WEBHOOK}?data.id={DATA_ID}&type=payment")
+
+    assert response.status_code == 401
+    assert events.published == []
+
+
 async def test_a_signed_notification_without_a_type_answers_200_and_stores_nothing(
     client: AsyncClient, events: RecordingEventPublisher
 ) -> None:

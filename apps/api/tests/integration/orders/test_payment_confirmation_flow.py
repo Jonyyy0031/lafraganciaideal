@@ -448,6 +448,26 @@ async def test_a_redelivered_notification_changes_nothing(
     assert (await payment_row(container))["outcome"] == "applied"
 
 
+async def test_two_deliveries_of_the_same_new_payment_at_once_apply_it_once(
+    container: Container, catalog_rows: CatalogRows
+) -> None:
+    # Plan 002 review H1: both deliveries find no payment row; the claim must serialize them so
+    # the second reads `outcome = applied` instead of confirming a second time.
+    placed = await place(container, catalog_rows)
+    total = (await order_row(container, placed.number))["total_cents"]
+    gateway = FakeGateway(payments={PAYMENT_ID: gateway_payment(placed, amount_cents=total)})
+    process = handler(container, gateway)
+
+    await asyncio.wait_for(asyncio.gather(process(notification()), process(notification())), 30)
+
+    assert (await order_row(container, placed.number))["status"] == "paid"
+    assert len(await history(container, placed.number)) == 1
+    assert len(await movements(container, placed.stock, "sale")) == 1
+    assert await table_count_payments(container) == 1
+    assert (await payment_row(container))["outcome"] == "applied"
+    assert flagged_rows(await outbox_rows(container)) == []
+
+
 async def test_a_rejected_payment_is_stored_and_the_order_stays_pending(
     container: Container, catalog_rows: CatalogRows
 ) -> None:

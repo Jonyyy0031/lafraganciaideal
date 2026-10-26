@@ -238,6 +238,85 @@ async def test_claim_locks_the_row_until_the_transaction_ends(
     assert order_of_events == ["second asks", "first commits", "second got it"]
 
 
+async def test_claim_inserts_the_row_when_the_payment_is_unknown(container: Container) -> None:
+    repo = SqlPaymentRepository(container.database)
+    fresh = make_payment("777", status="pending", approved_at=None)
+
+    claimed = await in_transaction(container, lambda: repo.claim(fresh))
+
+    assert claimed == fresh
+    assert await count(container) == 1
+    stored = await row(container, "SELECT * FROM payments.payments WHERE payment_id = '777'")
+    assert (stored["status"], stored["outcome"], stored["created_at"]) == ("pending", None, T0)
+
+
+async def test_claim_keeps_the_stored_row_and_its_outcome(container: Container) -> None:
+    stored = make_payment(outcome=PaymentOutcome.APPLIED, updated_at=T0 + timedelta(minutes=1))
+    await put(container, stored)
+    repo = SqlPaymentRepository(container.database)
+    offered = make_payment(
+        status="pending", amount_cents=1, outcome=None, created_at=T0 + timedelta(days=1)
+    )
+
+    claimed = await in_transaction(container, lambda: repo.claim(offered))
+
+    assert claimed == stored
+    assert await count(container) == 1
+    assert await get(container) == stored
+
+
+async def test_a_rolled_back_claim_leaves_no_row(container: Container) -> None:
+    repo = SqlPaymentRepository(container.database)
+
+    async def work() -> Result[None, DomainError]:
+        await repo.claim(make_payment())
+        return Err(DomainError(code="X", message="rolled back"))
+
+    assert isinstance(await SqlTransactionRunner(container.database).run(work), Err)
+    assert await count(container) == 0
+
+
+async def test_a_claim_of_a_new_payment_blocks_a_second_claim_of_the_same_id(
+    container: Container,
+) -> None:
+    # Plan 002 review H1: with no row yet, `SELECT … FOR UPDATE` alone locks nothing; the
+    # insert-then-lock makes the second delivery wait and then see what the first one stored.
+    repo = SqlPaymentRepository(container.database)
+    first_holds = asyncio.Event()
+    release_first = asyncio.Event()
+    seen: list[str] = []
+    second_saw: list[PaymentOutcome | None] = []
+
+    async def first() -> Result[None, DomainError]:
+        claimed = await repo.claim(make_payment())
+        claimed.settle(PaymentOutcome.APPLIED, T0)
+        await repo.save(claimed)
+        first_holds.set()
+        await asyncio.wait_for(release_first.wait(), 10)
+        seen.append("first commits")
+        return Ok(None)
+
+    async def second() -> Result[None, DomainError]:
+        seen.append("second asks")
+        claimed = await repo.claim(make_payment())
+        second_saw.append(claimed.outcome)
+        seen.append("second got it")
+        return Ok(None)
+
+    runner = SqlTransactionRunner(container.database)
+    task_one = asyncio.create_task(runner.run(first))
+    await asyncio.wait_for(first_holds.wait(), 10)
+    task_two = asyncio.create_task(runner.run(second))
+    await asyncio.sleep(0.5)
+    assert seen == ["second asks"]
+    release_first.set()
+    await asyncio.wait_for(asyncio.gather(task_one, task_two), 10)
+
+    assert seen == ["second asks", "first commits", "second got it"]
+    assert second_saw == [PaymentOutcome.APPLIED]
+    assert await count(container) == 1
+
+
 async def test_values_over_their_limits_are_refused(container: Container) -> None:
     with pytest.raises(DBAPIError):
         await put(container, make_payment("9" * 33))
