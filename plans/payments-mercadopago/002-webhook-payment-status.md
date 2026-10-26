@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: payments
 min_implementer: high
 depends_on: ["001"]
@@ -387,6 +387,13 @@ Implemented 2026-10-24, steps 6/6. Citations spot-checked (gateway `_body`, `Ord
    `FakeGateway` takes `payments` and records `fetched`; `InMemoryPayments` is the in-memory
    `PaymentRepository`.
 
+6. **Step 7 (2026-10-26): existing tests edited by the implementer (scope/role).** The repair
+   reverses behaviors that six existing tests asserted (check order, `get_for_update`, the
+   stock-gone actor, in-memory "saves nothing"); each got the minimal edit listed in
+   `## Repair log` so `check` stays green. All are files the plan declares (steps 6 and 7);
+   the tester should review them. `STOCK_GONE_TEXT` is a new constant in `order_emails.py`
+   (cosmetic).
+
 Not done here: the layered tests (testing phase). Only a throwaway smoke in the session
 scratchpad exercised the facade outcomes, the handler (applied once, redelivery no-op, raise on
 gateway failure), the receive command, the webhook route (401/503/200 ignored) and the gateway
@@ -553,5 +560,72 @@ all at the same HEAD.
 
 **Result:** H1 requires a code change (and a regression test racing the same payment id
 twice), L1 a doc change outside the file list. Status stays `review`.
+
+## Repair log
+
+**2026-10-26 — step 7 (review repair: H1, L1, L2, L3), by the implementer.** Citations of
+step 7 spot-checked (`get_for_update` in the port, SQL and in-memory adapters; `_stored` in
+`process_payment.py`; the check order in `receive_notification.py`; `SYSTEM_ACTOR` and
+`cancelled_by` in `order.py`; `cancelled_actor`/`cancelled_email` in `order_emails.py`;
+`docs/architecture.md` payments row and example flow): all matched.
+
+- **H1.** `PaymentRepository.get_for_update` is replaced by `claim(payment) -> Payment`
+  (`payments/domain/repositories.py`). SQL (`sql_payment_repository.py`): `INSERT … ON
+  CONFLICT (payment_id) DO NOTHING`, then `SELECT … FOR UPDATE` (`.one()`), mapping the stored
+  row; the column values are shared with `save` through a `_values` helper, and `save` is still
+  the upsert. In-memory: stores the row when absent and returns a copy of the stored one.
+  `ProcessPaymentNotification._stored` builds the fresh `Payment` from the fetched one, `claim`s
+  it, then `refresh`es it. A concurrent delivery of the same id now blocks on the insert (or the
+  row lock) until the first transaction ends, then reads `outcome` already set.
+- **L2.** `PAYMENTS_ACTOR = "payments"` in `orders/domain/order.py`; `cancelled_by` maps it to
+  `"system"`. The stock-gone cancel in `confirm_payment.py` uses it (the paid move keeps
+  `SYSTEM_ACTOR`). `order_emails.cancelled_email` sends `STOCK_GONE_TEXT` ("Tu pedido {number}
+  fue cancelado porque tu pago llegó cuando ya no había existencias.\nTe reembolsaremos el pago
+  completo.\n") when the cancelling actor is `payments`; the subject and every other case are
+  unchanged.
+- **L3.** `ReceivePaymentNotification.execute` checks the kind and the id first (`Ok(False)`,
+  logged `payments.webhook_ignored`), then the secret (503), then the signature (401). Docstring
+  updated.
+- **L1.** `docs/architecture.md`: the payments row lists the webhook flow and
+  `payments.payment.flagged` (the "Planned: idempotent webhooks" item removed); the orders row
+  lists the `OrderPayments` and `OrderPaymentConfirmations` facades; the example flow is the
+  built one (`payments.notification.received` → worker fetch → `OrderPaymentConfirmations` in
+  the same transaction).
+- **Existing tests that encoded the replaced behavior** (minimal edits to keep `check` green,
+  no new coverage; the regression tests stay with the tester):
+  - `tests/integration/payments/test_sql_payments.py`: the `get` helper reads through `claim`
+    (after a `count(*)` so an unknown id still reads as None, since `claim` would insert); the
+    lock test renamed `test_claim_locks_the_row_until_the_transaction_ends` and calls `claim`.
+  - `tests/unit/payments/test_receive_notification.py`:
+    `test_the_signature_is_checked_before_the_kind` became
+    `test_the_kind_is_checked_before_the_signature` (an unsigned `merchant_order` is `Ok(False)`).
+  - `tests/unit/payments/test_webhook_http.py::test_the_data_id_is_read_from_the_dotted_query_name`:
+    the snake-case `data_id` now answers 200 (ignored, no event) instead of 401.
+  - `tests/unit/payments/test_process_payment.py::test_a_refusal_from_orders_raises_with_its_code_and_saves_nothing`:
+    the in-memory `claim` stores the row before confirming and the fake runner does not roll
+    back, so the assertion is now "the stored row has no outcome"; the PostgreSQL rollback stays
+    covered by the integration handler tests.
+  - `tests/unit/orders/test_confirm_payment.py` (stock-gone history actor is `PAYMENTS_ACTOR`;
+    `test_a_cancelled_for_stock_order_is_cancelled_by_the_system` asserts
+    `cancelled_by(actor) == "system"`) and
+    `tests/integration/orders/test_payment_confirmation_flow.py` (stock-gone history actor
+    `"payments"`).
+- **Not done here (testing phase):** the regression tests step 7 names: two concurrent
+  deliveries of the same new approved payment over PostgreSQL (one paid move, `outcome =
+  applied`); `claim` inserting when absent and keeping a stored `outcome`; the stock-gone email
+  copy (`test_order_emails.py`); `cancelled_by(PAYMENTS_ACTOR)` (`test_order_domain.py`); an
+  unsigned `type=merchant_order` webhook answering 200. Those two declared files are unchanged.
+- **Superseded evidence.** The `## Test coverage` rows for the signature-before-kind order, the
+  `FOR UPDATE` lock via `get_for_update`, the stock-gone `SYSTEM` actor and "saves nothing" on a
+  refusal (in-memory) describe the code before this repair; the `## Review findings` checklist
+  and focus areas likewise. Both need the next testing and review passes.
+- **Finding filed:** `plans/findings/orders-history-actor-docs-omit-payments.md` (the
+  `AdminOrderEvent` docstring and the `order_events` comment still say the actor is an admin
+  id or `system`; not in the file list, and the docstring feeds `openapi.json`).
+- **Runs:** `uv run just check` green (4002 passed, 3 skipped, 1 xfailed; harness 685 passed;
+  import-linter all KEPT); `uv run just test-integration` first run 1 failed (the stock-gone
+  actor assertion in `test_payment_confirmation_flow.py`, fixed above), 1132 passed, 5 skipped;
+  after the fix the affected files (`tests/integration/orders/test_payment_confirmation_flow.py`,
+  `tests/integration/payments/`) pass; `plans-scope`: every change inside the plan.
 
 ## Verification
