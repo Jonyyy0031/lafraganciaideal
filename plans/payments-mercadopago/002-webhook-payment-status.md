@@ -293,7 +293,7 @@ and its adapter `modules/payments/infrastructure/order_payments.py`; the move sh
 
 7. **Review repair (added 2026-10-26 after the first review: H1, L1, L2, L3)**
    - Files: `apps/api/src/fragancia_api/modules/payments/domain/repositories.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/sql_payment_repository.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/in_memory.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/handlers/process_payment.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/commands/receive_notification.py` (modify), `apps/api/src/fragancia_api/modules/orders/domain/order.py` (modify), `apps/api/src/fragancia_api/modules/orders/application/commands/confirm_payment.py` (modify), `apps/api/src/fragancia_api/modules/orders/application/handlers/order_emails.py` (modify), `docs/architecture.md` (modify)
-   - Files: `apps/api/tests/unit/orders/test_order_emails.py` (modify), `apps/api/tests/unit/orders/test_order_domain.py` (modify), `apps/api/tests/integration/orders/test_payment_confirmation_flow.py` (modify) (regression tests, written in the testing phase)
+   - Files: `apps/api/src/fragancia_api/modules/orders/__init__.py` (modify), `apps/api/src/fragancia_api/modules/orders/contracts.py` (modify), `apps/api/src/fragancia_api/modules/orders/infrastructure/tables.py` (modify), `apps/api/openapi.json` (modify) (re-review R-L1 and the actor finding, docs only), `apps/api/tests/unit/orders/test_order_emails.py` (modify), `apps/api/tests/unit/orders/test_order_domain.py` (modify), `apps/api/tests/integration/orders/test_payment_confirmation_flow.py` (modify) (regression tests, written in the testing phase)
    - Do:
      - **H1 (the row lock must exist before the read).** Replace
        `PaymentRepository.get_for_update` with `claim(payment: Payment) -> Payment`: insert the
@@ -462,6 +462,8 @@ Added: unit +12 (`test_order_domain` 2, `test_order_emails` 3, `test_webhook_htt
 
 ## Review findings
 
+### First review (2026-10-24, at c010927; superseded where the re-review below says so)
+
 Reviewed 2026-10-24 to 2026-10-26, diff `main...HEAD` (c010927), tree clean apart from this
 section. `check` and `plans-scope` were run on 2026-10-24 and `test-integration` on 2026-10-26,
 all at the same HEAD.
@@ -577,6 +579,101 @@ all at the same HEAD.
 **Result:** H1 requires a code change (and a regression test racing the same payment id
 twice), L1 a doc change outside the file list. Status stays `review`.
 
+### Re-review (2026-10-26, at e37f388; repair diff `d7bf6c4..HEAD`)
+
+This replaces the first review's checklist and the "focus areas" items it names below. The
+first review's findings are kept above as history; each one's status is given here. Runs
+were live at e37f388 with a clean tree: `plans-scope`, `check` and `test-integration`.
+
+**Checklist: 13 of 14 applicable items passed. 1 failed (one stale docstring, R-L1). 1 n/a
+(PR body).**
+
+- [x] `plans-scope`: "Every change is inside the plan" (46 declared, 58 changed). The repair
+  files are all in step 7's list. `.importlinter` is unchanged since the first review.
+- [x] `uv run just check` green: lint, types, 7 contracts KEPT (14 ignored imports), 4014
+  passed, 3 skipped, 1 xfailed (the known request-id xfail), harness 685 passed.
+- [x] `uv run just test-integration` green: 1138 passed, 5 skipped.
+- [x] Business rules: unchanged from the first review. `PAYMENTS_ACTOR` and its
+  `cancelled_by` mapping are in the domain (`order.py:48,94-100`).
+- [x] CQRS-lite: `claim` is a write-side method used inside the handler's `transactions.run`.
+  It is not screen-specific.
+- [x] Contracts and `openapi.json`: no contract changed in the repair.
+- [x] Errors: same codes. Only the order of the checks changed (L3).
+- [x] Money, Clock and ids: unchanged.
+- [x] Migrations: none in the repair. `claim` uses the existing PK `payment_id`.
+- [x] Routes: unchanged.
+- [x] Wiring: unchanged, and `test_payments_wiring.py` / `test_container.py` are green.
+- [x] No secrets in the repair or the new tests.
+- [x] Deviations honest. Spot check of Deviation 6: the existing tests named in the Repair
+  log were edited exactly as described. The refusal unit test now asserts "no outcome" rather
+  than "nothing saved", and the integration rollback tests still cover "nothing saved".
+- [ ] **Docs: one stale docstring (R-L1 below).** `docs/architecture.md` is fixed (first
+  review L1).
+- n/a PR body: no PR yet.
+
+**First-review findings, closed by the diff:**
+
+- **H1: closed.** `SqlPaymentRepository.claim` (`sql_payment_repository.py:17-50`) runs
+  `INSERT … ON CONFLICT (payment_id) DO NOTHING` first, then `SELECT … FOR UPDATE`.
+  `_stored` (`process_payment.py:88-109`) claims before it reads.
+  - Traced under PostgreSQL's default READ COMMITTED (no isolation override in
+    `database.py`). Run A inserts the row but has not committed. Run B's insert waits on A's
+    unique-index entry until A commits, then does nothing. B's `SELECT … FOR UPDATE` is a new
+    statement, so it sees A's committed row with `outcome = applied`. B then skips `confirm`,
+    and its `save` rewrites the same outcome.
+  - A rolled-back A leaves no row, so B inserts its own and proceeds normally.
+  - Lock order is payment row then order row on every path; no path takes them the other way,
+    so there is no new deadlock.
+  - Covered by `test_sql_payments.py::test_a_claim_of_a_new_payment_blocks_a_second_claim_of_the_same_id`
+    (the SQL-level serialization) and
+    `test_payment_confirmation_flow.py::test_two_deliveries_of_the_same_new_payment_at_once_apply_it_once`.
+  - **Uncertain:** the handler-level test overlaps the two runs through `asyncio.gather`,
+    with a `FakeGateway` that never suspends. Its interleaving is likely but not forced, and,
+    as the coordinator notes, it was never run against the pre-fix code, so it is not proven
+    red. The SQL-level test is the stronger evidence. I did not run the old code (that would
+    mean editing or checking out product code).
+- **L1: closed.** `docs/architecture.md:64-65,197-205` now describes the built flow, both
+  facades and the flagged event. It matches the code.
+- **L2: closed by decision 13 (initiative README).**
+  - The stock-gone cancel uses `PAYMENTS_ACTOR` (`confirm_payment.py:68`), and the paid move
+    keeps `SYSTEM_ACTOR`.
+  - `cancelled_email` (`order_emails.py:161-171`) sends the stock-gone copy with the refund
+    line.
+  - The customer page still says "system", through `cancelled_by`.
+  - `order_events.actor` is `String(64)`, so "payments" fits.
+  - Nothing in orders parses the actor as a user id (`sql_order_queries.py:181` passes it
+    through).
+- **L3: closed.** The kind and the id are checked first (`receive_notification.py:51-53`);
+  an ignored notification stores nothing, so skipping the signature for it is safe. An
+  unsigned or badly signed `payment` is still 401. The one behavior change: with no secret
+  configured, non-payment kinds now get 200 instead of 503 (harmless).
+
+**Regression hunt of the repair:** I found no correctness regression.
+- `claim` inserts the fetched values, and `refresh` then `save` keep the first amount and
+  order, as before.
+- A non-UUID `external_reference` still returns before any row is written.
+- A `not_found` order still leaves `outcome` unset.
+- A refusal from orders or inventory raises, and the relay rollback removes the claimed row
+  (integration `test_a_refusal_from_inventory_rolls_back_the_payment_row_and_the_order`).
+
+**Findings**
+
+**Low**
+
+- **R-L1: `apps/api/src/fragancia_api/modules/orders/__init__.py:44-45` still says the
+  stock-gone order "was cancelled by `system`".** Since the repair the actor is `payments`
+  (`confirm_payment.py:68`). Scenario: the next module author (plan 004, refunds) reads the
+  public-API docstring, looks for a `system` cancel in the history to find stock-gone orders,
+  and finds none. The file is in the plan's file list (step 2), but not in step 7's, so the
+  fix needs a repair-log line. The related admin-contract and table comments are already in
+  `plans/findings/orders-history-actor-docs-omit-payments.md`; this docstring is not listed
+  there.
+- Carried over, unchanged: the platform-injected `X-Request-ID` finding.
+
+**Result:** only R-L1 is open. It is a one-line docstring change, but the stale-doc checklist
+item fails, so status stays `review`. After the fix, a re-review of that line alone is enough.
+No code or test change is needed for H1, L1, L2 or L3.
+
 ## Repair log
 
 **2026-10-26 — step 7 (review repair: H1, L1, L2, L3), by the implementer.** Citations of
@@ -643,5 +740,13 @@ step 7 spot-checked (`get_for_update` in the port, SQL and in-memory adapters; `
   actor assertion in `test_payment_confirmation_flow.py`, fixed above), 1132 passed, 5 skipped;
   after the fix the affected files (`tests/integration/orders/test_payment_confirmation_flow.py`,
   `tests/integration/payments/`) pass; `plans-scope`: every change inside the plan.
+
+**2026-10-26 — re-review R-L1 and the actor finding, by the main session.** Docs only:
+`orders/__init__.py` now says the stock-gone order is cancelled by `payments`; the
+`AdminOrderEvent` docstring (`orders/contracts.py`) and the `order_events` comment
+(`orders/infrastructure/tables.py`) list the actors `system`, `customer` and `payments` besides an
+admin user id; `uv run just openapi` regenerated (one description line). The finding
+`orders-history-actor-docs-omit-payments` is resolved by this plan. Declared on step 7's second
+`Files:` line.
 
 ## Verification

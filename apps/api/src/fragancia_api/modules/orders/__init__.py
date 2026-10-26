@@ -42,7 +42,7 @@ Public API for other modules:
   paid, actor `system`, note "Pagado con Mercado Pago (pago …)"), `not_pending` (with the
   order's `status`), `amount_mismatch` (the amount or the currency, which must be `MXN`,
   differs from the total; nothing changes), `stock_gone` (inventory refused the commit, so the
-  order was cancelled by `system` and its reservation released) or `not_found`. It joins the
+  order was cancelled by `payments` and its reservation released) or `not_found`. It joins the
   caller's transaction; the commit and the move happen together. Any other refusal comes back
   as `Err`.
 

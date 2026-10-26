@@ -1,5 +1,6 @@
 ---
-status: open
+status: resolved
+plan: payments-mercadopago/002
 module: orders
 found: 2026-10-26
 ---

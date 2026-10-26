@@ -7225,7 +7225,7 @@
           "tracking_number"
         ],
         "title": "AdminOrderEvent",
-        "description": "One history row. `actor` is an admin user id or `system`; a refund mark has the same\nstatus in `from_status` and `to_status`."
+        "description": "One history row. `actor` is an admin user id, `system`, `customer` or `payments` (a\ncancel because a late payment found no stock); a refund mark has the same\nstatus in `from_status` and `to_status`."
       },
       "AdminOrderInvoice": {
         "properties": {

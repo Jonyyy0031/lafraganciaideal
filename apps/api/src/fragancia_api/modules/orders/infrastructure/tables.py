@@ -128,8 +128,8 @@ orders = Table(
     schema=SCHEMA,
 )
 
-# One row per move of an order, oldest first when read back. `actor` is an admin user id or
-# `system`; no foreign key because identity owns users.
+# One row per move of an order, oldest first when read back. `actor` is an admin user id,
+# `system`, `customer` or `payments`; no foreign key because identity owns users.
 order_events = Table(
     "order_events",
     metadata,
