@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -265,6 +265,31 @@ order page can show the pending ticket (decision 16). It also folds in the open 
      - an already-expired ticket sends no email;
      - cancelling an order with a pending OXXO ticket cancels it in Mercado Pago, and a later
        notification stores `cancelled`.
+
+9. **Re-review repair (added 2026-10-27 after the re-review: R1, R2, R3)**
+   - Files: `apps/api/src/fragancia_api/modules/payments/application/queries/pending_tickets.py` (modify), `apps/api/src/fragancia_api/modules/payments/contracts.py` (modify), `apps/api/openapi.json` (modify), `apps/api/src/fragancia_api/modules/payments/domain/events.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/handlers/process_payment.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/handlers/cancel_ticket.py` (create), `apps/api/src/fragancia_api/modules/payments/module.py` (modify), `apps/api/src/fragancia_api/modules/payments/__init__.py` (modify), `docs/architecture.md` (modify), `apps/api/README.md` (modify)
+   - Do:
+     - **R1.** `GetPendingTickets` returns each item's `expires_at` as
+       `min(ticket.expires_at, order.payment_due_at)`; the order is already resolved through
+       `payable`. Update `PendingTicket.expires_at`'s description to say it is when the ticket
+       stops paying the order, then run `uv run just openapi`.
+     - **R2 (decision 20, applied to late notifications).** When the hold answers `not_pending`
+       for a payment that `needs_hold` (a pending cash ticket whose order was already paid or
+       cancelled), the handler publishes `TicketCancelRequested`
+       (`payments.ticket.cancel_requested`, payload `payment_id`) inside its transaction,
+       besides `mark_held`.
+       - A new subscriber `CancelTicket` (`cancel_ticket.py`) calls `gateway.cancel_payment`.
+         `Err` raises, so only that event retries; `Ok(False)` is already logged by the gateway.
+       - `not_found` publishes nothing.
+       - Wire it in `module.py` and list the event in `payments/__init__.py`.
+     - **R3.** The payments row of `docs/architecture.md` and the README's payments section
+       describe:
+       - the cap at the first ticket (decision 19);
+       - ticket cancellation on close and on late notifications (decision 20);
+       - which Mercado Pago answers are permanent (400, 404, 409, 422) and which retry.
+   - Observable result: the pending query never shows a deadline past the order's; a ticket
+     notified after the order was cancelled is cancelled in Mercado Pago; `uv run just check`
+     green.
 
 ## Acceptance criteria
 
