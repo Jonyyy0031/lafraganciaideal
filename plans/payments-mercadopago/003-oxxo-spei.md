@@ -1,5 +1,5 @@
 ---
-status: approved
+status: testing
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -218,6 +218,7 @@ order page can show the pending ticket (decision 16). It also folds in the open 
 
 7. **Wiring and docs**
    - Files: `apps/api/README.md` (modify), `docs/architecture.md` (modify), `plans/payments-mercadopago/README.md` (modify)
+   - Files: `apps/api/src/fragancia_api/modules/orders/infrastructure/sql_order_repository.py` (modify), `apps/api/src/fragancia_api/modules/payments/domain/events.py` (modify) (deviations 1 and 8, accepted by the main session), `apps/api/tests/unit/payments/` (modify), `apps/api/tests/integration/payments/` (modify), `apps/api/tests/unit/orders/` (modify), `apps/api/tests/integration/orders/` (modify) (tests adjusted at implementation, deviation 4, and the layered tests of the testing phase)
    - Do: describe cash/SPEI, the hold, the new endpoint and `orders.order.payment_pending` in the
      README and architecture docs. In the initiative README, record plan 003's row as unchanged.
    - Observable result: `uv run just check` green; `plans-scope` clean.
@@ -258,6 +259,82 @@ order page can show the pending ticket (decision 16). It also folds in the open 
 | e2e         | no      | (no e2e infrastructure yet) |
 
 ## Deviations
+
+Implementer, 2026-10-27. All seven steps done. `plans-scope` lists the files below as out of
+scope; each is recorded here.
+
+1. **`orders/infrastructure/sql_order_repository.py` (not in the file list): `save` now writes
+   `payment_due_at`.**
+   - Plan: step 3 moves `payment_due_at` in the domain and saves the order.
+   - Reality: `SqlOrderRepository.save` (`sql_order_repository.py:151-164`) updated only the
+     status, cancel reason, refund status, carrier, tracking number and `updated_at`. Without
+     the column, a moved deadline would never reach the database.
+   - Done: one line, `payment_due_at=order.payment_due_at`, in the `UPDATE`. Treated as a
+     file-list omission, not a design change. The reviewer should confirm.
+2. **`PaymentQueries` lives in `payments/application/ports.py`, not in `domain/repositories.py`.**
+   - Plan: step 5 put the port in `domain/repositories.py`.
+   - Convention: `XxxQueries` ports return response models and live in
+     `application/ports.py`, as catalog does (`catalog/application/ports.py:83`). The domain
+     must not import `contracts`.
+   - Done: `PaymentQueries.pending_for_order(order_id, now) -> list[PendingTicket]` in
+     `application/ports.py` (already in the plan's file list). `domain/repositories.py` still
+     gets `CheckoutRepository.close` (step 6). The SQL adapter is `SqlPaymentQueries`, in
+     `sql_payment_repository.py` as planned. `InMemoryPayments` implements it too.
+3. **`PendingTicket.method` is the Spanish label** (`METHOD_LABELS`: "efectivo en tienda" /
+   "transferencia SPEI"). The plan did not say whether the contract's `method` is the label or
+   Mercado Pago's id. The label matches what the facade and the email get. The stored
+   `payment_method` (e.g. `oxxo`) is not exposed.
+4. **Existing tests changed so `check` stays green**. Each change follows from behavior the plan
+   changes; none adds coverage (that is the tester's job):
+   - `tests/unit/payments/support.py`: `make_request` sets the new required `cash_expires_at`.
+   - `tests/unit/payments/test_mercadopago_gateway.py`: the expected body excludes only `atm`
+     and has `date_of_expiration`. `test_only_cards_in_one_installment` is renamed
+     `test_only_atm_is_excluded_in_one_installment`.
+   - `tests/unit/payments/test_process_payment.py`: `FakeConfirmations.hold` exists to satisfy
+     the port, and raises if it is called (these plan 002 tests never reach it).
+   - `tests/unit/orders/test_confirm_payment.py`: the outcome list includes `held`.
+   - `tests/unit/orders/test_order_emails_wiring.py`: `orders.order.status_changed` now also has
+     payments' `CloseCheckout`.
+   - `tests/integration/payments/test_sql_payments.py`: the row has the four new columns
+     (null).
+5. **Implementation choices the plan left open (not deviations, listed for review):**
+   - The new fields on `GatewayPayment` and `Payment` default to `None`, so existing builders
+     keep working.
+   - `Payment.describe(payment_method, expires_at, ticket_url)` takes the ticket fields on
+     every delivery. `refresh` keeps its signature.
+   - `Payment.is_live_ticket(now)` backs the in-memory query.
+   - The gateway reads `date_of_expiration` as `None` when it is malformed or has no offset.
+   - `Order.await_payment` on a non-pending order answers `OrderTransitionInvalid` (`to`:
+     `pending_payment`). The facade checks the status first, so this path is not reached
+     through the facade.
+   - Instructions email: the amount is the order's `total_cents`, and the deadline is the
+     event's `due_at`.
+   - `ProcessPaymentNotification._hold` logs `payments.ticket_not_held` for `not_pending` and
+     `not_found`, then marks the payment held.
+6. **Initiative README**: per step 7, plan 003's row stays unchanged, so the file was not
+   edited.
+7. **Migration** generated with `just db-revision` and reformatted like 0024. It was applied to
+   the development database with `alembic upgrade head` (equivalent to `just db-migrate`) and
+   to the test database with `just db-migrate --test`. `alembic check` is clean.
+
+8. **Step 6 split in two subscribers (repair asked by the main session, 2026-10-27).**
+   - Plan: `CloseCheckout` subscribes to `orders.order.status_changed` and calls Mercado Pago
+     there.
+   - Problem (flagged at the first handoff): that subscriber shares the event with orders'
+     `SendOrderStatusEmail`, which runs first. A Mercado Pago outage raised and the relay
+     retried the whole event, so the customer's status email could be sent again.
+   - Done:
+     - `RequestCheckoutClose` subscribes to `orders.order.status_changed`. It acts only on
+       `pending_payment` → `paid`/`cancelled`. It publishes the new payments event
+       `payments.checkout.close_requested` (`CheckoutCloseRequested` in `domain/events.py`,
+       payload `order_id`) inside the relay's transaction, with no network call.
+     - `CloseCheckout` now subscribes to `payments.checkout.close_requested`. It does
+       `get_for_order`, `close_checkout` (raising on a gateway error, so only its own outbox row
+       retries; `Ok(False)` logs `payments.checkout_missing`) and `CheckoutRepository.close`.
+     - Both are wired in `payments/module.py`. The event is listed in `payments/__init__.py`,
+       `docs/architecture.md` and the README.
+     - `tests/unit/orders/test_order_emails_wiring.py` now expects `RequestCheckoutClose` on
+       `orders.order.status_changed`.
 
 ## Test coverage
 
