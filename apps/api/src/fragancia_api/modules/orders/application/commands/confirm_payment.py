@@ -1,12 +1,17 @@
 """The facade payments uses to apply an approved Mercado Pago payment to an order."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
+
+import structlog
 
 from fragancia_api.modules.orders.application.commands.lifecycle import OrderMove
 from fragancia_api.modules.orders.domain.order import PAYMENTS_ACTOR, SYSTEM_ACTOR, OrderStatus
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
+
+_log = structlog.get_logger(__name__)
 
 PAID_NOTE = "Pagado con Mercado Pago (pago {payment_id})"
 STOCK_GONE_REASON = "Pago recibido sin existencias (pago {payment_id})"
@@ -21,12 +26,14 @@ class PaymentConfirmationOutcome(StrEnum):
     AMOUNT_MISMATCH = "amount_mismatch"
     STOCK_GONE = "stock_gone"
     NOT_FOUND = "not_found"
+    # `hold_for_payment`: the order now waits for the ticket.
+    HELD = "held"
 
 
 @dataclass(frozen=True, slots=True)
 class PaymentConfirmation:
-    """What an approved payment did to the order. `number` is None only for `not_found`;
-    `status` is the order's status for `not_pending`."""
+    """What a payment did to the order. `number` is None only for `not_found`; `status` is the
+    order's status for `not_pending`."""
 
     outcome: PaymentConfirmationOutcome
     number: int | None = None
@@ -40,7 +47,8 @@ class OrderPaymentConfirmations(OrderMove):
     (committing its reservation, even past the deadline while the units can be sold), or cancels
     it when inventory refuses the commit because the units are gone. The commit and the move
     happen in one transaction, so a committed reservation never sits on a pending order
-    (initiative README, "Dependency notes"). It joins the caller's transaction.
+    (initiative README, "Dependency notes"). `hold_for_payment` keeps a pending order waiting
+    for a cash or transfer ticket. Both join the caller's transaction.
     """
 
     async def confirm(
@@ -93,5 +101,47 @@ class OrderPaymentConfirmations(OrderMove):
             await self._orders.save(order)
             await self._events.publish(order.pull_events())
             return Ok(PaymentConfirmation(PaymentConfirmationOutcome.PAID, order.number))
+
+        return await self._transactions.run(work)
+
+    async def hold_for_payment(
+        self, order_id: UUID, until: datetime, method: str, instructions_url: str | None
+    ) -> Result[PaymentConfirmation, DomainError]:
+        """A cash or transfer ticket was issued (payments decisions 5 and 15): a
+        `pending_payment` order's deadline moves to `until` when that is later, and its
+        reservation is extended to it, in one transaction. A refused extension (the
+        reservation expired or was released) is logged and keeps the new deadline: the ticket
+        can still be paid, as a late payment. Records `orders.order.payment_pending`, which
+        sends the customer the instructions email. Joins the caller's transaction."""
+
+        async def work() -> Result[PaymentConfirmation, DomainError]:
+            order = await self._orders.get_by_id_for_update(order_id)
+            if order is None:
+                return Ok(PaymentConfirmation(PaymentConfirmationOutcome.NOT_FOUND))
+            if order.status is not OrderStatus.PENDING_PAYMENT:
+                return Ok(
+                    PaymentConfirmation(
+                        PaymentConfirmationOutcome.NOT_PENDING, order.number, order.status.value
+                    )
+                )
+            match order.await_payment(until, method, instructions_url, self._clock.now()):
+                case Err(error):
+                    return Err(error)
+                case Ok(moved):
+                    pass
+            if moved and order.reservation_id is not None:
+                match await self._stocks.extend(order.reservation_id, order.payment_due_at):
+                    case Err(refused):
+                        _log.warning(
+                            "orders.payment_hold_not_extended",
+                            number=order.number,
+                            reservation_id=str(order.reservation_id),
+                            code=refused.code,
+                        )
+                    case Ok(_):
+                        pass
+            await self._orders.save(order)
+            await self._events.publish(order.pull_events())
+            return Ok(PaymentConfirmation(PaymentConfirmationOutcome.HELD, order.number))
 
         return await self._transactions.run(work)

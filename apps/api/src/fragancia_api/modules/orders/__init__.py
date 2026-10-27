@@ -12,11 +12,16 @@ Events (published through the outbox; other modules subscribe by name, never by 
 - `orders.order.paid`: once, when an order is marked paid (in addition to `status_changed`).
   Payload: `order_id` (UUID string) and `number` (int). It gives the owners' email its own outbox
   row.
+- `orders.order.payment_pending`: a cash or transfer ticket was issued for a pending order
+  (`OrderPaymentConfirmations.hold_for_payment`); the status does not change. Payload:
+  `order_id` (UUID string), `number` (int), `due_at` (ISO 8601 string: the order's deadline
+  after the hold, moved or unchanged), `method` (the label of how the ticket is paid, e.g.
+  "efectivo en tienda") and `instructions_url` (string or null).
 
-Orders itself consumes both events in the worker to send plain-text emails (decisions 44 to 46):
-the customer's "pedido recibido" and one email per status (none for the refund mark), and a
-"pedido pagado" email to each active owner. Customer links point to
-`{STOREFRONT_URL}/pedido#token=...`.
+Orders itself consumes these events in the worker to send plain-text emails (decisions 44 to
+46): the customer's "pedido recibido", one email per status (none for the refund mark), the
+"ficha de pago" with the ticket's instructions, and a "pedido pagado" email to each active
+owner. Customer links point to `{STOREFRONT_URL}/pedido#token=...`.
 
 The lifecycle lives in the panel (`/api/v1/admin/orders`): an order only moves forward
 (pending_payment to paid or cancelled; paid to preparing, shipped, ready_for_pickup or
@@ -45,6 +50,13 @@ Public API for other modules:
   order was cancelled by `payments` and its reservation released) or `not_found`. It joins the
   caller's transaction; the commit and the move happen together. Any other refusal comes back
   as `Err`.
+  `hold_for_payment(order_id, until, method, instructions_url)` keeps a `pending_payment` order
+  waiting for a cash or transfer ticket: its `payment_due_at` moves to `until` when that is
+  later (never earlier) and its reservation is extended to it, in one transaction; a refused
+  extension (an expired or released reservation) is logged as
+  `orders.payment_hold_not_extended` and keeps the new deadline. It records
+  `orders.order.payment_pending` and answers `held`, `not_pending` (with the order's
+  `status`) or `not_found`. It joins the caller's transaction.
 
 The cart is identified by the `fragancia_cart` cookie, shows current prices and availability, and
 never reserves stock. The worker job `orders_purge_carts` deletes carts untouched for 30 days.
