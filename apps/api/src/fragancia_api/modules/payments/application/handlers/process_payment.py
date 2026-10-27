@@ -8,7 +8,12 @@ from fragancia_api.modules.payments.application.ports import (
     PaymentGateway,
 )
 from fragancia_api.modules.payments.domain.events import PaymentFlagged
-from fragancia_api.modules.payments.domain.payment import APPROVED, Payment, PaymentOutcome
+from fragancia_api.modules.payments.domain.payment import (
+    APPROVED,
+    METHOD_LABELS,
+    Payment,
+    PaymentOutcome,
+)
 from fragancia_api.modules.payments.domain.repositories import PaymentRepository
 from fragancia_api.shared.application.clock import Clock
 from fragancia_api.shared.application.events import EventMessage, EventPublisher
@@ -22,6 +27,7 @@ _PAID = "paid"
 _NOT_PENDING = "not_pending"
 _AMOUNT_MISMATCH = "amount_mismatch"
 _STOCK_GONE = "stock_gone"
+_HELD = "held"
 
 
 class ProcessPaymentNotification:
@@ -30,8 +36,10 @@ class ProcessPaymentNotification:
 
     Idempotent by payment id: every delivery stores the payment's current state, and an
     approved payment is applied to its order only while its `outcome` is unset, so a duplicate
-    or replayed notification changes nothing. Mercado Pago down, or a refusal from orders,
-    raises: the relay rolls the whole transaction back and retries the event.
+    or replayed notification changes nothing. A pending cash or transfer ticket holds its order
+    until the ticket expires, once per payment (`held_at`), so the instructions email is sent
+    once. Mercado Pago down, or a refusal from orders, raises: the relay rolls the whole
+    transaction back and retries the event.
     """
 
     def __init__(
@@ -76,6 +84,12 @@ class ProcessPaymentNotification:
                         return Err(error)
                     case Ok(_):
                         pass
+            if payment.needs_hold():
+                match await self._hold(payment, order_id):
+                    case Err(error):
+                        return Err(error)
+                    case Ok(_):
+                        pass
             await self._payments.save(payment)
             return Ok(None)
 
@@ -103,10 +117,41 @@ class ProcessPaymentNotification:
                 outcome=None,
                 created_at=now,
                 updated_at=now,
+                payment_method=fetched.payment_method,
+                expires_at=fetched.expires_at,
+                ticket_url=fetched.ticket_url,
             )
         )
         payment.refresh(fetched.status, fetched.status_detail, fetched.approved_at, now)
+        payment.describe(fetched.payment_method, fetched.expires_at, fetched.ticket_url)
         return payment
+
+    async def _hold(self, payment: Payment, order_id: UUID) -> Result[None, DomainError]:
+        """Keep the order waiting for a pending cash or transfer ticket (decision 5). Once per
+        payment: `held_at` is set whatever orders answers, except a refusal (retried)."""
+        if payment.expires_at is None or payment.payment_type is None:
+            raise ValueError("only a pending ticket with an expiry is held")
+        held = await self._orders.hold(
+            order_id,
+            until=payment.expires_at,
+            method=METHOD_LABELS[payment.payment_type],
+            instructions_url=payment.ticket_url,
+        )
+        match held:
+            case Err(error):
+                return Err(error)
+            case Ok(confirmation):
+                pass
+        if confirmation.outcome != _HELD:
+            # `not_pending` or `not_found`: a ticket for a paid or cancelled order (or for no
+            # order) needs nothing more, and is never retried.
+            _log.info(
+                "payments.ticket_not_held",
+                payment_id=payment.payment_id,
+                outcome=confirmation.outcome,
+            )
+        payment.mark_held(self._clock.now())
+        return Ok(None)
 
     async def _apply(self, payment: Payment, order_id: UUID) -> Result[None, DomainError]:
         confirmed = await self._orders.confirm(

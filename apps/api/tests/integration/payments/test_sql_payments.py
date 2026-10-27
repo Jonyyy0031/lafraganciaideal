@@ -119,6 +119,11 @@ async def test_the_columns_are_stored_as_given(container: Container) -> None:
         "outcome": "refund_due",
         "created_at": T0,
         "updated_at": T0,
+        # Migration 0025 (plan 003): empty for a card payment.
+        "payment_method": None,
+        "expires_at": None,
+        "ticket_url": None,
+        "held_at": None,
     }
 
 

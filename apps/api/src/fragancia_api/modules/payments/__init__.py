@@ -2,11 +2,20 @@
 
 `POST /api/v1/payments/checkout` takes the order's private-link token (a secret, in the body)
 and answers the Mercado Pago redirect URL. The API creates a *preference* for the order's
-frozen total: items for the lines plus "Envío", cards only in one installment (decision 4),
-`external_reference` = the order id, and an expiry equal to the order's `payment_due_at`, so a
-stale link cannot pay an order the overdue job cancelled. The preference is stored in
-`payments.checkouts` and a second request reuses it while it is valid. `auto_return` is sent
-only when the back URL is https (decision 8).
+frozen total: items for the lines plus "Envío", cards in one installment (decision 4), cash in
+stores (`ticket`) and SPEI (`bank_transfer`); only `atm` is excluded (decision 14).
+`external_reference` = the order id, the link expires with the order's `payment_due_at`, so a
+stale link cannot pay an order the overdue job cancelled, and a cash or transfer ticket issued
+from it expires 48 hours after the link was created (`date_of_expiration`, decision 5). The
+preference is stored in `payments.checkouts` and a second request reuses it while it is valid.
+`auto_return` is sent only when the back URL is https (decision 8). When the order leaves
+`pending_payment` (paid or cancelled), payments expires the preference in Mercado Pago and
+closes the stored checkout (decision 18).
+
+`POST /api/v1/payments/pending` takes the same token and answers the order's cash and transfer
+tickets that can still be paid (method, amount, expiry, instructions page), newest first
+(decision 16); none when the order is not waiting for payment; 404
+`PAYMENTS_ORDER_NOT_FOUND`.
 
 Errors: 404 `PAYMENTS_ORDER_NOT_FOUND`, 409 `PAYMENTS_ORDER_NOT_PAYABLE` and 503
 `PAYMENTS_GATEWAY_UNAVAILABLE` (Mercado Pago failed, timed out, refused or is not configured).
@@ -19,7 +28,11 @@ ignored. The worker fetches the payment from Mercado Pago, stores it in `payment
 and, when it is approved, applies it once through orders' `OrderPaymentConfirmations`: the
 order moves to paid (payment `applied`); an amount or currency that differs leaves it pending
 (`amount_mismatch`); units gone cancel it (`refund_due`); an order already paid or cancelled
-only records `refund_due`. Other statuses are only stored.
+only records `refund_due`. A `pending` cash or transfer ticket (with its method, expiry and
+instructions page) holds its order once, through `OrderPaymentConfirmations.hold_for_payment`:
+the order's deadline and reservation move to the ticket's expiry and orders emails the
+customer the instructions (`held_at` keeps a re-delivery from doing it again). Other statuses
+are only stored.
 
 Events (published through the outbox; other modules subscribe by name, never by import):
 
@@ -29,6 +42,16 @@ Events (published through the outbox; other modules subscribe by name, never by 
   `payment_id` (string), `number` (int; the order is `LFI-<number>`), `reason`
   (`amount_mismatch` or `stock_gone`), `amount_cents` (int) and `currency` (string). Payments
   itself emails each active owner "Pago a revisar".
+
+- `payments.checkout.close_requested`: an order moved from `pending_payment` to `paid` or
+  `cancelled`, so its Mercado Pago link must stop taking payments (decision 18). Payload:
+  `order_id` (UUID string). Payments itself handles it in the worker: it expires the
+  preference in Mercado Pago and closes the stored checkout; a Mercado Pago outage retries
+  only this event.
+
+Payments subscribes to orders' `orders.order.status_changed` (by name) only to publish
+`payments.checkout.close_requested`; it makes no network call there, so it never makes orders'
+emails retry.
 
 Public API for other modules: nothing yet.
 

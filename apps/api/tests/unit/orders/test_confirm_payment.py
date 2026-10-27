@@ -93,6 +93,7 @@ def test_the_facade_and_its_types_are_exported_by_the_orders_module() -> None:
         "amount_mismatch",
         "stock_gone",
         "not_found",
+        "held",
     ]
 
 

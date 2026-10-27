@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -12,6 +13,11 @@ class CheckoutRepository(Protocol):
 
     async def upsert(self, checkout: Checkout) -> None:
         """Store the checkout, replacing the one the order had."""
+        ...
+
+    async def close(self, order_id: UUID, at: datetime) -> None:
+        """Set the stored checkout's `expires_at` to `at`, so it is never reused (decision 18).
+        Nothing happens when the order has none."""
         ...
 
 
