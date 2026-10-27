@@ -92,14 +92,33 @@ To receive webhooks in development:
 
 1. Expose the local API (port 8100) through a public https tunnel (e.g. `cloudflared tunnel
    --url http://127.0.0.1:8100` or `ngrok http 8100`).
-2. In the Mercado Pago panel of your test application, open "Webhooks", set the URL
-   `https://<tunnel>/api/v1/payments/webhooks/mercadopago` (test mode) and select the event
-   "Pagos".
-3. Copy the secret that page shows into `MERCADOPAGO_WEBHOOK_SECRET` in `apps/api/.env`, and
-   restart the API.
+2. Put the credentials of your Mercado Pago test seller account in
+   `MERCADOPAGO_ACCESS_TOKEN` (they start with `APP_USR-`, like production ones).
+3. In the Mercado Pago panel, open "Webhooks". It has two tabs, "Modo de prueba" and "Modo
+   productivo", each with its own URL and its own secret. Set the URL
+   `https://<tunnel>/api/v1/payments/webhooks/mercadopago` in both tabs and mark the event
+   "Pagos (legacy)" ("Order (Mercado Pago)" is the Orders API and does not apply).
+4. Copy into `MERCADOPAGO_WEBHOOK_SECRET` in `apps/api/.env` the secret of the tab that matches
+   the credentials: the "Modo de prueba" tab for a test seller account. With the other tab's
+   secret every real notification is refused with 401. "Simular notificación" signs with the
+   secret of the tab it is sent from, so a simulation can pass while real notifications fail.
+   Restart the API.
 
 With an http `STOREFRONT_URL` (as in development) the checkout is created without
 `auto_return`, so after paying the guest comes back with the "Volver al sitio" button.
+
+The checkout offers cards (one installment), cash in stores (OXXO and others, `ticket`) and
+SPEI (`bank_transfer`); only bank counters and ATMs (`atm`) are excluded. A cash or transfer
+ticket stays `pending` until the guest pays it and expires 48 hours after the link was
+created. When its webhook arrives, the worker holds the order once: orders moves the order's
+`payment_due_at` and its reservation to the ticket's expiry (never earlier) and publishes
+`orders.order.payment_pending`, which emails the customer "Tu ficha de pago del pedido …" with
+the amount, the deadline in Cancún time and Mercado Pago's ticket link. The order page reads the
+live tickets with `POST /api/v1/payments/pending` (the order's token in the body). When an
+order is paid or cancelled, payments publishes `payments.checkout.close_requested` and, in that
+event's own outbox row, expires its Mercado Pago preference (`PUT /checkout/preferences/{id}`)
+and closes the stored checkout, so the old link no longer
+takes payments.
 
 ## Database changes
 

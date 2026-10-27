@@ -1,7 +1,8 @@
 ---
-status: open # open → deferred | planned | resolved | discarded (the user decides)
+status: planned # open → deferred | planned | resolved | discarded (the user decides)
 module: payments
 found: 2026-10-27
+plan: payments-mercadopago/003
 ---
 
 # The webhook setup docs miss which panel tab, event and secret a test account needs
