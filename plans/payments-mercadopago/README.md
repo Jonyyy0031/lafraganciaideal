@@ -20,7 +20,7 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
 | ---- | ----- | ---------- | ------- |
 | 001  | Payments module and checkout redirect | — | New `payments` module with the `PaymentGateway` port and its Mercado Pago adapter. From the order page, the guest gets a Checkout Pro link for a pending order (cards only, one installment), reused while it is valid |
 | 002  | Webhook and payment status | 001 | Fixes `auto_return` on http back URLs. A signed, idempotent webhook. The worker fetches the payment and moves the order to paid (approved), leaves it pending (rejected), or records it for review or refund |
-| 003  | OXXO and SPEI | 002 | Cash and transfer enabled. A pending ticket extends the reservation and the payment window to its 48-hour expiry, and the customer gets the payment instructions |
+| 003  | OXXO and SPEI | 002 | Cash and transfer enabled. A pending ticket extends the reservation and the payment window to its 48-hour expiry (counted from the first ticket), and the customer gets the payment instructions. A paid or cancelled order closes its link and cancels its pending tickets |
 | 004  | Automatic refunds | 002 | Cancelling a paid Mercado Pago order refunds it through the API. A payment approved for an order already cancelled is refunded, and the customer and owners are told |
 
 ## Dependency notes

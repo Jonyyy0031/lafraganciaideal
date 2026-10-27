@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -528,5 +528,95 @@ the order is cancelled or paid by card, which leads to `refund_due`.
 **Result:** no High findings. M1 is a product decision that could need a code change, so the
 status stays `review` until the user rules on it. L1 is a small fix that can go with M1's
 repair. L2 and L3 are uncertain and can be accepted or left to the verifier.
+
+## Repair log
+
+Implementer, 2026-10-27. Step 8 (review repair: M1, L1, L2, L3 and the finding
+`payments-cancelled-order-keeps-live-ticket`), decisions 19 and 20. The "Test coverage" and
+"Review findings" sections above describe the code before this repair. They are superseded for
+the changed behavior below and must be repeated (testing → review → verify).
+
+**What changed**
+- **M1 (decision 19).** `PaymentRepository.first_hold_expiry(order_id)` (SQL: `expires_at` of
+  the row with `held_at` not null and `expires_at > held_at` (repair deviation 6), ordered by
+  `held_at`, `payment_id`, limit 1; in-memory the same). `ProcessPaymentNotification._hold` passes `until = min(payment.expires_at, first)`.
+  The current payment is never its own "first" (its `held_at` is still null when it is read).
+- **L1.** `Payment.needs_hold(now)` now requires `expires_at > now`. New
+  `Payment.expired_on_arrival(now)` (pending cash ticket, not held, `expires_at <= now`): the
+  handler logs `payments.ticket_expired_on_arrival` and calls `mark_held(now)`, with no call to
+  orders and so no email.
+- **L2.** `get_payment` drops a `ticket_url` longer than `TICKET_URL_MAX_LENGTH = 500` (gateway
+  constant, matching `String(500)` in `tables.py`) and logs `payments.ticket_url_too_long`
+  with the payment id and length.
+- **L3.** `close_checkout`: 404 → `Ok(False)` as before; 400, 409 and 422 → `Ok(False)` and
+  `payments.checkout_close_refused` (warning, with the status); every other failure → `Err`
+  (repair deviation 5).
+  `CloseCheckout` then also logs `payments.checkout_missing` for any `Ok(False)` (unchanged
+  code path).
+- **Finding (decision 20).** `PaymentGateway.cancel_payment(payment_id)`: `PUT
+  {api_url}/v1/payments/{id}` with `{"status": "cancelled"}`, same client settings and bearer
+  as the other calls; 2xx `Ok(True)`, 400/404/409/422 `Ok(False)` +
+  `payments.ticket_cancel_refused`, any other failure / transport / no token `Err` (repair
+  deviation 5). `PaymentRepository.pending_cash(order_id)` (status `pending`,
+  type in `CASH_TYPES`, any expiry, oldest first). `CloseCheckout` gains a `payments`
+  dependency; it reads the checkout and the pending tickets in one transaction, closes the
+  preference and the stored checkout when there is one, then cancels each ticket; an `Err`
+  raises (the event retries). Rows are not edited. `FakeGateway.cancel_payment` records
+  `cancelled` and answers False for `refused_cancels`.
+- The finding is `status: planned`, `plan: payments-mercadopago/003`. Docs: `payments/__init__.py`,
+  `apps/api/README.md`, and plan 003's row in the initiative README (decisions 19 and 20 were
+  already recorded there).
+
+**Deviations of the repair**
+1. **`payments/module.py` (not in step 8's file list, but in steps 5 and 6)**: wires the new
+   `payments=` argument of `CloseCheckout`, sharing one `SqlPaymentRepository` with
+   `ProcessPaymentNotification`. A file-list omission; `plans-scope` is clean.
+2. **Tickets are cancelled even when the order has no stored checkout.** Step 8 says "after the
+   preference"; the old early return on "no checkout" would have skipped the tickets. Normally
+   a ticket implies a checkout, so this changes nothing in practice.
+3. **Existing tests adjusted, no coverage added** (the tester's job):
+   - `unit/payments/test_payment_tickets_domain.py`: `needs_hold()` → `needs_hold(NOW)`.
+   - `unit/payments/test_close_checkout.py` and `integration/payments/test_sql_tickets.py`:
+     `CloseCheckout` gets `payments=` (in-memory / SQL).
+   - `unit/payments/test_mercadopago_tickets.py`: the "failing status is unavailable" case now
+     covers 401/403/408/429/500/502/503. 400 is now `Ok(False)` (repair deviation 5), and 408
+     was added.
+   - `unit/payments/test_process_payment_tickets.py::test_each_payment_of_the_order_holds_it_once`:
+     the second hold's `until` is now the first ticket's expiry (decision 19).
+4. **For the reviewer:**
+   - (Superseded by repair deviation 5.) As first written, L3 and decision 20 treated every 4xx,
+     401 and 429 included, as permanent.
+   - **Accepted by the main session as is:** `first_hold_expiry` is read before orders locks the
+     order row. Two tickets of the same order processed concurrently can both see no earlier
+     hold. Each still passes through the order's `FOR UPDATE`, so the deadline only grows to the
+     later of the two (the pre-repair behavior for that race).
+   - (Superseded by repair deviation 6.) As first written, a ticket marked held by L1 counted as
+     "held" for `first_hold_expiry`.
+5. **4xx classification (main-session decision, 2026-10-27).** Only 400, 404, 409 and 422 are
+   permanent (`Ok(False)`, logged) for both `close_checkout` and `cancel_payment`. They are
+   `PERMANENT_REFUSALS` in `mercadopago_gateway.py`; `close_checkout` keeps its silent 404.
+   401, 403, 408, 429, every other 4xx, 5xx and transport errors are `Err`, so the event
+   retries and, if it never recovers, shows in the failed-events panel. Docs updated in
+   `ports.py`, `payments/__init__.py` and the README.
+6. **`first_hold_expiry` counts only holds that could have moved the order (main-session
+   decision, 2026-10-27):** `held_at` not null and `expires_at > held_at`, in the SQL adapter
+   and the in-memory fake (port docstring updated). An expired-on-arrival ticket therefore never
+   caps a later legitimate hold with a past deadline. `not_pending`/`not_found` need no filter,
+   because the order is no longer pending.
+
+**Commands**
+- `uv run just typecheck`: green (517 files).
+- `uv run just test-integration`: 1184 passed, 5 skipped.
+- `uv run just check`: green (4196 passed, 5 skipped, 1 xfailed; harness 685 passed; plans OK;
+  adapters up to date).
+- After repair deviations 5 and 6: `uv run just check` green again (4200 passed, 5 skipped,
+  1 xfailed; harness 685 passed). The integration tests of `tests/integration/payments/` and
+  `tests/integration/orders/test_payment_hold_flow.py` gave 112 passed. The full
+  `test-integration` was not re-run after deviation 6.
+- `uv run just plans-scope plans/payments-mercadopago/003-oxxo-spei.md`: "Every change is inside
+  the plan" (41 declared, 58 changed).
+- No contract change: `fragancia_api.main.openapi --check` says "openapi.json is up to date".
+  No migration.
+- `uv run just plans-lint`: plans OK (after setting `status: testing`).
 
 ## Verification

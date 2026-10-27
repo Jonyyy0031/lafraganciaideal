@@ -1,7 +1,8 @@
 ---
-status: open # open → deferred | planned | resolved | discarded (the user decides)
+status: planned # open → deferred | planned | resolved | discarded (the user decides)
 module: payments
 found: 2026-10-27
+plan: payments-mercadopago/003
 ---
 
 # Cancelling an order leaves its issued OXXO or SPEI ticket payable in Mercado Pago
