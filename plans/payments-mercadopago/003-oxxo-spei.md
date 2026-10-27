@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -672,6 +672,70 @@ correctness. The checklist fails on stale docs (R3), and R1 is a small code fix,
 stays `review`. R2 and R4 need a decision or a verifier check, not necessarily code. If the
 main session accepts R1 and R2 as they are, and R3 is fixed in `docs/architecture.md`, nothing
 blocks `verify`.
+
+### Re-review after step 9 (reviewer, 2026-10-27)
+
+Diff `27962ee..HEAD` (commits `839bc99`, `a676882`, `82ee253` and `ba44aba`), read together
+with "Step 9: re-review repair" in the Repair log.
+
+**Checklist: 14 of 15 passed, 0 failed, 1 not applicable (PR body, no PR yet).**
+- `plans-scope`: "Every change is inside the plan" (42 declared, 65 changed). The hot files
+  are not touched.
+- I ran both suites myself at `ba44aba`, and the main session's runs match:
+  - `uv run just check`: green (4296 passed, 5 skipped, 1 xfailed; harness 685 passed).
+  - `uv run just test-integration`: green (1205 passed, 5 skipped). This also covers the full
+    integration run that the implementer skipped.
+- Contracts: only the description of `PendingTicket.expires_at` changed.
+  `fragancia_api.main.openapi --check` reports "openapi.json is up to date", and the
+  one-line diff in `openapi.json` is the generated one.
+- New event and subscriber:
+  - `TicketCancelRequested` (`payments.ticket.cancel_requested`, payload `payment_id`) is
+    published through the outbox inside the notification's transaction.
+  - `CancelTicket` is wired at `payments/module.py:111`, and the event is documented in
+    `payments/__init__.py`, the README and `docs/architecture.md`.
+  - No migration, and no business rule in the router or the adapters.
+- Docs: the previously failed item is fixed. Details are under R3 below.
+
+**R1 to R3**
+- **R1: closed.** `GetPendingTickets` (`pending_tickets.py:25-31`) returns
+  `min(ticket.expires_at, order.payment_due_at)` per item, on a `model_copy` so the query's
+  models are not mutated. Filtering and ordering are unchanged, and the contract description
+  says "whichever is earlier".
+- **R2: closed.** `_hold` publishes `TicketCancelRequested` only on `not_pending`
+  (`process_payment.py:167-170`). It does so before `mark_held`, in the same transaction, so a
+  re-delivery publishes nothing more (`held_at`). `not_found` publishes nothing.
+  - I traced the race from the re-review. The order's status change commits before
+    `close_requested` is published. A concurrent ticket notification takes the order row lock
+    in `hold_for_payment`. Then one of two things happens:
+    - the hold commits first, so its row is committed before `CloseCheckout` reads
+      `pending_cash`;
+    - or the hold sees the order no longer pending and publishes the cancel itself.
+  - A ticket can therefore no longer slip through both paths. Duplicate cancels from
+    `CloseCheckout` and `CancelTicket` are harmless, because the second gets a permanent
+    refusal.
+- **R3: closed.** The payments row of `docs/architecture.md` now covers decisions 19 and 20,
+  the expired-on-arrival rule, the `/payments/pending` cap, `CancelTicket` and the 4xx
+  classification. The README and `payments/__init__.py` match it.
+
+**Regressions from step 9: none found.**
+
+Notes, not findings. Neither needs a product-code change:
+- **Missing wiring test (for the tester if wanted).** No test asserts that the container
+  subscribes `CancelTicket` to `payments.ticket.cancel_requested`. `test_late_ticket_flow.py`
+  builds `CancelTicket` by hand. I confirmed the wiring by reading `module.py:111`. If that
+  line were removed, the relay would mark the event published with no handler and nothing
+  would fail. A container wiring assertion like `test_payments_tickets_wiring.py` would close
+  this.
+- **Order page between the deadline and the overdue job.** In that window
+  `/payments/pending` can list a ticket whose capped `expires_at` is already past. The cancel
+  follows at the next overdue run. This is cosmetic and nothing renders the field until
+  phase 3.
+
+**Still open for the verifier:** R4 (cancelling a ticket the customer has paid but Mercado Pago
+has not yet credited) and the sandbox rows marked NOT CONFIRMED in Test coverage.
+
+**Result:** no findings need code changes, and the checklist has no failures. Status set to
+`verify`.
 
 ## Repair log
 
