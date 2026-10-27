@@ -13,10 +13,14 @@ from fragancia_api.modules.orders.application.commands.confirm_payment import (
 from fragancia_api.modules.orders.domain.order import OrderStatus
 from fragancia_api.modules.orders.infrastructure.in_memory import InMemoryStockHolds
 from fragancia_api.modules.payments.application.commands.start_checkout import StartCheckout
+from fragancia_api.modules.payments.application.handlers.cancel_ticket import CancelTicket
 from fragancia_api.modules.payments.application.handlers.close_checkout import CloseCheckout
 from fragancia_api.modules.payments.application.ports import Confirmation
 from fragancia_api.modules.payments.application.queries.pending_tickets import GetPendingTickets
-from fragancia_api.modules.payments.domain.events import CheckoutCloseRequested
+from fragancia_api.modules.payments.domain.events import (
+    CheckoutCloseRequested,
+    TicketCancelRequested,
+)
 from fragancia_api.modules.payments.infrastructure.order_payments import OrderPaymentsAdapter
 from fragancia_api.modules.payments.infrastructure.sql_checkout_repository import (
     SqlCheckoutRepository,
@@ -35,6 +39,18 @@ async def test_the_container_resolves_the_pending_tickets_query_over_sql() -> No
         assert isinstance(query, GetPendingTickets)
         assert isinstance(query._queries, SqlPaymentQueries)  # noqa: SLF001
         assert isinstance(query._orders, OrderPaymentsAdapter)  # noqa: SLF001
+    finally:
+        await container.close()
+
+
+async def test_cancel_ticket_alone_handles_the_cancel_request_with_the_shared_gateway() -> None:
+    container = build_container(make_settings(mercadopago_access_token="TEST-token"))
+    try:
+        handlers = container.relay._bus.handlers(TicketCancelRequested.name)  # noqa: SLF001
+        assert TicketCancelRequested.name == "payments.ticket.cancel_requested"
+        assert [type(h) for h in handlers] == [CancelTicket]
+        gateway = container.services.get(StartCheckout)._gateway  # noqa: SLF001
+        assert handlers[0]._gateway is gateway  # type: ignore[attr-defined]  # noqa: SLF001
     finally:
         await container.close()
 
