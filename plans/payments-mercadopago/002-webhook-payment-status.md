@@ -782,3 +782,88 @@ admin user id; `uv run just openapi` regenerated (one description line). The fin
 `Files:` line.
 
 ## Verification
+
+2026-10-26/27, main session, live against the development database and the **real Mercado
+Pago sandbox** (the developer's test seller account, decision 1), through a `cloudflared` quick
+tunnel to the API on :8100, with the worker running.
+
+**Suites (once, at 9087f77):** `uv run just check` green (4014 passed, 3 skipped, 1 xfailed;
+harness 685). `uv run just test-integration`: 1138 passed, 5 skipped. `uv run just db-migrate`
+clean (0024 applied).
+
+**Setup notes.** The panel's Webhooks page has a test and a production tab, each with its own
+secret; the event is "Pagos (legacy)". This account's real notifications are signed with the
+**test-mode** secret: with the production secret, Mercado Pago's two deliveries for payment
+`186361429202` got 401 (`payments.webhook_signature_invalid`); with the test secret every later
+delivery passed. A capture on :8100 confirmed the manifest Mercado Pago signs is exactly
+`id:<query data.id>;request-id:<x-request-id>;ts:<ts>;` (match=True), as the code builds it.
+Recorded as `plans/findings/payments-webhook-setup-docs-incomplete.md`.
+
+**Payments and notifications** (QA orders `LFI-1028` to `LFI-1034` stay in the database):
+
+- [x] **Link with an http storefront.** `POST /api/v1/payments/checkout` for `LFI-1028`, with
+  `STOREFRONT_URL=http://localhost:4200`, answered 200 with a real
+  `https://sandbox.mercadopago.com.mx/…?pref_id=3791681536-…` URL (before step 1 it was 503
+  after Mercado Pago's `400 invalid_auto_return`). Every later order got its link the same way.
+- [x] **Wrong or missing signature.** Through the tunnel, an unsigned `type=payment` and a forged
+  `x-signature` both answered 401 `PAYMENTS_WEBHOOK_SIGNATURE_INVALID`; no outbox row.
+- [x] **Signed `type=payment` → one outbox row; `merchant_order` ignored.** Signed notifications
+  answered 200 `{"received":true}` and stored one `payments.notification.received`; an unsigned
+  `type=merchant_order` answered 200 with no row. The panel's "Simular notificación"
+  (id `123456`) answered 200 and the worker logged `payments.payment_not_found`.
+- [x] **Approved payment → paid.** `LFI-1030`, paid with a credit card (holder APRO); Mercado
+  Pago's own notification arrived and within seconds:
+  - payment `185317326417` approved, `outcome = applied`;
+  - the order `paid`, reservation `committed`, history `system`
+    "Pagado con Mercado Pago (pago 185317326417)";
+  - Mailpit: "Confirmamos el pago de tu pedido LFI-1030" to the customer and
+    "Pedido pagado: LFI-1030 — $2,079.50 MXN" to each of the 3 active owners.
+  `LFI-1029` (paid before the webhook URL existed in the panel) was applied the same way from a
+  notification signed by hand with the configured secret.
+- [x] **Redelivery changes nothing.** The same notification for `185313629663` resent with the same
+  request id: published, no new move (one `paid` event), no new email.
+- [x] **Rejected payment.** `186362152098` (`LFI-1030`, before its approval) and `186362309796`
+  (`LFI-1032`) arrived from Mercado Pago as `rejected` / `cc_rejected_other_reason`, stored with no
+  outcome; the orders did not move, and `LFI-1030` was paid afterwards from the same link.
+- [x] **Approved for a cancelled order.** `LFI-1032` cancelled by the owner, then paid:
+  `185317147487` `outcome = refund_due`, the order still `cancelled`, no email (decision 11).
+- [x] **Second approved payment for a paid order.** `LFI-1030` paid again from its link:
+  `186363091326` `outcome = refund_due`, still one `paid` move.
+- [x] **Late payment with units available.** `LFI-1031`'s reservation was made to expire
+  (`expires_at` moved to the past; `inventory_expire_reservations` expired it), then paid:
+  `186363234846` `applied`, the order `paid`, reservation `committed` (late commit).
+  The order's own `payment_due_at` was not moved past: the overdue job would cancel it before
+  the payment lands, so "past the deadline" is exercised through the expired reservation, which
+  is what the commit depends on (`confirm` itself never reads the deadline).
+- [x] **Late payment with the units gone.** `LFI-1033`'s reservation expired as above, and a
+  `count` movement left the 50 ml with `on_hand 1`, `reserved 1` (0 free). Paid:
+  `185317998889` `outcome = refund_due`; the order `cancelled` by `payments` with
+  "Pago recibido sin existencias (pago 185317998889)"; stock unchanged (1/1). Mailpit: the
+  customer got "Tu pedido LFI-1033 fue cancelado porque tu pago llegó cuando ya no había
+  existencias. Te reembolsaremos el pago completo." (decision 13); each owner got "Pago a
+  revisar: LFI-1033" with "…pero llegó cuando ya no había existencias, así que el pedido se
+  canceló."
+- [x] **Different amount.** `LFI-1034`'s shipping and total raised by 100 cents in the database
+  after its link was made, then paid (2079.50): `186363091748` `outcome = amount_mismatch`, the
+  order still `pending_payment` with its reservation `active`, one `payments.payment.flagged`
+  (`reason amount_mismatch`), and each owner got "Pago a revisar: LFI-1034" with "…pero el monto
+  no coincide con el total del pedido, así que el pedido sigue pendiente."
+- [x] **Mercado Pago down while processing.** The worker was run with `MERCADOPAGO_API_URL`
+  pointed at a closed port (a launcher setting it in code) and a signed notification sent for
+  the unprocessed `186361429202`: `payments.gateway_error ConnectError`, the outbox row at
+  `attempts 2` with `RuntimeError('payments.gateway_unavailable')` and backing off, no
+  `payments.payments` row. With the normal worker back, the same row was published and the
+  payment stored (`rejected`).
+- [x] **Production needs the secret.** `Settings` with production values and no webhook secret
+  fails with "MERCADOPAGO_WEBHOOK_SECRET is required in production"; with one it passes.
+
+**NOT VERIFIED / limits:**
+- The handler-level H1 race test was never run red against the pre-fix code (the reviewer's
+  caveat); the race was not reproduced live either.
+- A real `refunded` or `charged_back` status after payment (out of scope).
+- A notification without `x-request-id` (the open finding
+  `payments-webhook-request-id-injected-by-platform`); Mercado Pago sent the header on every
+  delivery seen.
+
+**Left behind:** QA orders `LFI-1028` to `LFI-1034` and their payments; the 50 ml presentation's
+stock at `on_hand 1` after the stock-gone setup (a `count` movement, restorable from the panel).
