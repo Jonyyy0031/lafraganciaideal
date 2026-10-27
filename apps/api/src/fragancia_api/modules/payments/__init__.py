@@ -14,8 +14,9 @@ closes the stored checkout (decision 18).
 
 `POST /api/v1/payments/pending` takes the same token and answers the order's cash and transfer
 tickets that can still be paid (method, amount, expiry, instructions page), newest first
-(decision 16); none when the order is not waiting for payment; 404
-`PAYMENTS_ORDER_NOT_FOUND`.
+(decision 16); each expiry is the earlier of the ticket's own and the order's
+`payment_due_at`, since the ticket stops paying the order at the order's deadline; none when
+the order is not waiting for payment; 404 `PAYMENTS_ORDER_NOT_FOUND`.
 
 Errors: 404 `PAYMENTS_ORDER_NOT_FOUND`, 409 `PAYMENTS_ORDER_NOT_PAYABLE` and 503
 `PAYMENTS_GATEWAY_UNAVAILABLE` (Mercado Pago failed, timed out, refused or is not configured).
@@ -35,7 +36,9 @@ customer the instructions (`held_at` keeps a re-delivery from doing it again). T
 count from the first ticket (decision 19): a later ticket never moves the deadline past the
 expiry of the order's earliest-held ticket, though it is still recorded and its email shows
 the order's actual deadline. A ticket already expired when its notification is processed is
-marked held with no hold and no email. A ticket page longer than its column (500 characters)
+marked held with no hold and no email. A pending ticket whose order was already paid or
+cancelled is marked held and publishes `payments.ticket.cancel_requested` (decision 20). A
+ticket page longer than its column (500 characters)
 is stored as none. Other statuses are only stored.
 
 Events (published through the outbox; other modules subscribe by name, never by import):
@@ -55,6 +58,11 @@ Events (published through the outbox; other modules subscribe by name, never by 
   the cancelled-status notification, and a ticket paid before the cancel is `refund_due`). A
   400, 404, 409 or 422 from Mercado Pago is permanent and only logged; any other answer that
   is not a success (401, 403, 408, 429, 5xx) or a transport error retries only this event.
+- `payments.ticket.cancel_requested`: a pending cash or transfer ticket was notified after its
+  order was paid or cancelled, so it must be cancelled in Mercado Pago (decision 20, late
+  notifications). Payload: `payment_id` (string). Payments itself handles it in the worker
+  (`PUT /v1/payments/{id}` with `status: cancelled`), with the same permanent and retried
+  answers as above; only this event retries.
 
 Payments subscribes to orders' `orders.order.status_changed` (by name) only to publish
 `payments.checkout.close_requested`; it makes no network call there, so it never makes orders'

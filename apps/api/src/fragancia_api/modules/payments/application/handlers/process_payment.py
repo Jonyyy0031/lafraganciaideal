@@ -7,7 +7,7 @@ from fragancia_api.modules.payments.application.ports import (
     OrderConfirmations,
     PaymentGateway,
 )
-from fragancia_api.modules.payments.domain.events import PaymentFlagged
+from fragancia_api.modules.payments.domain.events import PaymentFlagged, TicketCancelRequested
 from fragancia_api.modules.payments.domain.payment import (
     APPROVED,
     METHOD_LABELS,
@@ -158,12 +158,16 @@ class ProcessPaymentNotification:
                 pass
         if confirmation.outcome != _HELD:
             # `not_pending` or `not_found`: a ticket for a paid or cancelled order (or for no
-            # order) needs nothing more, and is never retried.
+            # order) is never held, and never retried.
             _log.info(
                 "payments.ticket_not_held",
                 payment_id=payment.payment_id,
                 outcome=confirmation.outcome,
             )
+        if confirmation.outcome == _NOT_PENDING:
+            # The order was paid or cancelled before this ticket's notification: cancel the
+            # ticket in Mercado Pago, in its own outbox row (decision 20, plan 003 review R2).
+            await self._events.publish([TicketCancelRequested(payment_id=payment.payment_id)])
         payment.mark_held(self._clock.now())
         return Ok(None)
 

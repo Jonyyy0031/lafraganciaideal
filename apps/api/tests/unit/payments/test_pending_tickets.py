@@ -53,7 +53,8 @@ def payment(payment_id: str, **overrides: object) -> Payment:
 
 def query(*payments: Payment, status: str = "pending_payment") -> GetPendingTickets:
     orders = InMemoryPayableOrders()
-    orders.by_token[TOKEN] = make_payable(status=status)
+    # A held order's deadline is its ticket's expiry; the query caps each expiry at it (R1).
+    orders.by_token[TOKEN] = make_payable(status=status, due=timedelta(hours=48))
     return GetPendingTickets(
         orders=orders, queries=InMemoryPayments(*payments), clock=FixedClock(NOW)
     )

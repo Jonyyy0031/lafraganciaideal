@@ -6,6 +6,7 @@ from fragancia_api.modules.payments.application.commands.receive_notification im
     ReceivePaymentNotification,
 )
 from fragancia_api.modules.payments.application.commands.start_checkout import StartCheckout
+from fragancia_api.modules.payments.application.handlers.cancel_ticket import CancelTicket
 from fragancia_api.modules.payments.application.handlers.close_checkout import (
     CloseCheckout,
     RequestCheckoutClose,
@@ -21,6 +22,7 @@ from fragancia_api.modules.payments.domain.events import (
     CheckoutCloseRequested,
     PaymentFlagged,
     PaymentNotificationReceived,
+    TicketCancelRequested,
 )
 from fragancia_api.modules.payments.http.router import routers
 from fragancia_api.modules.payments.infrastructure.identity_owners import IdentityOwners
@@ -104,6 +106,9 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
             clock=platform.clock,
         ),
     )
+    # Decision 20 for late notifications: a ticket that arrives for an order no longer pending
+    # is cancelled in its own outbox row (plan 003 review R2).
+    platform.subscriptions.subscribe(TicketCancelRequested.name, CancelTicket(gateway=gateway))
     # Identity registers before payments (MODULES order), so its facade is available.
     platform.subscriptions.subscribe(
         PaymentFlagged.name,

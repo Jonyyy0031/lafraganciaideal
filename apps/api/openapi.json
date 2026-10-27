@@ -9653,7 +9653,7 @@
             "type": "string",
             "format": "date-time",
             "title": "Expires At",
-            "description": "When Mercado Pago stops accepting the ticket."
+            "description": "When the ticket stops paying the order: its own expiry or the order's payment deadline, whichever is earlier."
           },
           "ticket_url": {
             "anyOf": [

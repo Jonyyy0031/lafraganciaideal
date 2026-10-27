@@ -28,7 +28,12 @@ class PendingTicket(BaseModel):
 
     method: str = Field(description='How it is paid: "efectivo en tienda" or "transferencia SPEI".')
     amount_cents: int
-    expires_at: datetime = Field(description="When Mercado Pago stops accepting the ticket.")
+    expires_at: datetime = Field(
+        description=(
+            "When the ticket stops paying the order: its own expiry or the order's payment"
+            " deadline, whichever is earlier."
+        )
+    )
     ticket_url: str | None = Field(description="Mercado Pago's page with the instructions.")
 
 

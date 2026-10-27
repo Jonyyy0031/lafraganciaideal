@@ -119,15 +119,19 @@ still recorded and its email shows the order's actual deadline. A ticket that ha
 expired when its webhook is processed sends no email (`payments.ticket_expired_on_arrival`), and
 a ticket link longer than 500 characters is stored empty (`payments.ticket_url_too_long`). The
 order page reads the live tickets with `POST /api/v1/payments/pending` (the order's token in
-the body). When an order is paid or cancelled, payments publishes
+the body); each ticket's `expires_at` there is the earlier of its own expiry and the order's
+`payment_due_at`. When an order is paid or cancelled, payments publishes
 `payments.checkout.close_requested` and, in that event's own outbox row, expires its Mercado
 Pago preference (`PUT /checkout/preferences/{id}`), closes the stored checkout, so the old link
 no longer takes payments, and cancels each of the order's `pending` cash and transfer tickets
 (`PUT /v1/payments/{id}` with `status: cancelled`). A 400, 404, 409 or 422 from Mercado Pago on
 either call is permanent and only logged (`payments.checkout_close_refused`,
 `payments.ticket_cancel_refused`); any other 4xx (401, 403, 408, 429…), a 5xx or a transport
-error retries the event, which ends in the failed-events panel if it never recovers. A ticket paid before the cancel still arrives
-`approved` and is `refund_due`.
+error retries the event, which ends in the failed-events panel if it never recovers. A
+pending ticket whose webhook is processed after its order was already paid or cancelled is
+cancelled too: the worker publishes `payments.ticket.cancel_requested`, whose own outbox row
+sends the same cancel with the same permanent and retried answers. A ticket paid before the
+cancel still arrives `approved` and is `refund_due`.
 
 ## Database changes
 

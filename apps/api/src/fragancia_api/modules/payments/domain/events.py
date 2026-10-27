@@ -24,6 +24,16 @@ class CheckoutCloseRequested(DomainEvent):
 
 
 @dataclass(frozen=True, kw_only=True)
+class TicketCancelRequested(DomainEvent):
+    """A pending cash or transfer ticket arrived for an order that is no longer waiting for
+    payment: it must be cancelled in Mercado Pago (decision 20, late notifications). Its own
+    outbox row, so a Mercado Pago outage retries only the cancel."""
+
+    name: ClassVar[str] = "payments.ticket.cancel_requested"
+    payment_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class PaymentFlagged(DomainEvent):
     """An approved payment the owners must review: `reason` is `amount_mismatch` (the order
     stays pending) or `stock_gone` (the order was cancelled)."""

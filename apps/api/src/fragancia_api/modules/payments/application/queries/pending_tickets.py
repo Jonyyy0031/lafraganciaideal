@@ -22,5 +22,11 @@ class GetPendingTickets:
             return Err(PaymentOrderNotFound())
         if order.status != PENDING_PAYMENT:
             return Ok(PendingTickets(items=[]))
-        items = await self._queries.pending_for_order(order.order_id, self._clock.now())
+        found = await self._queries.pending_for_order(order.order_id, self._clock.now())
+        # A ticket never pays the order after the order's own deadline: then the order is
+        # cancelled and the ticket with it (decisions 19 and 20).
+        items = [
+            ticket.model_copy(update={"expires_at": min(ticket.expires_at, order.payment_due_at)})
+            for ticket in found
+        ]
         return Ok(PendingTickets(items=items))
