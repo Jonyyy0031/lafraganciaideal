@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: payments
 min_implementer: high
 depends_on: ["001"]
