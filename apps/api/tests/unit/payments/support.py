@@ -1,5 +1,7 @@
 """Builders shared by the payments unit tests."""
 
+import hashlib
+import hmac
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -107,3 +109,28 @@ class World:
             clock=self.clock,
             back_url=BACK_URL,
         )
+
+
+# --- the webhook (plan 002) --------------------------------------------------------------------
+
+SECRET = "webhook-secret-for-tests"
+TS = "1700000000"
+
+
+def sign(
+    data_id: str | None,
+    request_id: str | None,
+    *,
+    secret: str = SECRET,
+    ts: str = TS,
+) -> str:
+    """The `x-signature` header Mercado Pago would send: the SDK's manifest, HMAC-SHA256 hex.
+    Built here from the documented format, not with the code under test."""
+    manifest = ""
+    if data_id:
+        manifest += f"id:{data_id};"
+    if request_id:
+        manifest += f"request-id:{request_id};"
+    manifest += f"ts:{ts};"
+    digest = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
+    return f"ts={ts},v1={digest}"

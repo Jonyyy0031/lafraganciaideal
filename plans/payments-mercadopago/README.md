@@ -19,7 +19,7 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
 | Plan | Title | Depends on | Purpose |
 | ---- | ----- | ---------- | ------- |
 | 001  | Payments module and checkout redirect | — | New `payments` module with the `PaymentGateway` port and its Mercado Pago adapter. From the order page, the guest gets a Checkout Pro link for a pending order (cards only, one installment), reused while it is valid |
-| 002  | Webhook and payment status | 001 | A signed, idempotent webhook. The worker fetches the payment and moves the order to paid (approved), or leaves it pending so the guest can retry (rejected) |
+| 002  | Webhook and payment status | 001 | Fixes `auto_return` on http back URLs. A signed, idempotent webhook. The worker fetches the payment and moves the order to paid (approved), leaves it pending (rejected), or records it for review or refund |
 | 003  | OXXO and SPEI | 002 | Cash and transfer enabled. A pending ticket extends the reservation and the payment window to its 48-hour expiry, and the customer gets the payment instructions |
 | 004  | Automatic refunds | 002 | Cancelling a paid Mercado Pago order refunds it through the API. A payment approved for an order already cancelled is refunded, and the customer and owners are told |
 
@@ -32,7 +32,10 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
   Mercado Pago.
 - **The overdue job (orders-checkout 004).** It stops its run at an order whose release is
   refused. Plan 002 must keep a payment-committed reservation from leaving an order
-  `pending_payment` (orders-checkout README, "Dependency notes").
+  `pending_payment` (orders-checkout README, "Dependency notes"). **Resolved by plan 002:**
+  orders' `OrderPaymentConfirmations` commits the reservation and moves the order to paid in
+  one transaction, and a refused commit cancels the order and releases the reservation in that
+  same transaction.
 - **One order can collect more than one payment.** A Checkout Pro preference can be paid more
   than once, and two concurrent requests can create two preferences for one order.
   - Plan 002 matches payments by `external_reference` (the order id).
@@ -66,6 +69,25 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
    - Mercado Pago appends query parameters to that URL, so the private token cannot ride in it.
    - The web page keeps the token in `sessionStorage` before redirecting.
    - The return never confirms a payment; only the webhook does (ADR 0004).
+8. (2026-10-24) **`auto_return` is sent only when the back URL is `https`.** Mercado Pago
+   refuses it otherwise (finding `payments-auto-return-needs-https-back-url`); in development
+   the guest returns with the "Volver al sitio" button. Fixed as the first step of plan 002.
+9. (2026-10-24) **An approved payment whose amount or currency differs from the order total
+   does not mark the order paid.** The order stays pending, the payment is recorded for review,
+   and the owners are emailed.
+10. (2026-10-24) **A late approved payment marks the order paid if its units can still be
+    sold**, even past the payment deadline. If they cannot, the order is cancelled, the payment
+    is recorded for refund (plan 004), the customer gets the cancellation email and the owners
+    are emailed.
+11. (2026-10-24) **An approved payment for a cancelled order, or a second one for a paid order,
+    is only recorded for refund** in plan 002, with no email; plan 004 refunds it and tells the
+    customer and the owners.
+12. (2026-10-24) **A rejected payment shows nothing new to the customer**: no email and no
+    change to the order page. The order stays pending (decision 2).
+13. (2026-10-26) **When a late payment finds no stock, the customer's cancellation email says
+    so:** "Tu pedido … fue cancelado porque tu pago llegó cuando ya no había existencias. Te
+    reembolsaremos el pago completo." (plan 002 review L2). The customer page still shows the
+    cancellation as by the system.
 
 ## Delivered
 

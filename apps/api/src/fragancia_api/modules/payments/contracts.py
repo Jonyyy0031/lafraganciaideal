@@ -13,3 +13,9 @@ class StartCheckoutResponse(BaseModel):
     """Where to send the guest to pay: the Mercado Pago checkout."""
 
     redirect_url: str
+
+
+class WebhookAck(BaseModel):
+    """The webhook was accepted (or ignored on purpose): Mercado Pago must not retry it."""
+
+    received: bool = True

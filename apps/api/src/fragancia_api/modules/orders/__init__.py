@@ -36,6 +36,15 @@ Public API for other modules:
   status, payment deadline, customer name and email, lines, delivery cost and total) or None
   when the token matches no order. It is the only way other modules (payments) read an order
   to charge it. The token is a secret: only its digest is looked up.
+- `OrderPaymentConfirmations`: a command facade. `confirm(order_id, payment_id, amount_cents,
+  currency)` applies an approved payment and answers a `PaymentConfirmation` whose `outcome`
+  (`PaymentConfirmationOutcome`) is `paid` (the reservation committed and the order moved to
+  paid, actor `system`, note "Pagado con Mercado Pago (pago …)"), `not_pending` (with the
+  order's `status`), `amount_mismatch` (the amount or the currency, which must be `MXN`,
+  differs from the total; nothing changes), `stock_gone` (inventory refused the commit, so the
+  order was cancelled by `payments` and its reservation released) or `not_found`. It joins the
+  caller's transaction; the commit and the move happen together. Any other refusal comes back
+  as `Err`.
 
 The cart is identified by the `fragancia_cart` cookie, shows current prices and availability, and
 never reserves stock. The worker job `orders_purge_carts` deletes carts untouched for 30 days.
@@ -43,10 +52,22 @@ never reserves stock. The worker job `orders_purge_carts` deletes carts untouche
 The composition root wires `module.module`.
 """
 
+from fragancia_api.modules.orders.application.commands.confirm_payment import (
+    OrderPaymentConfirmations,
+    PaymentConfirmation,
+    PaymentConfirmationOutcome,
+)
 from fragancia_api.modules.orders.application.queries.order_payments import (
     OrderPayments,
     PayableLine,
     PayableOrder,
 )
 
-__all__ = ["OrderPayments", "PayableLine", "PayableOrder"]
+__all__ = [
+    "OrderPaymentConfirmations",
+    "OrderPayments",
+    "PayableLine",
+    "PayableOrder",
+    "PaymentConfirmation",
+    "PaymentConfirmationOutcome",
+]

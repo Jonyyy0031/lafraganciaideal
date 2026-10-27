@@ -16,6 +16,7 @@ from fragancia_api.modules.orders.application.handlers.order_emails import (
     CANCEL_REASONS,
     ORDER_PAGE_PATH,
     STATUS_TEMPLATES,
+    STOCK_GONE_TEXT,
     SendOrderPlacedEmail,
     SendOrderStatusEmail,
     SendPaidOrderToOwners,
@@ -34,6 +35,7 @@ from fragancia_api.modules.orders.contracts import (
     AdminOrderPage,
 )
 from fragancia_api.modules.orders.domain.order import (
+    PAYMENTS_ACTOR,
     OrderPaid,
     OrderPlaced,
     OrderStatusChanged,
@@ -400,6 +402,36 @@ def test_cancelled_wording_comes_from_who_cancelled(actor: str, reason: str) -> 
     assert subject == "Tu pedido LFI-1001 fue cancelado"
     assert f"Tu pedido LFI-1001 fue cancelado {reason}.\n" in body
     assert LINK in body
+
+
+def test_a_payments_cancel_says_the_payment_arrived_without_stock_and_a_refund_is_coming() -> None:
+    # Plan 002 step 7 (L2): the customer paid, so "no recibimos el pago a tiempo" would be false.
+    subject, body = STATUS_TEMPLATES["cancelled"](cancelled_order(PAYMENTS_ACTOR), LINK)
+
+    assert subject == "Tu pedido LFI-1001 fue cancelado"
+    assert STOCK_GONE_TEXT.format(number="LFI-1001") in body
+    assert (
+        "Tu pedido LFI-1001 fue cancelado porque tu pago llegó cuando ya no había existencias.\n"
+        "Te reembolsaremos el pago completo.\n"
+    ) in body
+    assert "no recibimos el pago a tiempo" not in body
+    assert LINK in body
+
+
+def test_the_stock_gone_copy_is_the_same_whatever_the_refund_mark_says() -> None:
+    plain = STATUS_TEMPLATES["cancelled"](cancelled_order(PAYMENTS_ACTOR), LINK)
+    marked = STATUS_TEMPLATES["cancelled"](
+        cancelled_order(PAYMENTS_ACTOR, refund_status="pending"), LINK
+    )
+
+    assert plain == marked
+    assert marked[1].count("Te reembolsaremos el pago completo.") == 1
+
+
+def test_the_stock_gone_copy_never_shows_the_typed_cancel_reason() -> None:
+    _, body = STATUS_TEMPLATES["cancelled"](cancelled_order(PAYMENTS_ACTOR), LINK)
+
+    assert INTERNAL_REASON not in body
 
 
 @pytest.mark.parametrize("actor", ["customer", "system", "admin-user-7"])

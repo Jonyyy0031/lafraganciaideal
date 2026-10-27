@@ -10,6 +10,9 @@ from fragancia_api.modules.orders.application.commands.cart import (
     SetCartLine,
 )
 from fragancia_api.modules.orders.application.commands.checkout import PlaceOrder
+from fragancia_api.modules.orders.application.commands.confirm_payment import (
+    OrderPaymentConfirmations,
+)
 from fragancia_api.modules.orders.application.commands.customer_order import (
     CancelOrderByCustomer,
     LookUpOrder,
@@ -164,6 +167,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     services.add(CancelPaidOrder, move(CancelPaidOrder))
     services.add(MarkOrderRefunded, move(MarkOrderRefunded))
     services.add(CancelOverdueOrders, move(CancelOverdueOrders))
+    services.add(OrderPaymentConfirmations, move(OrderPaymentConfirmations))
     services.add(
         AddOrderNote,
         AddOrderNote(

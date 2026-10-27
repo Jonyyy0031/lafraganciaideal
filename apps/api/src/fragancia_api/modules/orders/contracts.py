@@ -237,7 +237,8 @@ class AdminOrderInvoice(BaseModel):
 
 
 class AdminOrderEvent(BaseModel):
-    """One history row. `actor` is an admin user id or `system`; a refund mark has the same
+    """One history row. `actor` is an admin user id, `system`, `customer` or `payments` (a
+    cancel because a late payment found no stock); a refund mark has the same
     status in `from_status` and `to_status`."""
 
     at: datetime

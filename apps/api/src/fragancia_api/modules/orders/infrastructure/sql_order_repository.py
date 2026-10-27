@@ -121,6 +121,17 @@ class SqlOrderRepository:
             return None
         return _to_domain(row, await _load_lines(session, row.id))
 
+    async def get_by_id_for_update(self, order_id: UUID) -> Order | None:
+        session = self._database.session
+        row = (
+            await session.execute(
+                select(orders).where(orders.c.id == order_id).with_for_update(key_share=True)
+            )
+        ).first()
+        if row is None:
+            return None
+        return _to_domain(row, await _load_lines(session, row.id))
+
     async def claim_overdue(self, now: datetime, limit: int) -> list[Order]:
         session = self._database.session
         rows = (

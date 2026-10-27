@@ -15,11 +15,14 @@ from fragancia_api.modules.orders.domain.order import (
     FIRST_ORDER_NUMBER,
     ORDER_NUMBER_PREFIX,
     PAYMENT_WINDOW,
+    PAYMENTS_ACTOR,
+    SYSTEM_ACTOR,
     Delivery,
     Order,
     OrderLine,
     OrderPlaced,
     OrderStatus,
+    cancelled_by,
     format_order_number,
 )
 from fragancia_api.shared.kernel import Err, Ok, Result
@@ -290,3 +293,15 @@ def test_an_order_line_total_is_the_unit_price_times_the_quantity() -> None:
     assert created.line_total_cents == 750_000
     assert (created.quantity, created.unit_price_cents) == (3, 250_000)
     assert created.regular_price_cents == 300_000
+
+
+def test_the_payments_actor_cancels_as_the_system() -> None:
+    # Plan 002 step 7 (L2): a stock-gone cancel is written as "payments", shown as "system".
+    assert PAYMENTS_ACTOR == "payments"
+    assert cancelled_by(PAYMENTS_ACTOR) == "system"
+    assert cancelled_by(SYSTEM_ACTOR) == "system"
+
+
+def test_cancelled_by_still_tells_the_customer_and_the_shop_apart() -> None:
+    assert cancelled_by("customer") == "customer"
+    assert cancelled_by("admin-user-7") == "shop"

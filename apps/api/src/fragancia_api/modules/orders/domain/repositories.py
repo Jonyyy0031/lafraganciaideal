@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Protocol
+from uuid import UUID
 
 from fragancia_api.modules.orders.domain.cart import Cart
 from fragancia_api.modules.orders.domain.delivery import DeliverySettings
@@ -36,6 +37,10 @@ class OrderRepository(Protocol):
     async def get_by_number_for_update(self, number: int) -> Order | None:
         """The order with that number, its row locked `FOR NO KEY UPDATE`
         (a note insert takes `FOR KEY SHARE`, so it does not wait); None when unknown."""
+        ...
+
+    async def get_by_id_for_update(self, order_id: UUID) -> Order | None:
+        """The order with that id, locked like `get_by_number_for_update`; None when unknown."""
         ...
 
     async def claim_overdue(self, now: datetime, limit: int) -> list[Order]:

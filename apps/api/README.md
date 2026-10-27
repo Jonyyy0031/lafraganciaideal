@@ -80,6 +80,27 @@ Add a field to `Settings` (or `DatabaseSettings` if migrations need it) in `conf
 to `.env.example`, and a validator if a bad value must stop startup. Production values come
 from the environment.
 
+## Mercado Pago webhooks
+
+Payments are confirmed only by Mercado Pago's signed webhook (ADR 0004), at
+`POST /api/v1/payments/webhooks/mercadopago`. The route checks the `x-signature` header with
+`MERCADOPAGO_WEBHOOK_SECRET` (401 `PAYMENTS_WEBHOOK_SIGNATURE_INVALID` when it does not match,
+503 when no secret is set) and queues the payment id in the outbox; the **worker** fetches the
+payment from Mercado Pago and moves the order. Without the worker running, nothing is applied.
+
+To receive webhooks in development:
+
+1. Expose the local API (port 8100) through a public https tunnel (e.g. `cloudflared tunnel
+   --url http://127.0.0.1:8100` or `ngrok http 8100`).
+2. In the Mercado Pago panel of your test application, open "Webhooks", set the URL
+   `https://<tunnel>/api/v1/payments/webhooks/mercadopago` (test mode) and select the event
+   "Pagos".
+3. Copy the secret that page shows into `MERCADOPAGO_WEBHOOK_SECRET` in `apps/api/.env`, and
+   restart the API.
+
+With an http `STOREFRONT_URL` (as in development) the checkout is created without
+`auto_return`, so after paying the guest comes back with the "Volver al sitio" button.
+
 ## Database changes
 
 Define or change Core tables in `<module>/infrastructure/tables.py`, then:
