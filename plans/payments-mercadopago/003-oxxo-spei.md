@@ -1,5 +1,5 @@
 ---
-status: verify
+status: implementing
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -290,6 +290,42 @@ order page can show the pending ticket (decision 16). It also folds in the open 
    - Observable result: the pending query never shows a deadline past the order's; a ticket
      notified after the order was cancelled is cancelled in Mercado Pago; `uv run just check`
      green.
+
+10. **Verification repair (added 2026-10-27 after the first sandbox run: V1, V2, decisions 21
+    and 22)**
+   - Files: `apps/api/src/fragancia_api/modules/payments/infrastructure/mercadopago_gateway.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/handlers/process_payment.py` (modify), `apps/api/src/fragancia_api/modules/payments/domain/payment.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/ports.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/order_payments.py` (modify), `apps/api/src/fragancia_api/modules/orders/domain/order.py` (modify), `apps/api/src/fragancia_api/modules/orders/application/commands/confirm_payment.py` (modify), `apps/api/src/fragancia_api/modules/orders/application/handlers/order_emails.py` (modify), `apps/api/src/fragancia_api/modules/orders/__init__.py` (modify), `apps/api/src/fragancia_api/modules/payments/__init__.py` (modify), `apps/api/README.md` (modify), `docs/architecture.md` (modify), `plans/findings/payments-ticket-cancel-refused-with-test-credentials.md` (create)
+   - Do:
+     - **V1: the link close body.** `close_checkout` sends only `{"expires": true, "expiration_date_to": at}`.
+       Mercado Pago answered `400 invalid date of expiration` when `date_of_expiration` was set
+       to now, and accepted the body without it (verified live 2026-10-27; the preference showed
+       the new `expiration_date_to`).
+     - **Decision 22: a grace margin after the ticket expires.**
+       - Add `TICKET_GRACE = timedelta(hours=48)` in `payments/domain/payment.py`.
+       - The hold's order deadline becomes the ticket's expiry plus `TICKET_GRACE`. The
+         decision 19 cap becomes the first ticket's expiry plus `TICKET_GRACE`.
+       - The reservation is extended to the same time, so the overdue job does not cancel the
+         order while a store payment is still being credited.
+       - The ticket's own expiry stays as Mercado Pago reports it, in `payments.payments` and in
+         `/payments/pending`. That query now caps at the order deadline, which includes the
+         margin.
+     - **The email shows the ticket's deadline, not the order's.**
+       - `hold_for_payment` and `Order.await_payment` take a new `pay_by: datetime`, the
+         ticket's own expiry. The facade's `until` is the order deadline.
+       - `OrderPaymentPending` gains `pay_by`, and the instructions email prints `pay_by`.
+       - The payments adapter passes both values.
+     - **Decision 21.** No code change: the OXXO expiry is Mercado Pago's (the end of the day in
+       Mexico City time, up to about 56 h), and the hold already uses it.
+     - **V2.** Record the finding `payments-ticket-cancel-refused-with-test-credentials`:
+       - `PUT /v1/payments/{id}` with `{"status":"cancelled"}` answered
+         `401 Unauthorized use of live credentials` with the test seller account's credentials;
+       - the close event therefore retries until it fails;
+       - whether cancelling works with the client's production credentials is unverified.
+     - Describe decisions 21 and 22 in both `__init__.py` files, the README and
+       `docs/architecture.md`.
+   - Observable result:
+     - an OXXO ticket expiring at T holds the order and the reservation until T + 48 h;
+     - the instructions email still says "antes del" T;
+     - closing a link no longer gets 400.
 
 ## Acceptance criteria
 
@@ -884,3 +920,51 @@ verify). R4 needs no code; it is left to the verifier.
   inside the plan" (42 declared, 63 changed).
 
 ## Verification
+
+**First sandbox run (2026-10-27, main session, at 57f8ed8; superseded for the behavior step 10
+changes).**
+
+Setup:
+- The real Mercado Pago sandbox, through the `cloudflared` tunnel to the API on :8100;
+- the worker restarted on the new code;
+- the test-mode webhook secret;
+- QA orders `LFI-1035` to `LFI-1037`.
+
+Suites at 7f81bb1:
+- `uv run just check`: 4296 passed;
+- `uv run just test-integration`: 1205 passed;
+- the wiring test at 57f8ed8 also passed.
+
+- [x] **Preference.** Read back from Mercado Pago:
+  - `excluded_payment_types [{"id":"atm"}]` and `installments 1`;
+  - `expiration_date_to` equal to the order's deadline;
+  - `date_of_expiration` 48 h after the link (`2026-10-29T21:34:39.566Z`).
+  The checkout offered OXXO and "Transferencia SPEI".
+- [x] **OXXO ticket (`LFI-1035`).**
+  - Payment `185367296137`: `pending`, `ticket`/`oxxo`, its ticket URL stored, `held_at` set.
+  - The order's `payment_due_at` and the reservation's `expires_at` both moved to the ticket's
+    expiry, `2026-10-30T05:59:59Z`.
+  - Mailpit: "Tu ficha de pago del pedido LFI-1035", with "$2,079.50 MXN con efectivo en
+    tienda antes del 30/10/2026 a las 00:59" and the ticket link.
+- [x] **SPEI (`LFI-1036`).** Payment `186412811742`: `bank_transfer`/`clabe`, held to
+  `2026-10-29T21:34:39Z`, and the email says "transferencia SPEI".
+- [x] **`/payments/pending`.**
+  - `LFI-1035`'s token returned the OXXO ticket.
+  - An unknown token got 404 `PAYMENTS_ORDER_NOT_FOUND`.
+- [x] **A card payment while a ticket is pending (`LFI-1037`).**
+  - The old link had expired with the original 30 minutes.
+  - `POST /payments/checkout` gave a new link, because the deadline had moved.
+  - Paid with a card: `186413391800` approved, `applied`, and the order `paid`.
+- [ ] **V1: closing the link failed.** The close event's preference update answered
+  `400 invalid date of expiration` (logged `payments.checkout_close_refused`).
+  - A probe of the same update without `date_of_expiration` answered 200, and Mercado Pago then
+    showed `expiration_date_to` = the close time. → step 10.
+- [ ] **V2: cancelling the ticket failed.** `PUT /v1/payments/186412901784`
+  `{"status":"cancelled"}` answered `401 Unauthorized use of live credentials`.
+  - The close event retries (attempt 5 at the time).
+  - The ticket stays `pending_waiting_payment` in Mercado Pago. → finding, step 10.
+- **Decision 21.** Mercado Pago set the OXXO ticket's expiry to the end of the day in Mexico
+  City (`05:59:59Z`), not the 48 h sent. SPEI kept the 48 h. → decisions 21 and 22, step 10.
+- **NOT VERIFIABLE in the sandbox:**
+  - paying a ticket at the store (the approved path is covered by integration tests);
+  - R4.

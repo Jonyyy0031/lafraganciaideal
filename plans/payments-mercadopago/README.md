@@ -109,6 +109,13 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
 20. (2026-10-27) **When an order is paid or cancelled, its pending OXXO or SPEI tickets are
     cancelled in Mercado Pago**, besides expiring the link. A ticket already paid at the store
     is `refund_due` (plan 004).
+21. (2026-10-27) **The OXXO deadline is the one Mercado Pago gives the ticket.** Mercado Pago
+    moves the requested 48 hours to the end of that day in Mexico City time (up to about 56 h),
+    and it cannot be forced from the preference. SPEI kept the 48 hours.
+22. (2026-10-27) **An order with a pending ticket waits 48 more hours after the ticket expires**
+    before it is cancelled, with its units still reserved. A store payment can take one or two
+    business days to be credited ("se acreditará de 1 a 2 días hábiles"). The customer is still
+    told to pay before the ticket's own deadline.
 
 ## Delivered
 
