@@ -103,6 +103,12 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
     When the order leaves `pending_payment`, payments expires its Mercado Pago preference. A
     payment that still gets through (the guest was already in the checkout) is only recorded,
     with no hold and no email.
+19. (2026-10-27) **The 48 hours count from the first ticket** (plan 003 review M1). Later
+    tickets may be issued but never move the order's deadline past the first ticket's expiry;
+    then the order is cancelled and its units released.
+20. (2026-10-27) **When an order is paid or cancelled, its pending OXXO or SPEI tickets are
+    cancelled in Mercado Pago**, besides expiring the link. A ticket already paid at the store
+    is `refund_due` (plan 004).
 
 ## Delivered
 

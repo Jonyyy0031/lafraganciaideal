@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -223,6 +223,49 @@ order page can show the pending ticket (decision 16). It also folds in the open 
      README and architecture docs. In the initiative README, record plan 003's row as unchanged.
    - Observable result: `uv run just check` green; `plans-scope` clean.
 
+8. **Review repair (added 2026-10-27 after the first review: M1, L1, L2, L3, and the finding
+   `payments-cancelled-order-keeps-live-ticket`)**
+   - Files: `apps/api/src/fragancia_api/modules/payments/domain/payment.py` (modify), `apps/api/src/fragancia_api/modules/payments/domain/repositories.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/sql_payment_repository.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/in_memory.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/handlers/process_payment.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/handlers/close_checkout.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/ports.py` (modify), `apps/api/src/fragancia_api/modules/payments/infrastructure/mercadopago_gateway.py` (modify), `apps/api/src/fragancia_api/modules/payments/__init__.py` (modify), `apps/api/README.md` (modify), `plans/findings/payments-cancelled-order-keeps-live-ticket.md` (modify), `plans/payments-mercadopago/README.md` (modify)
+   - Do:
+     - **M1 (decision 19): the 48 hours count from the first ticket.**
+       - Add `PaymentRepository.first_hold_expiry(order_id) -> datetime | None`: the
+         `expires_at` of the order's earliest-held payment (`held_at` not null, ordered by
+         `held_at`).
+       - In the handler's hold path, pass `until = min(payment.expires_at, first)` when there
+         is an earlier hold.
+       - A later ticket therefore never moves the deadline past the first ticket's expiry. It
+         is still recorded and still sends its instructions email, which shows the order's
+         actual deadline (the event's `due_at`).
+     - **L1.** `Payment.needs_hold(now)` is also false when `expires_at <= now`. Such a payment
+       is `mark_held` with no hold and no email, and logged as `payments.ticket_expired_on_arrival`.
+     - **L2.** `get_payment` keeps `ticket_url` only when it is at most 500 characters (the
+       column size). Otherwise it stores None and logs `payments.ticket_url_too_long`, so a
+       long URL never blocks the payment's later notifications.
+     - **L3.** `close_checkout` treats any 4xx except 404 as permanent:
+       `Ok(False)`, logged as `payments.checkout_close_refused` with the status. Only 5xx and
+       transport errors are `Err` and retry.
+     - **Finding (decision 20): cancel live tickets when the order stops waiting.**
+       - `PaymentGateway.cancel_payment(payment_id) -> Result[bool, PaymentGatewayUnavailable]`
+         sends `PUT {api_url}/v1/payments/{id}` with `{"status": "cancelled"}`, as the official
+         SDK's `src/clients/payment/cancel/index.ts` does (checked 2026-10-27).
+         2xx → `Ok(True)`; 4xx → `Ok(False)`, logged as `payments.ticket_cancel_refused`
+         (e.g. already paid or already expired); 5xx and transport errors → `Err`.
+       - In `CloseCheckout`, after the preference, cancel each of the order's payments with
+         status `pending` and a cash type (any expiry), read through a new
+         `PaymentRepository.pending_cash(order_id)`. Any `Err` raises, so the close event
+         retries; repeating a cancel is harmless.
+       - The row is not edited here: Mercado Pago's notification of the cancelled status
+         refreshes it as usual. A ticket paid before the cancel still arrives `approved` and is
+         `refund_due` (plan 002).
+       - Set the finding to `status: planned` with `plan: payments-mercadopago/003`.
+     - Describe both rules in `payments/__init__.py` and the README.
+   - Observable result:
+     - a second ticket issued 47 h after the first leaves the deadline at the first one's
+       expiry;
+     - an already-expired ticket sends no email;
+     - cancelling an order with a pending OXXO ticket cancels it in Mercado Pago, and a later
+       notification stores `cancelled`.
+
 ## Acceptance criteria
 
 - [ ] A new link's preference excludes only `atm` and carries `date_of_expiration` 48 h ahead;
@@ -382,5 +425,108 @@ Notes for the reviewer:
   second, on mypy errors in new tests; both were fixed in the tests before the final green run.
 
 ## Review findings
+
+Reviewer, 2026-10-27. Diff `main...HEAD` (7 commits) plus a clean worktree. No PR exists yet.
+
+### Pass 1 — Checklist: 14/15 passed, 1 not applicable, 0 failed
+
+- [x] `plans-scope`: "Every change is inside the plan" (40 declared, 57 changed). The hot files
+      (`container.py`, `docs/modules.json`, `.importlinter`) are not touched.
+- [x] `uv run just check`: green (4200 passed, 5 skipped, 1 xfailed; harness 685 passed).
+- [x] `uv run just test-integration`: green (1184 passed, 5 skipped).
+- [x] Business rules are in the domain: `Order.await_payment`, and `Payment.needs_hold`,
+      `is_live_ticket` and `METHOD_LABELS`. The router and the adapters have none.
+- [x] CQRS-lite: `hold_for_payment` runs aggregate, then repository, then publish inside
+      `transactions.run` and returns a `Result`. `GetPendingTickets` reads through the
+      `PaymentQueries` port (`Database.reader()`) and returns `PendingTicket` models.
+      `CheckoutRepository.close` is not specific to one screen.
+- [x] Contracts: `PendingTicketsRequest`, `PendingTicket` and `PendingTickets` are in
+      `payments/contracts.py`. `fragancia_api.main.openapi --check` reports "openapi.json is up
+      to date".
+- [x] Errors: 404 `PAYMENTS_ORDER_NOT_FOUND` (an existing code). The facade's refusals come back
+      as `Err`. The gateway's failures are `PaymentGatewayUnavailable`.
+- [x] Money is integer cents. Datetimes come from `Clock` and are timezone-aware: the gateway
+      drops a `date_of_expiration` with no offset. No new ids are created.
+- [x] Migration 0025 adds four nullable columns, drops nothing and adds no foreign keys. The
+      downgrade drops exactly those four, and the round-trip test is green.
+- [x] Routes: `/payments/pending` is on `public_router` (`payments/http/router.py:19`). There
+      are no admin routes.
+- [x] Wiring: the subscribers and the query are registered in `orders/module.py` and
+      `payments/module.py`. The container tests are green and no module is registered twice.
+- [x] No secrets, `.env` contents or real personal data.
+- [x] Deviations are honest. Spot-checked: deviation 1 is the one added line
+      `payment_due_at=order.payment_due_at` (`sql_order_repository.py:162`). Deviation 8 is the
+      two-subscriber split (`close_checkout.py:29-103`), and `RequestCheckoutClose` joins the
+      relay's session (`database.py:64-66`). The initiative README diff (decisions 14 to 18)
+      comes from the plan-approval commit `2ece0e9`, not from the implementation.
+- [x] Docs: `apps/api/README.md`, `docs/architecture.md`, `.env.example`, `config.py`
+      comments and both modules' `__init__.py` describe the new behavior. The finding moved to
+      `planned`.
+- [ ] PR body: not applicable, no PR yet. The main session must write it with the six sections.
+
+### Pass 2 — Findings
+
+**High:** none.
+
+**Medium**
+
+- **M1 (needs a user decision, not a code defect against the plan): tickets can be chained, so
+  one unpaid order can hold its units with no limit.**
+  - Where: `payments/application/commands/start_checkout.py:102`
+    (`cash_expires_at=now + CASH_TICKET_TTL`), `payments/domain/checkout.py:19` (a stored link
+    is reused only while `expires_at == payment_due_at`) and `orders/domain/order.py:385`
+    (`moved = until > self.payment_due_at`, with no ceiling).
+  - Scenario: the order is placed at T, and a ticket issued at T+10 min holds it until about
+    T+48 h. The hold changes `payment_due_at`, so the next "Pagar" builds a new preference.
+    That preference is valid until T+48 h, with `date_of_expiration` = its creation time + 48 h.
+    At T+47 h the guest issues a second ticket from it, which expires at about T+95 h. The hold
+    moves the deadline and extends the reservation again, and each round sends another
+    instructions email. Repeated every two days, the order never expires: the units stay
+    reserved and no one else can buy them.
+  - The unit test `test_an_order_held_for_a_ticket_gets_a_new_link_for_its_extended_window`
+    (`tests/unit/payments/test_mercadopago_tickets.py:252`) confirms the new link. The code
+    matches the plan's step 2 and decision 17 ("extends to the ticket that expires latest (up to
+    48 hours)"). The plan's own reasoning ("never before 47.5 h for a fresh order") does not
+    cover a link created after a hold.
+  - The user decides whether "up to 48 hours" is counted from each ticket (the current behavior)
+    or from the first one or from the order. A possible fix is to cap the window, for example
+    `cash_expires_at = min(now + 48 h, first hold + 48 h)` or a ceiling on `until` in
+    `hold_for_payment`. This would also cover a Mercado Pago `date_of_expiration` beyond what we
+    asked for, which today is trusted without a bound.
+
+**Low**
+
+- **L1: a ticket that has already expired still sends the instructions email, with a deadline
+  in the past.** `payments/domain/payment.py:85-92` (`needs_hold` does not check
+  `expires_at > now`) and `order.py:385-397` (the event is always recorded). Scenario: a
+  notification is retried by the relay or arrives late from Mercado Pago after the ticket's
+  `date_of_expiration`, while the order is still pending, for example kept open by a later
+  ticket. The customer gets "paga … antes del <a past date>" for a ticket that can no longer be
+  paid. Fix: skip the hold and mark it held when `expires_at <= now`. Small.
+- **L2 (uncertain): a `ticket_url` longer than 500 characters would block every later
+  notification for that payment, including its approval.** `payments/infrastructure/tables.py:41`
+  (`String(500)`). `describe` stores the URL on every delivery, so the `INSERT`/`UPDATE` raises
+  a `DataError` on each attempt. The relay retries for about 24 h and then fails the event
+  permanently, and an approved payment would never mark the order paid. Mercado Pago's ticket
+  URLs are usually about 100–150 characters, so this is unlikely. The fix would be to truncate
+  or drop an oversized URL in the gateway's `_text`, or to use `Text`.
+- **L3 (uncertain, for the verifier's sandbox run): Mercado Pago may refuse the close body.**
+  `mercadopago_gateway.py:80-89` sends `date_of_expiration = expiration_date_to = now` and
+  `expires: true`. It may also do this for a preference that already expired: the overdue
+  cancel happens after `payment_due_at`, the moment the preference stopped taking payments.
+  If Mercado Pago answers 400 in either case, `CloseCheckout` raises on every attempt, and each
+  cancelled order leaves one `payments.checkout.close_requested` row retrying for about 24 h
+  before it fails permanently. Only the sandbox can tell. The acceptance criterion "old link no
+  longer lets the guest pay" covers the first case. The verifier should also try closing an
+  already-expired preference.
+
+**Outside the scope of this plan:** a new finding,
+`plans/findings/payments-cancelled-order-keeps-live-ticket.md` (status `open`). Closing the link
+does not cancel an OXXO or SPEI ticket that was already issued. That ticket stays payable after
+the order is cancelled or paid by card, which leads to `refund_due`.
+
+**Result:** no High findings. M1 is a product decision that could need a code change, so the
+status stays `review` until the user rules on it. L1 is a small fix that can go with M1's
+repair. L2 and L3 are uncertain and can be accepted or left to the verifier.
 
 ## Verification
