@@ -543,6 +543,107 @@ the order is cancelled or paid by card, which leads to `refund_due`.
 status stays `review` until the user rules on it. L1 is a small fix that can go with M1's
 repair. L2 and L3 are uncertain and can be accepted or left to the verifier.
 
+### Re-review after the step 8 repair (reviewer, 2026-10-27)
+
+Diff `04c3003..HEAD` (commits `3ed0100`, `f2327bd`, `0705654` and `b3d7ddb`), read together
+with the Repair log below and decisions 19 and 20. The worktree is clean apart from this edit.
+
+**Checklist: 13 of 15 passed, 1 failed, 1 not applicable.**
+- `plans-scope`: "Every change is inside the plan" (41 declared, 62 changed). The hot files
+  are not touched.
+- `uv run just check`: green (4277 passed, 5 skipped, 1 xfailed; harness 685 passed).
+- `uv run just test-integration`: green (1203 passed, 5 skipped).
+- There is no new migration. `openapi.json` needs no update: the contracts did not change.
+- Business rules: `needs_hold(now)` and `expired_on_arrival(now)` are in the domain. The cap
+  (`min(expires_at, first)`) is in the handler, and the ticket cancel is in `CloseCheckout`.
+  Both are application orchestration, which is acceptable.
+- Wiring: `CloseCheckout` gets `payments=`, and one `SqlPaymentRepository` is shared with
+  `ProcessPaymentNotification` (repair deviation 1). The container tests are green.
+- Repair deviations: spot-checked 5 and 6 against the code. Deviation 5 matches
+  `PERMANENT_REFUSALS = {400, 404, 409, 422}` in `mercadopago_gateway.py:30`, used at `:103`
+  and `:131`. Deviation 6 matches `expires_at > held_at` in `sql_payment_repository.py:66`
+  and in the in-memory fake. Step 8's own text still says "any 4xx except 404" and
+  "4xx → `Ok(False)`". Deviation 5 records that this is superseded, so the record is honest.
+- **FAILED, stale docs:** `docs/architecture.md:65` (the `payments` row) still says that
+  `CloseCheckout` "expires the Mercado Pago preference and closes the stored checkout". It
+  says nothing about cancelling the pending tickets (decision 20), the 48 hours counted from
+  the first ticket (decision 19), or the 4xx classification. `payments/__init__.py` and
+  `apps/api/README.md` were updated, but the architecture doc was left out of step 8's file
+  list. This is finding R3 below.
+- Not applicable: the PR body (no PR yet).
+
+**The first review's findings, one by one**
+- **M1: closed.** `_hold` caps `until` at `first_hold_expiry`
+  (`process_payment.py:144-147`). The current payment is never its own "first", because its
+  `held_at` is still null when the cap is read. The integration test
+  `test_payment_hold_repair_flow.py` checks the order and the reservation. A ticket chain now
+  stops at the first ticket's expiry. The overdue cancel then publishes
+  `close_requested`, which cancels the later tickets (decision 20), so the units are released
+  for good. The concurrency race that the main session accepted (repair deviation 4) behaves
+  as before the repair and is not a regression.
+- **L1: closed.** `needs_hold(now)` and `expired_on_arrival(now)` are disjoint and together
+  cover every pending ticket that is not held (`payment.py:85-106`). An expired-on-arrival
+  ticket gets `mark_held` with no call to orders, and deviation 6 keeps it from capping a
+  later hold.
+- **L2: closed.** `get_payment` drops a URL longer than 500 characters before it reaches the
+  column (`mercadopago_gateway.py:202-212`). Exactly 500 characters is kept, which matches
+  `String(500)`.
+- **L3: closed in code.** 400, 409 and 422 are `Ok(False)` and logged, so they are no longer a
+  24-hour retry loop. Whether Mercado Pago really answers like this is still for the
+  verifier's sandbox run, and it is listed as NOT CONFIRMED in Test coverage.
+- **Finding `payments-cancelled-order-keeps-live-ticket`: closed for the normal path.** The
+  finding is now `planned` for 003. `CloseCheckout` cancels each pending cash ticket, also
+  when there is no stored checkout (repair deviation 2). A refused cancel is permanent and
+  logged. An `Err` raises, and the whole event rolls back, the checkout close included. That
+  rollback is harmless: on retry the close is repeated, which is idempotent, and a ticket
+  cancelled again gets a permanent refusal. Leftover gap: R2.
+
+**New findings from the repair**
+
+High and Medium: none.
+
+- **R1 (Low): the order page shows a later deadline than the order really has.**
+  `SqlPaymentQueries.pending_for_order` (`sql_payment_repository.py:134`) and
+  `GetPendingTickets` (`pending_tickets.py:25`) return each ticket's own Mercado Pago
+  `expires_at`. After decision 19, a second ticket's `expires_at` can be up to about 47 hours
+  later than the order's `payment_due_at`.
+  - Scenario: the first ticket expires at T+48 h, and a second ticket is issued at T+47 h with
+    expiry T+95 h. `POST /payments/pending` lists the second ticket as payable until T+95 h.
+    The overdue job then cancels the order at T+48 h and decision 20 cancels the ticket.
+  - The instructions email shows the correct deadline, because it uses the event's `due_at`.
+    The contract's description, "When Mercado Pago stops accepting the ticket.", is also no
+    longer true, because we cancel the ticket at the order's deadline.
+  - Nothing renders this field yet (phase 3), so no customer is affected today. A possible fix
+    is to return `min(ticket.expires_at, order.payment_due_at)`; `PayableOrder` already has
+    `payment_due_at`.
+- **R2 (Low, a narrow race, record or accept): a ticket whose notification is processed after
+  the close is never cancelled.**
+  - `CloseCheckout` cancels only the rows already in `payments.payments` (`pending_cash`,
+    `close_checkout.py:87-104`).
+  - Scenario: the guest issues an OXXO ticket and, moments later, the order is paid by card,
+    or the overdue cancel runs. If the ticket's webhook reaches the worker after
+    `close_requested` has been handled, `_hold` gets `not_pending` and only calls `mark_held`
+    (`process_payment.py:159-167`). The ticket stays payable until its own expiry, and paying
+    it ends in `refund_due`. This is what happened before the repair, but now only in this
+    narrow window.
+  - Possible fix: when a hold answers `not_pending`, publish a request to cancel that ticket.
+  - The user decides whether this deserves a change.
+- **R3 (Low, docs): `docs/architecture.md:65` is stale.** It does not describe decisions 19
+  and 20 or the 4xx classification. This is the failed checklist item above.
+- **R4 (uncertain, for the verifier): a ticket the customer has already paid but Mercado Pago
+  has not yet confirmed.** An owner may mark the order paid by hand while the ticket is still
+  `pending` in Mercado Pago. Decision 20 then sends `PUT /v1/payments/{id}`
+  `status: cancelled` for that ticket. How Mercado Pago treats a cancel of a ticket paid at
+  the store but not yet credited needs checking in the sandbox or the docs. The design expects
+  either a refusal (`Ok(False)`) or an `approved` notification that ends `refund_due`. No code
+  change unless the sandbox shows otherwise.
+
+**Result:** the five original items are closed. The repair introduced no regressions in
+correctness. The checklist fails on stale docs (R3), and R1 is a small code fix, so the status
+stays `review`. R2 and R4 need a decision or a verifier check, not necessarily code. If the
+main session accepts R1 and R2 as they are, and R3 is fixed in `docs/architecture.md`, nothing
+blocks `verify`.
+
 ## Repair log
 
 Implementer, 2026-10-27. Step 8 (review repair: M1, L1, L2, L3 and the finding
