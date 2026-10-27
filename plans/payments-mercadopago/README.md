@@ -88,6 +88,21 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
     so:** "Tu pedido … fue cancelado porque tu pago llegó cuando ya no había existencias. Te
     reembolsaremos el pago completo." (plan 002 review L2). The customer page still shows the
     cancellation as by the system.
+14. (2026-10-27) **Cash in stores and SPEI are enabled**: every `ticket` method Mercado Pago
+    offers (OXXO and other stores) and `bank_transfer` (SPEI). Bank counters and ATMs (`atm`)
+    stay excluded.
+15. (2026-10-27) **When a ticket is issued, we send our own instructions email**: amount,
+    method, the deadline in Cancún time and the link to Mercado Pago's ticket. It is in addition
+    to whatever Mercado Pago sends.
+16. (2026-10-27) **The order page can show the pending ticket**: method, deadline and link,
+    through a payments query that takes the order's token.
+17. (2026-10-27) **With a ticket pending, the guest may still pay by card or issue another
+    ticket.** The window extends to the ticket that expires latest (up to 48 hours), and a
+    second payment is `refund_due` (plan 002).
+18. (2026-10-27) **A paid or cancelled order no longer accepts payments from its old link.**
+    When the order leaves `pending_payment`, payments expires its Mercado Pago preference. A
+    payment that still gets through (the guest was already in the checkout) is only recorded,
+    with no hold and no email.
 
 ## Delivered
 
