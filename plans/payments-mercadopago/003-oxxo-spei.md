@@ -1,5 +1,5 @@
 ---
-status: testing
+status: review
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -337,6 +337,49 @@ scope; each is recorded here.
        `orders.order.status_changed`.
 
 ## Test coverage
+
+Tester, 2026-10-27. Baseline (`just check` and `just test-integration`): green, 4014 unit
+passed / 1 xfailed and 1138 integration passed. Closing: `just check` 4200 passed, 5 skipped,
+1 xfailed (the pre-existing one); `just test-integration` 1184 passed, 5 skipped. No product
+code was touched. No GAP found. Files are new, under `apps/api/tests/`.
+
+| Behavior | Source | Layer | Test | State |
+| -------- | ------ | ----- | ---- | ----- |
+| `Order.await_payment`: later deadline moves (even by 1 s), equal or earlier does not, returns whether it moved | `orders/domain/order.py:376-398` | domain | `unit/orders/test_order_payment_pending_domain.py` | CONFIRMED |
+| `await_payment` records `OrderPaymentPending` every time (new or unchanged `due_at`, method, URL), payload shape, no status change or history | `order.py:389-397` | domain | same | CONFIRMED |
+| `await_payment` refuses every non-pending status (`ORDERS_TRANSITION_INVALID`, from/to details), records nothing | `order.py:383-384` | domain | same | CONFIRMED |
+| `Payment.needs_hold`, `mark_held`, `describe`, `is_live_ticket`, `CASH_TYPES`, `METHOD_LABELS`, `CheckoutCloseRequested` | `payments/domain/payment.py`, `events.py` | domain | `unit/payments/test_payment_tickets_domain.py` | CONFIRMED |
+| Facade `hold_for_payment`: moved + reservation extended, not moved (earlier or equal) no extend, second later ticket moves again, no reservation, extension refused (logged `orders.payment_hold_not_extended`, deadline and event kept), not pending (each status), not found, domain `Err` passes through, no commit or release | `orders/application/commands/confirm_payment.py:78-110` | application | `unit/orders/test_hold_for_payment.py` | CONFIRMED |
+| `StockHoldsAdapter.extend` forwards and passes inventory's answer | `orders/infrastructure/stock_holds.py` | application | `unit/orders/test_stock_holds_extend_adapter.py` | CONFIRMED |
+| Instructions email: subject, body (amount, method, Cancún deadline, optional page, footer), handler reads order by number, uses the event's deadline/label/page and order id, missing order, send failure retries, rejected address | `orders/application/handlers/order_emails.py` (`payment_instructions_email`, `SendPaymentInstructionsEmail`) | application | `unit/orders/test_payment_instructions_email.py` | CONFIRMED |
+| Container subscribes only the instructions email to `orders.order.payment_pending` | `orders/module.py` | application | `unit/orders/test_payment_instructions_wiring.py` | CONFIRMED |
+| Handler: pending OXXO / SPEI holds once with its label and page, held once per payment on re-delivery, not_pending / not_found marked held and logged, orders' refusal raises and is retried, non-tickets never hold, approved after hold applied with no second hold, page/expiry refreshed without re-hold, hold inside the transaction | `payments/application/handlers/process_payment.py:84-158` | application | `unit/payments/test_process_payment_tickets.py` | CONFIRMED |
+| `RequestCheckoutClose` acts only on `pending_payment` to `paid`/`cancelled`; `CloseCheckout` (checkout closed at now, none, unknown preference logged, gateway error raises and leaves it open, idempotent) | `payments/application/handlers/close_checkout.py` | application | `unit/payments/test_close_checkout.py` | CONFIRMED |
+| `GetPendingTickets`: labels, newest first, expired and boundary hidden, other payments/orders hidden, unknown token, non-pending order empty | `payments/application/queries/pending_tickets.py` | application | `unit/payments/test_pending_tickets.py` | CONFIRMED |
+| `StartCheckout` sets `cash_expires_at` = now + 48 h; a held order gets a new link for its extended window | `payments/application/commands/start_checkout.py` | application | `unit/payments/test_mercadopago_tickets.py` | CONFIRMED |
+| Container resolves the pending query (SQL) and wires `CloseCheckout` to its event with the checkout's gateway; adapter `hold` maps `held` / `not_found` / `not_pending` | `payments/module.py`, `infrastructure/order_payments.py` | application | `unit/payments/test_payments_tickets_wiring.py` | CONFIRMED |
+| `POST /payments/pending`: 200 with items, 200 empty, 404 `PAYMENTS_ORDER_NOT_FOUND`, 422 on a bad body, token not accepted in URL, public, OpenAPI | `payments/http/router.py:56-65` | http | `unit/payments/test_pending_tickets.py` | CONFIRMED |
+| Preference excludes only `atm` and carries `date_of_expiration` | `mercadopago_gateway.py:23,170` | http | updated at implementation: `unit/payments/test_mercadopago_gateway.py` (deviation 4) | CONFIRMED |
+| `get_payment` maps method, expiry (offset required), page; bad types become `None`, never unavailable | `mercadopago_gateway.py:_payment` | http (adapter) | `unit/payments/test_mercadopago_tickets.py` | CONFIRMED |
+| `close_checkout`: PUT body and URL, bearer, timeout, 2xx ok, 404 `Ok(False)`, other status / transport error unavailable and logged without the token, no token | `mercadopago_gateway.py:68-100` | http (adapter) | `unit/payments/test_mercadopago_tickets.py` | CONFIRMED |
+| Sandbox offers OXXO and SPEI, honors `date_of_expiration` | plan acceptance 1 and 2 | http | `test_the_sandbox_offers_oxxo_and_spei_and_honors_the_cash_expiry` | NOT CONFIRMED (needs the Mercado Pago sandbox; verifier) |
+| `PUT /checkout/preferences/{id}` makes the old link refuse payments | plan step 6 | http | `test_a_closed_preference_no_longer_accepts_a_payment` | NOT CONFIRMED (needs the sandbox; verifier) |
+| Migration 0025: four nullable columns with their types and lengths, constraints and indexes unchanged, old rows kept, downgrade drops only them, round trip | `migrations/versions/0025_payments_tickets.py` | integration | `integration/payments/test_migration_0025_payments_tickets.py` | CONFIRMED |
+| Repository reads and writes the four columns; `claim` keeps stored values; `held_at` kept | `sql_payment_repository.py` | integration | `integration/payments/test_sql_tickets.py` | CONFIRMED |
+| `SqlPaymentQueries.pending_for_order`: filters, expiry boundary, newest first with id tie-break, one order only | `sql_payment_repository.py:96-125` | integration | same | CONFIRMED |
+| `SqlCheckoutRepository.close` (only that order, never reusable, no row is a no-op); request and close over the real outbox; gateway failure leaves it open | `sql_checkout_repository.py`, `close_checkout.py` | integration | same | CONFIRMED |
+| Facade + real inventory `extend` in one transaction: saved `payment_due_at` (deviation 1) and reservation `expires_at` equal, outbox event payload, earlier ticket shortens nothing, later one moves again, expired reservation keeps the deadline and pays late, cancelled / unknown order, overdue job cancels at the extended deadline and releases | `confirm_payment.py`, `sql_order_repository.py:151-164` | integration | `integration/orders/test_payment_hold_flow.py` | CONFIRMED |
+| Handler end to end: pending OXXO / SPEI stores the ticket and holds once (3 deliveries, one outbox event), paid later applies and commits keeping `held_at`, ticket after a card payment is `refund_due`, ticket for a cancelled order marked held with no email | `process_payment.py`, `order_payments.py` | integration | same | CONFIRMED |
+| Email actually delivered to Mailpit, the Cancún text with a real sandbox ticket, the reminder-free overdue cancel email | plan acceptance | e2e | not tested | NOT CONFIRMED (no e2e layer; verifier) |
+
+Notes for the reviewer:
+- No GAP: every behavior the plan promises was found in code.
+- `Payment.is_live_ticket` (Python) and `SqlPaymentQueries.pending_for_order` (SQL) are tested
+  with the same table of cases, so the two implementations cannot drift apart unnoticed.
+- The in-memory `FakeGateway`, `InMemoryPayments` and `InMemoryStockHolds` extensions are
+  exercised only through the tests above.
+- The first closing run of `just check` failed on two ruff E501 lines in new tests and, on the
+  second, on mypy errors in new tests; both were fixed in the tests before the final green run.
 
 ## Review findings
 
