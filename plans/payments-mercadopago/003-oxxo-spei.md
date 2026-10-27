@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -758,5 +758,60 @@ the changed behavior below and must be repeated (testing → review → verify).
 - No contract change: `fragancia_api.main.openapi --check` says "openapi.json is up to date".
   No migration.
 - `uv run just plans-lint`: plans OK (after setting `status: testing`).
+
+### Step 9: re-review repair (R1, R2, R3)
+
+Implementer, 2026-10-27. The test coverage and the re-review above describe the code before
+this step. They are superseded for the behavior below and must be repeated (testing → review →
+verify). R4 needs no code; it is left to the verifier.
+
+**What changed**
+- **R1.** `GetPendingTickets` (`application/queries/pending_tickets.py`) returns each item with
+  `expires_at = min(ticket.expires_at, order.payment_due_at)`, through `model_copy`, using the
+  order already resolved by `payable`. `PaymentQueries.pending_for_order` and its SQL and
+  in-memory adapters are unchanged: they still filter on the ticket's own expiry.
+  `PendingTicket.expires_at` now reads "When the ticket stops paying the order: its own expiry
+  or the order's payment deadline, whichever is earlier." I ran `uv run just openapi`; the
+  one-line description change is in `openapi.json`.
+- **R2 (decision 20, late notifications).**
+  - New event `TicketCancelRequested` (`payments.ticket.cancel_requested`, payload
+    `payment_id`) in `domain/events.py`.
+  - In `ProcessPaymentNotification._hold`, a `not_pending` answer publishes it through the
+    handler's `EventPublisher`, inside the same transaction, before `mark_held`. `not_found`
+    publishes nothing. The `payments.ticket_not_held` log is unchanged.
+  - New subscriber `CancelTicket` (`application/handlers/cancel_ticket.py`) calls
+    `gateway.cancel_payment(payment_id)`. `Err` raises `payments.gateway_unavailable`, so only
+    that event retries. `Ok(False)` is already logged by the gateway.
+  - Wired in `payments/module.py` with the shared gateway. The event is listed in
+    `payments/__init__.py`.
+- **R3.** The payments row of `docs/architecture.md` and the payments section of
+  `apps/api/README.md` now describe:
+  - the cap at the first ticket (decision 19);
+  - the expired-on-arrival rule;
+  - the `/payments/pending` expiry cap;
+  - ticket cancellation on close and on late notifications (decision 20);
+  - the permanent answers (400, 404, 409, 422) and the retried ones (other 4xx, 5xx,
+    transport), which end in the failed-events panel if they never recover.
+
+  `payments/__init__.py` also describes the cap and the new event.
+
+**Deviations of step 9**
+1. **Existing test adjusted, no coverage added.** In `unit/payments/test_pending_tickets.py`,
+   the `query` helper builds the order with `due=timedelta(hours=48)`, as a held order has its
+   deadline at its ticket's expiry. With the default 30-minute deadline, R1 capped the
+   expected 48-hour expiries, and
+   `test_a_live_oxxo_ticket_is_listed_with_its_label_amount_expiry_and_page` and
+   `test_a_known_token_answers_200_with_the_items` failed. Nothing tests the cap itself,
+   `TicketCancelRequested` or `CancelTicket` yet; that is for the tester.
+2. None other. Every file is in step 9's list.
+
+**Commands**
+- `uv run just openapi`: wrote `openapi.json` (1 line changed).
+- `uv run just check`: green (4277 passed, 5 skipped, 1 xfailed; harness 685 passed).
+- Integration tests in `tests/integration/payments/`, `orders/test_payment_hold_flow.py` and
+  `orders/test_payment_confirmation_flow.py`: 153 passed. I did not re-run the full
+  `test-integration`; there is no schema change.
+- `uv run just plans-scope plans/payments-mercadopago/003-oxxo-spei.md`: "Every change is
+  inside the plan" (42 declared, 63 changed).
 
 ## Verification
