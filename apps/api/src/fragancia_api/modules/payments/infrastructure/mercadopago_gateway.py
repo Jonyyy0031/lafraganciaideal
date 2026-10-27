@@ -1,5 +1,5 @@
 """Mercado Pago adapter: creates a Checkout Pro *preference* and answers its redirect URL,
-expires a preference, and fetches a payment's current state."""
+expires a preference, cancels a pending ticket, and fetches a payment's current state."""
 
 from datetime import datetime
 from typing import Any
@@ -22,6 +22,12 @@ TIMEOUT_SECONDS = 10.0
 # Cards, cash in stores (`ticket`) and SPEI (`bank_transfer`), in one installment (decisions 4
 # and 14). Bank counters and ATMs stay excluded.
 _EXCLUDED_PAYMENT_TYPES = ("atm",)
+# The size of `payments.payments.ticket_url` (`String(500)` in `tables.py`).
+TICKET_URL_MAX_LENGTH = 500
+# The answers to closing a preference or cancelling a ticket that a retry would not change:
+# `Ok(False)`, logged. Any other 4xx (401, 403, 408, 429…), a 5xx or a transport error is
+# `Err`, so the event retries and, if it never recovers, shows in the failed-events panel.
+PERMANENT_REFUSALS = frozenset({400, 404, 409, 422})
 
 
 class MercadoPagoGateway:
@@ -94,6 +100,41 @@ class MercadoPagoGateway:
             return Err(PaymentGatewayUnavailable())
         if response.status_code == httpx.codes.NOT_FOUND:
             return Ok(False)
+        if response.status_code in PERMANENT_REFUSALS:
+            # Retrying the same body would be refused again (plan 003 review L3).
+            _log.warning("payments.checkout_close_refused", status=response.status_code)
+            return Ok(False)
+        if not response.is_success:
+            _log.error("payments.gateway_error", status=response.status_code)
+            return Err(PaymentGatewayUnavailable())
+        return Ok(True)
+
+    async def cancel_payment(self, payment_id: str) -> Result[bool, PaymentGatewayUnavailable]:
+        """Cancel a pending cash or transfer ticket so it can no longer be paid (decision 20),
+        like the official SDK's `payment/cancel`. False when Mercado Pago refuses it for good
+        (`PERMANENT_REFUSALS`: e.g. already paid or already expired)."""
+        if not self._access_token:
+            _log.error("payments.gateway_not_configured")
+            return Err(PaymentGatewayUnavailable())
+        try:
+            async with httpx.AsyncClient(
+                transport=self._transport, timeout=TIMEOUT_SECONDS, trust_env=False
+            ) as client:
+                response = await client.put(
+                    f"{self._api_url}/v1/payments/{payment_id}",
+                    json={"status": "cancelled"},
+                    headers={"Authorization": f"Bearer {self._access_token}"},
+                )
+        except httpx.HTTPError as error:
+            _log.error("payments.gateway_error", status=None, error=type(error).__name__)
+            return Err(PaymentGatewayUnavailable())
+        if response.status_code in PERMANENT_REFUSALS:
+            _log.warning(
+                "payments.ticket_cancel_refused",
+                payment_id=payment_id,
+                status=response.status_code,
+            )
+            return Ok(False)
         if not response.is_success:
             _log.error("payments.gateway_error", status=response.status_code)
             return Err(PaymentGatewayUnavailable())
@@ -158,6 +199,16 @@ class MercadoPagoGateway:
             amount_cents = amount_to_cents(amount)
         except ValueError, ArithmeticError:
             return None
+        ticket_url = _text(
+            details.get("external_resource_url") if isinstance(details, dict) else None
+        )
+        if ticket_url is not None and len(ticket_url) > TICKET_URL_MAX_LENGTH:
+            # Longer than the column: storing it would fail every later notification of the
+            # payment, its approval included (plan 003 review L2).
+            _log.warning(
+                "payments.ticket_url_too_long", payment_id=str(payment_id), length=len(ticket_url)
+            )
+            ticket_url = None
         return GatewayPayment(
             payment_id=str(payment_id),
             status=status,
@@ -169,9 +220,7 @@ class MercadoPagoGateway:
             approved_at=approved_at,
             payment_method=_text(payment_method),
             expires_at=_datetime(date_of_expiration),
-            ticket_url=_text(
-                details.get("external_resource_url") if isinstance(details, dict) else None
-            ),
+            ticket_url=ticket_url,
         )
 
     def _link(self, response: httpx.Response) -> CheckoutLink | None:

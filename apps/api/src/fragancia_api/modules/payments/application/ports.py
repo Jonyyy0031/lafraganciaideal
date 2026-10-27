@@ -104,7 +104,14 @@ class PaymentGateway(Protocol):
         self, preference_id: str, at: datetime
     ) -> Result[bool, PaymentGatewayUnavailable]:
         """Expire the preference at `at`, so its link takes no more payments (decision 18).
-        False when Mercado Pago does not know the preference (404)."""
+        False when Mercado Pago does not know the preference (404) or refuses the change
+        for good (400, 409 or 422). Any other failure is an `Err`, so the caller retries."""
+        ...
+
+    async def cancel_payment(self, payment_id: str) -> Result[bool, PaymentGatewayUnavailable]:
+        """Cancel a pending cash or transfer ticket so it can no longer be paid (decision 20).
+        False when Mercado Pago refuses it for good (400, 404, 409 or 422: e.g. already paid or
+        already expired). Any other failure is an `Err`, so the caller retries."""
         ...
 
 

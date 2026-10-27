@@ -82,12 +82,25 @@ class Payment:
             and self.expires_at > now
         )
 
-    def needs_hold(self) -> bool:
-        """A pending ticket whose order was not held for it yet (decision 5)."""
+    def needs_hold(self, now: datetime) -> bool:
+        """A pending ticket, still payable at `now`, whose order was not held for it yet
+        (decision 5). An already expired ticket needs none (plan 003 review L1)."""
         return (
             self.status == PENDING
             and self.is_ticket()
             and self.expires_at is not None
+            and self.expires_at > now
+            and self.held_at is None
+        )
+
+    def expired_on_arrival(self, now: datetime) -> bool:
+        """A pending ticket not held yet that had already expired at `now`. It is marked held
+        with no hold and no email (plan 003 review L1)."""
+        return (
+            self.status == PENDING
+            and self.is_ticket()
+            and self.expires_at is not None
+            and self.expires_at <= now
             and self.held_at is None
         )
 

@@ -291,7 +291,11 @@ async def test_a_cancelled_order_publishes_the_request_and_its_handler_closes_th
     ]
     assert request["payload"] == {"order_id": str(ORDER)}
     await CloseCheckout(
-        gateway=gateway, checkouts=repo, transactions=transactions, clock=SystemClock()
+        gateway=gateway,
+        checkouts=repo,
+        payments=SqlPaymentRepository(container.database),
+        transactions=transactions,
+        clock=SystemClock(),
     )(
         EventMessage(
             id=UUID(int=6),
@@ -329,6 +333,7 @@ async def test_a_gateway_failure_leaves_the_stored_checkout_open(container: Cont
     handler = CloseCheckout(
         gateway=FakeGateway(fail=True),
         checkouts=repo,
+        payments=SqlPaymentRepository(container.database),
         transactions=SqlTransactionRunner(container.database),
         clock=SystemClock(),
     )

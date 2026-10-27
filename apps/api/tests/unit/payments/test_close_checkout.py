@@ -13,7 +13,11 @@ from fragancia_api.modules.payments.application.handlers.close_checkout import (
     RequestCheckoutClose,
 )
 from fragancia_api.modules.payments.domain.events import CheckoutCloseRequested
-from fragancia_api.modules.payments.infrastructure.in_memory import FakeGateway, InMemoryCheckouts
+from fragancia_api.modules.payments.infrastructure.in_memory import (
+    FakeGateway,
+    InMemoryCheckouts,
+    InMemoryPayments,
+)
 from fragancia_api.shared.application.events import EventMessage
 from fragancia_api.shared.infrastructure.in_memory import (
     FixedClock,
@@ -124,6 +128,7 @@ def closer(
     return CloseCheckout(
         gateway=gateway,
         checkouts=checkouts,
+        payments=InMemoryPayments(),
         transactions=InMemoryTransactionRunner(),
         clock=clock or FixedClock(NOW),
     )

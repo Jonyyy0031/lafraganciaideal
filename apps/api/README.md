@@ -113,12 +113,21 @@ ticket stays `pending` until the guest pays it and expires 48 hours after the li
 created. When its webhook arrives, the worker holds the order once: orders moves the order's
 `payment_due_at` and its reservation to the ticket's expiry (never earlier) and publishes
 `orders.order.payment_pending`, which emails the customer "Tu ficha de pago del pedido …" with
-the amount, the deadline in Cancún time and Mercado Pago's ticket link. The order page reads the
-live tickets with `POST /api/v1/payments/pending` (the order's token in the body). When an
-order is paid or cancelled, payments publishes `payments.checkout.close_requested` and, in that
-event's own outbox row, expires its Mercado Pago preference (`PUT /checkout/preferences/{id}`)
-and closes the stored checkout, so the old link no longer
-takes payments.
+the amount, the deadline in Cancún time and Mercado Pago's ticket link. The 48 hours count from
+the first ticket: a later ticket never moves the deadline past the first ticket's expiry; it is
+still recorded and its email shows the order's actual deadline. A ticket that had already
+expired when its webhook is processed sends no email (`payments.ticket_expired_on_arrival`), and
+a ticket link longer than 500 characters is stored empty (`payments.ticket_url_too_long`). The
+order page reads the live tickets with `POST /api/v1/payments/pending` (the order's token in
+the body). When an order is paid or cancelled, payments publishes
+`payments.checkout.close_requested` and, in that event's own outbox row, expires its Mercado
+Pago preference (`PUT /checkout/preferences/{id}`), closes the stored checkout, so the old link
+no longer takes payments, and cancels each of the order's `pending` cash and transfer tickets
+(`PUT /v1/payments/{id}` with `status: cancelled`). A 400, 404, 409 or 422 from Mercado Pago on
+either call is permanent and only logged (`payments.checkout_close_refused`,
+`payments.ticket_cancel_refused`); any other 4xx (401, 403, 408, 429…), a 5xx or a transport
+error retries the event, which ends in the failed-events panel if it never recovers. A ticket paid before the cancel still arrives
+`approved` and is `refund_due`.
 
 ## Database changes
 

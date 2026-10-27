@@ -170,7 +170,7 @@ async def test_close_of_a_preference_mercado_pago_does_not_know_is_ok_false() ->
     assert await gateway_for(recorder).close_checkout("gone", AT) == Ok(False)
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 429, 500, 502, 503])
+@pytest.mark.parametrize("status", [401, 403, 408, 429, 500, 502, 503])
 async def test_close_with_another_failing_status_is_unavailable_and_logs_the_status_only(
     status: int,
 ) -> None:

@@ -68,7 +68,7 @@ def test_the_ticket_fields_default_to_empty() -> None:
 
 @pytest.mark.parametrize("kind", ["ticket", "bank_transfer"])
 def test_a_pending_cash_ticket_with_an_expiry_not_held_yet_needs_a_hold(kind: str) -> None:
-    assert ticket(payment_type=kind).needs_hold() is True
+    assert ticket(payment_type=kind).needs_hold(NOW) is True
 
 
 @pytest.mark.parametrize(
@@ -84,7 +84,7 @@ def test_a_pending_cash_ticket_with_an_expiry_not_held_yet_needs_a_hold(kind: st
     ],
 )
 def test_anything_else_needs_no_hold(overrides: dict[str, object]) -> None:
-    assert ticket(**overrides).needs_hold() is False
+    assert ticket(**overrides).needs_hold(NOW) is False
 
 
 def test_mark_held_sets_held_at_and_updated_at_and_stops_needing_a_hold() -> None:
@@ -95,7 +95,7 @@ def test_mark_held_sets_held_at_and_updated_at_and_stops_needing_a_hold() -> Non
 
     assert (payment.held_at, payment.updated_at) == (later, later)
     assert payment.created_at == NOW
-    assert payment.needs_hold() is False
+    assert payment.needs_hold(NOW) is False
 
 
 def test_describe_takes_the_method_the_expiry_and_the_page_only() -> None:

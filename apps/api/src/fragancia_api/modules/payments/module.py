@@ -50,6 +50,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         services.get(OrderPayments), services.get(OrderPaymentConfirmations)
     )
     checkouts = SqlCheckoutRepository(platform.database)
+    payments = SqlPaymentRepository(platform.database)
     services.add(
         StartCheckout,
         StartCheckout(
@@ -74,7 +75,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         PaymentNotificationReceived.name,
         ProcessPaymentNotification(
             gateway=gateway,
-            payments=SqlPaymentRepository(platform.database),
+            payments=payments,
             orders=orders,
             transactions=platform.transactions,
             events=platform.events,
@@ -98,6 +99,7 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         CloseCheckout(
             gateway=gateway,
             checkouts=checkouts,
+            payments=payments,
             transactions=platform.transactions,
             clock=platform.clock,
         ),

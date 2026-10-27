@@ -31,8 +31,12 @@ order moves to paid (payment `applied`); an amount or currency that differs leav
 only records `refund_due`. A `pending` cash or transfer ticket (with its method, expiry and
 instructions page) holds its order once, through `OrderPaymentConfirmations.hold_for_payment`:
 the order's deadline and reservation move to the ticket's expiry and orders emails the
-customer the instructions (`held_at` keeps a re-delivery from doing it again). Other statuses
-are only stored.
+customer the instructions (`held_at` keeps a re-delivery from doing it again). The 48 hours
+count from the first ticket (decision 19): a later ticket never moves the deadline past the
+expiry of the order's earliest-held ticket, though it is still recorded and its email shows
+the order's actual deadline. A ticket already expired when its notification is processed is
+marked held with no hold and no email. A ticket page longer than its column (500 characters)
+is stored as none. Other statuses are only stored.
 
 Events (published through the outbox; other modules subscribe by name, never by import):
 
@@ -46,8 +50,11 @@ Events (published through the outbox; other modules subscribe by name, never by 
 - `payments.checkout.close_requested`: an order moved from `pending_payment` to `paid` or
   `cancelled`, so its Mercado Pago link must stop taking payments (decision 18). Payload:
   `order_id` (UUID string). Payments itself handles it in the worker: it expires the
-  preference in Mercado Pago and closes the stored checkout; a Mercado Pago outage retries
-  only this event.
+  preference in Mercado Pago, closes the stored checkout and cancels each of the order's
+  `pending` cash and transfer tickets in Mercado Pago (decision 20; the row is refreshed by
+  the cancelled-status notification, and a ticket paid before the cancel is `refund_due`). A
+  400, 404, 409 or 422 from Mercado Pago is permanent and only logged; any other answer that
+  is not a success (401, 403, 408, 429, 5xx) or a transport error retries only this event.
 
 Payments subscribes to orders' `orders.order.status_changed` (by name) only to publish
 `payments.checkout.close_requested`; it makes no network call there, so it never makes orders'

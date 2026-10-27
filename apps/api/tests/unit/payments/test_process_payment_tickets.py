@@ -126,7 +126,8 @@ async def test_each_payment_of_the_order_holds_it_once() -> None:
 
     await world.handler(message("999"))
 
-    assert [hold[1] for hold in confirmations.holds] == [EXPIRES, EXPIRES + timedelta(hours=1)]
+    # Decision 19 (plan 003 step 8): the second hold never goes past the first ticket's expiry.
+    assert [hold[1] for hold in confirmations.holds] == [EXPIRES, EXPIRES]
 
 
 @pytest.mark.parametrize("outcome", ["not_pending", "not_found"])

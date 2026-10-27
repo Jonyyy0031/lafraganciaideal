@@ -44,6 +44,49 @@ class SqlPaymentRepository:
                 .with_for_update()
             )
         ).one()
+        return self._payment(row)
+
+    async def save(self, payment: Payment) -> None:
+        values = self._values(payment)
+        await self._database.session.execute(
+            insert(payments)
+            .values(payment_id=payment.payment_id, created_at=payment.created_at, **values)
+            .on_conflict_do_update(index_elements=[payments.c.payment_id], set_=values)
+        )
+
+    async def first_hold_expiry(self, order_id: UUID) -> datetime | None:
+        row = (
+            await self._database.session.execute(
+                select(payments.c.expires_at)
+                .where(
+                    payments.c.order_id == order_id,
+                    payments.c.held_at.is_not(None),
+                    # Only a ticket still payable when it was held could move the order; an
+                    # expired-on-arrival one must not cap later holds.
+                    payments.c.expires_at > payments.c.held_at,
+                )
+                .order_by(payments.c.held_at, payments.c.payment_id)
+                .limit(1)
+            )
+        ).first()
+        return row.expires_at if row is not None else None
+
+    async def pending_cash(self, order_id: UUID) -> list[Payment]:
+        rows = (
+            await self._database.session.execute(
+                select(payments)
+                .where(
+                    payments.c.order_id == order_id,
+                    payments.c.status == PENDING,
+                    payments.c.payment_type.in_(CASH_TYPES),
+                )
+                .order_by(payments.c.created_at, payments.c.payment_id)
+            )
+        ).all()
+        return [self._payment(row) for row in rows]
+
+    @staticmethod
+    def _payment(row: Any) -> Payment:
         return Payment(
             payment_id=row.payment_id,
             order_id=row.order_id,
@@ -60,14 +103,6 @@ class SqlPaymentRepository:
             expires_at=row.expires_at,
             ticket_url=row.ticket_url,
             held_at=row.held_at,
-        )
-
-    async def save(self, payment: Payment) -> None:
-        values = self._values(payment)
-        await self._database.session.execute(
-            insert(payments)
-            .values(payment_id=payment.payment_id, created_at=payment.created_at, **values)
-            .on_conflict_do_update(index_elements=[payments.c.payment_id], set_=values)
         )
 
     @staticmethod

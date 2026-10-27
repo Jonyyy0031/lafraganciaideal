@@ -13,7 +13,7 @@ from fragancia_api.modules.payments.application.ports import (
 from fragancia_api.modules.payments.contracts import PendingTicket
 from fragancia_api.modules.payments.domain.checkout import Checkout
 from fragancia_api.modules.payments.domain.errors import PaymentGatewayUnavailable
-from fragancia_api.modules.payments.domain.payment import METHOD_LABELS, Payment
+from fragancia_api.modules.payments.domain.payment import METHOD_LABELS, PENDING, Payment
 from fragancia_api.shared.kernel import Err, Ok, Result
 
 
@@ -48,6 +48,31 @@ class InMemoryPayments:
     async def save(self, payment: Payment) -> None:
         self.by_id[payment.payment_id] = replace(payment)
 
+    async def first_hold_expiry(self, order_id: UUID) -> datetime | None:
+        held = sorted(
+            (
+                p
+                for p in self.by_id.values()
+                if p.order_id == order_id
+                and p.held_at is not None
+                and p.expires_at is not None
+                and p.expires_at > p.held_at
+            ),
+            key=lambda p: (p.held_at, p.payment_id),
+        )
+        return held[0].expires_at if held else None
+
+    async def pending_cash(self, order_id: UUID) -> list[Payment]:
+        found = sorted(
+            (
+                p
+                for p in self.by_id.values()
+                if p.order_id == order_id and p.status == PENDING and p.is_ticket()
+            ),
+            key=lambda p: (p.created_at, p.payment_id),
+        )
+        return [replace(p) for p in found]
+
     async def pending_for_order(self, order_id: UUID, now: datetime) -> list[PendingTicket]:
         found = sorted(
             (p for p in self.by_id.values() if p.order_id == order_id and p.is_live_ticket(now)),
@@ -69,7 +94,9 @@ class FakeGateway:
     """Records the requests; answers numbered preferences, or fails when told to. `get_payment`
     answers what `payments` holds (None when unknown), or fails when `fail` is set.
     `close_checkout` records (preference id, at) in `closed`; it fails when `fail` is set and
-    answers False for the preference ids in `unknown_preferences`."""
+    answers False for the preference ids in `unknown_preferences`. `cancel_payment` records the
+    payment id in `cancelled`; it fails when `fail` is set and answers False for the ids in
+    `refused_cancels`."""
 
     def __init__(
         self, *, fail: bool = False, payments: dict[str, GatewayPayment] | None = None
@@ -80,6 +107,14 @@ class FakeGateway:
         self.fetched: list[str] = []
         self.closed: list[tuple[str, datetime]] = []
         self.unknown_preferences: set[str] = set()
+        self.cancelled: list[str] = []
+        self.refused_cancels: set[str] = set()
+
+    async def cancel_payment(self, payment_id: str) -> Result[bool, PaymentGatewayUnavailable]:
+        self.cancelled.append(payment_id)
+        if self.fail:
+            return Err(PaymentGatewayUnavailable())
+        return Ok(payment_id not in self.refused_cancels)
 
     async def close_checkout(
         self, preference_id: str, at: datetime

@@ -37,9 +37,10 @@ class ProcessPaymentNotification:
     Idempotent by payment id: every delivery stores the payment's current state, and an
     approved payment is applied to its order only while its `outcome` is unset, so a duplicate
     or replayed notification changes nothing. A pending cash or transfer ticket holds its order
-    until the ticket expires, once per payment (`held_at`), so the instructions email is sent
-    once. Mercado Pago down, or a refusal from orders, raises: the relay rolls the whole
-    transaction back and retries the event.
+    until the ticket expires (never past the first ticket's expiry, decision 19), once per
+    payment (`held_at`), so the instructions email is sent once; a ticket already expired when
+    it arrives is marked held with no hold and no email. Mercado Pago down, or a refusal from
+    orders, raises: the relay rolls the whole transaction back and retries the event.
     """
 
     def __init__(
@@ -84,12 +85,17 @@ class ProcessPaymentNotification:
                         return Err(error)
                     case Ok(_):
                         pass
-            if payment.needs_hold():
+            now = self._clock.now()
+            if payment.needs_hold(now):
                 match await self._hold(payment, order_id):
                     case Err(error):
                         return Err(error)
                     case Ok(_):
                         pass
+            elif payment.expired_on_arrival(now):
+                # Too late to pay: no hold and no instructions email (plan 003 review L1).
+                _log.info("payments.ticket_expired_on_arrival", payment_id=payment.payment_id)
+                payment.mark_held(now)
             await self._payments.save(payment)
             return Ok(None)
 
@@ -128,12 +134,20 @@ class ProcessPaymentNotification:
 
     async def _hold(self, payment: Payment, order_id: UUID) -> Result[None, DomainError]:
         """Keep the order waiting for a pending cash or transfer ticket (decision 5). Once per
-        payment: `held_at` is set whatever orders answers, except a refusal (retried)."""
+        payment: `held_at` is set whatever orders answers, except a refusal (retried).
+
+        The 48 hours count from the first ticket (decision 19): a later ticket never moves the
+        deadline past the expiry of the order's earliest-held ticket. It is still recorded and
+        its instructions email shows the order's actual deadline."""
         if payment.expires_at is None or payment.payment_type is None:
             raise ValueError("only a pending ticket with an expiry is held")
+        until = payment.expires_at
+        first = await self._payments.first_hold_expiry(order_id)
+        if first is not None:
+            until = min(until, first)
         held = await self._orders.hold(
             order_id,
-            until=payment.expires_at,
+            until=until,
             method=METHOD_LABELS[payment.payment_type],
             instructions_url=payment.ticket_url,
         )
