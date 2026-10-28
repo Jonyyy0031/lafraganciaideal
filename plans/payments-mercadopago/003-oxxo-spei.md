@@ -779,6 +779,74 @@ has not yet credited) and the sandbox rows marked NOT CONFIRMED in Test coverage
 **Result:** no findings need code changes, and the checklist has no failures. Status set to
 `verify`.
 
+### Review of step 10 (reviewer, 2026-10-28)
+
+Diff `7067270..HEAD` (commits `3b9aecc`, `f69cf21`, `f22313c` and `b476bbd`), read together
+with "Step 10: verification repair" in the Repair log and decisions 21 and 22.
+
+**Checklist: 14 of 15 passed, 0 failed, 1 not applicable (PR body, no PR yet).**
+- `plans-scope`: "Every change is inside the plan" (43 declared, 69 changed). The hot files
+  are not touched.
+- `uv run just check`: green (4312 passed, 5 skipped, 1 xfailed; harness 685 passed).
+- `uv run just test-integration`: green (1207 passed, 5 skipped), run by the reviewer.
+- No contract change and no migration (`openapi.json` untouched).
+- Docs: both modules' `__init__.py` files, the README and `docs/architecture.md` describe
+  `TICKET_GRACE`, `pay_by` and decision 21.
+- New finding `payments-ticket-cancel-refused-with-test-credentials` (V2): it is linted and its
+  evidence is concrete.
+
+**Step 10 items**
+- **V1: closed in code.** The close body is exactly `{"expires": true, "expiration_date_to": …}`
+  (`mercadopago_gateway.py:93`). The sandbox re-run belongs to the verifier.
+- **Decision 21:** docs only, which is correct, since the Mercado Pago expiry was already used
+  as reported.
+- **Decision 22: the order deadline is correct.** `until = expires_at + TICKET_GRACE`, capped at
+  `first + TICKET_GRACE` (`process_payment.py:147-150`). That is `min(E, F) + 48 h`, with E the
+  ticket's expiry and F the first held ticket's expiry. The reservation follows `until`. The
+  stored expiry and the `/payments/pending` filter still use Mercado Pago's expiry, so a ticket
+  stops being listed once it can no longer be paid.
+- **Implementer note 2 (no fallback for queued events without `pay_by`): accepted.** The branch
+  was never deployed, so only a local outbox could hold such a row. It would fail with
+  `KeyError` and end in the failed-events panel. No change needed.
+- **Implementer note 1 (`pay_by = min(ticket expiry, until)`): not confirmed. See S1.**
+
+**Findings**
+
+- **S1 (Medium, needs a code change): for a later ticket, the email can name a deadline that
+  falls inside the credit margin, or exactly at the cancel time.**
+  - Code: `process_payment.py:154` sets `pay_by=min(payment.expires_at, until)`, where `until`
+    already includes `TICKET_GRACE`.
+  - Scenario: the first ticket expires at F, so the order waits until F + 48 h. After that
+    hold, the guest gets a new link and issues a second ticket expiring at E2 = F + 30 h.
+    - The email says "paga … antes del F + 30 h".
+    - If the guest pays at the store at F + 29 h, the payment takes one or two business days
+      to be credited.
+    - The overdue job cancels the order at F + 48 h. The payment arrives afterwards and ends
+      `refund_due`, with no stock.
+    - If E2 is later than F + 48 h, the email names F + 48 h itself: the cancel time, with no
+      margin at all.
+  - Why it matters: decision 22 exists so that the customer is told the ticket's deadline and
+    the order then waits 48 more hours for the money to be credited. Deviation 1 removes that
+    margin for every capped later ticket.
+  - Consistent value: `pay_by = until - TICKET_GRACE`, which is `min(E2, F)`. For a single
+    ticket this is still E, so the main path is unchanged.
+  - The same applies to `/payments/pending` (`pending_tickets.py:29`). It caps items at
+    `order.payment_due_at`, which now includes the margin. The consistent cap is
+    `payment_due_at - TICKET_GRACE`; payments owns `TICKET_GRACE`.
+  - The single-ticket path, which is the common case, is correct. This affects only orders with
+    a second ticket issued after a hold.
+
+**Still open for the verifier:**
+- the V1 close in the sandbox;
+- decision 22's reservation and overdue timing;
+- R4;
+- the NOT CONFIRMED sandbox rows.
+
+V2 is tracked by its finding and needs a user decision; it does not block verify.
+
+**Result:** S1 needs a code change, so the status stays `review`. No other regressions from
+step 10.
+
 ## Repair log
 
 Implementer, 2026-10-27. Step 8 (review repair: M1, L1, L2, L3 and the finding
