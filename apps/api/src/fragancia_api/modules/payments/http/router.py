@@ -6,7 +6,10 @@ from fragancia_api.modules.payments.application.commands.receive_notification im
     ReceivePaymentNotification,
 )
 from fragancia_api.modules.payments.application.commands.start_checkout import StartCheckout
+from fragancia_api.modules.payments.application.queries.pending_tickets import GetPendingTickets
 from fragancia_api.modules.payments.contracts import (
+    PendingTickets,
+    PendingTicketsRequest,
     StartCheckoutRequest,
     StartCheckoutResponse,
     WebhookAck,
@@ -28,15 +31,30 @@ async def start_checkout(
     body: StartCheckoutRequest,
     use_case: Annotated[StartCheckout, Depends(provide(StartCheckout))],
 ) -> StartCheckoutResponse:
-    """The Mercado Pago URL that pays an order (decisions 2 and 4, ADR 0004). The order's
-    private-link token is a secret and travels in the body, never in a URL. Only cards, in one
-    installment. The link expires with the order's payment window, and a second request reuses
-    it while it is valid. The browser's return from Mercado Pago never confirms a payment.
+    """The Mercado Pago URL that pays an order (decisions 2, 4 and 14, ADR 0004). The order's
+    private-link token is a secret and travels in the body, never in a URL. Cards in one
+    installment, cash in stores and SPEI; a cash or transfer ticket issued from the link
+    expires 48 hours after the link was created. The link expires with the order's payment
+    window, and a second request reuses it while it is valid. The browser's return from
+    Mercado Pago never confirms a payment.
     404 `PAYMENTS_ORDER_NOT_FOUND`; 409 `PAYMENTS_ORDER_NOT_PAYABLE` (`details.status`: the
     order is not waiting for payment or its window passed); 503
     `PAYMENTS_GATEWAY_UNAVAILABLE` (Mercado Pago failed or is not configured)."""
     redirect_url = unwrap(await use_case.execute(body.access_token))
     return StartCheckoutResponse(redirect_url=redirect_url)
+
+
+@payments.post("/pending", responses={404: {"model": ErrorResponse}})
+async def list_pending_tickets(
+    body: PendingTicketsRequest,
+    use_case: Annotated[GetPendingTickets, Depends(provide(GetPendingTickets))],
+) -> PendingTickets:
+    """The order's cash and transfer tickets that can still be paid (decision 16): pending,
+    not expired, newest first, each with its method, amount, expiry and Mercado Pago's
+    instructions page. The order's private-link token travels in the body, never in a URL.
+    An order that is not waiting for payment answers no items. 404
+    `PAYMENTS_ORDER_NOT_FOUND`."""
+    return unwrap(await use_case.execute(body.access_token))
 
 
 @payments.post(

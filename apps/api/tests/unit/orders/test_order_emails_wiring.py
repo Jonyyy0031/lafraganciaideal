@@ -17,6 +17,9 @@ from fragancia_api.modules.orders.domain.order import OrderPaid, OrderPlaced, Or
 from fragancia_api.modules.orders.infrastructure.identity_owners import IdentityOwners
 from fragancia_api.modules.orders.infrastructure.order_links import HmacOrderLinks
 from fragancia_api.modules.orders.infrastructure.sql_order_queries import SqlOrderQueries
+from fragancia_api.modules.payments.application.handlers.close_checkout import (
+    RequestCheckoutClose,
+)
 from fragancia_api.shared.infrastructure.in_memory import FixedClock
 from tests.support import make_settings
 
@@ -35,7 +38,8 @@ async def test_the_container_subscribes_the_three_email_handlers() -> None:
         assert [type(h) for h in placed] == [SendOrderPlacedEmail]
         paid = bus.handlers(OrderPaid.name)
 
-        assert [type(h) for h in changed] == [SendOrderStatusEmail]
+        # Payments (plan 003 of payments-mercadopago) also listens to the status changes.
+        assert [type(h) for h in changed] == [SendOrderStatusEmail, RequestCheckoutClose]
         assert [type(h) for h in paid] == [SendPaidOrderToOwners]
     finally:
         await container.close()
@@ -49,7 +53,7 @@ async def test_the_handlers_get_the_configured_urls_and_the_real_adapters() -> N
         status: Any
         owners: Any
         [placed] = bus.handlers(OrderPlaced.name)
-        [status] = bus.handlers(OrderStatusChanged.name)
+        [status, _request_close] = bus.handlers(OrderStatusChanged.name)
         [owners] = bus.handlers(OrderPaid.name)
 
         for customer_handler in (placed, status):

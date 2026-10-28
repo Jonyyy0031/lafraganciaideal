@@ -156,17 +156,27 @@ class InMemoryStockHolds:
     """The `StockHolds` port: holds succeed with a fresh id, or refuse with the given short
     lines. Every hold is recorded as (reference, quantities, expires_at) in `calls`; every
     commit, release and return as (operation, reservation id) in `operations`. `refusal`, when
-    set, makes commit, release and return fail with it."""
+    set, makes commit, release and return fail with it. Every extension is recorded as
+    (reservation id, expires_at) in `extensions`; `extend_refusal`, when set, makes it fail."""
 
     def __init__(
         self,
         short_lines: list[dict[str, object]] | None = None,
         refusal: DomainError | None = None,
+        extend_refusal: DomainError | None = None,
     ) -> None:
         self.short_lines = short_lines
         self.refusal = refusal
+        self.extend_refusal = extend_refusal
         self.calls: list[tuple[str, dict[UUID, int], datetime]] = []
         self.operations: list[tuple[str, UUID]] = []
+        self.extensions: list[tuple[UUID, datetime]] = []
+
+    async def extend(self, reservation_id: UUID, expires_at: datetime) -> Result[None, DomainError]:
+        self.extensions.append((reservation_id, expires_at))
+        if self.extend_refusal is not None:
+            return Err(self.extend_refusal)
+        return Ok(None)
 
     async def commit(self, reservation_id: UUID) -> Result[None, DomainError]:
         return self._operate("commit", reservation_id)

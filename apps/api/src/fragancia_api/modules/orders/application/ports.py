@@ -76,6 +76,11 @@ class StockHolds(Protocol):
         """Put the units of a sold reservation back on hand (a paid order cancelled)."""
         ...
 
+    async def extend(self, reservation_id: UUID, expires_at: datetime) -> Result[None, DomainError]:
+        """Move the expiry of an active, unexpired reservation later (a cash or transfer ticket
+        was issued). A refusal comes back with inventory's own code."""
+        ...
+
 
 class OrderReader(Protocol):
     """Read side: orders outside any transaction (`Database.reader()`)."""

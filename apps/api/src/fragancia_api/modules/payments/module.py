@@ -6,15 +6,23 @@ from fragancia_api.modules.payments.application.commands.receive_notification im
     ReceivePaymentNotification,
 )
 from fragancia_api.modules.payments.application.commands.start_checkout import StartCheckout
+from fragancia_api.modules.payments.application.handlers.cancel_ticket import CancelTicket
+from fragancia_api.modules.payments.application.handlers.close_checkout import (
+    CloseCheckout,
+    RequestCheckoutClose,
+)
 from fragancia_api.modules.payments.application.handlers.flagged_payment_email import (
     SendFlaggedPaymentToOwners,
 )
 from fragancia_api.modules.payments.application.handlers.process_payment import (
     ProcessPaymentNotification,
 )
+from fragancia_api.modules.payments.application.queries.pending_tickets import GetPendingTickets
 from fragancia_api.modules.payments.domain.events import (
+    CheckoutCloseRequested,
     PaymentFlagged,
     PaymentNotificationReceived,
+    TicketCancelRequested,
 )
 from fragancia_api.modules.payments.http.router import routers
 from fragancia_api.modules.payments.infrastructure.identity_owners import IdentityOwners
@@ -24,6 +32,7 @@ from fragancia_api.modules.payments.infrastructure.sql_checkout_repository impor
     SqlCheckoutRepository,
 )
 from fragancia_api.modules.payments.infrastructure.sql_payment_repository import (
+    SqlPaymentQueries,
     SqlPaymentRepository,
 )
 from fragancia_api.shared.http.services import ServiceRegistry
@@ -42,11 +51,13 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     orders = OrderPaymentsAdapter(
         services.get(OrderPayments), services.get(OrderPaymentConfirmations)
     )
+    checkouts = SqlCheckoutRepository(platform.database)
+    payments = SqlPaymentRepository(platform.database)
     services.add(
         StartCheckout,
         StartCheckout(
             orders=orders,
-            checkouts=SqlCheckoutRepository(platform.database),
+            checkouts=checkouts,
             gateway=gateway,
             transactions=platform.transactions,
             clock=platform.clock,
@@ -66,13 +77,38 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
         PaymentNotificationReceived.name,
         ProcessPaymentNotification(
             gateway=gateway,
-            payments=SqlPaymentRepository(platform.database),
+            payments=payments,
             orders=orders,
             transactions=platform.transactions,
             events=platform.events,
             clock=platform.clock,
         ),
     )
+    services.add(
+        GetPendingTickets,
+        GetPendingTickets(
+            orders=orders, queries=SqlPaymentQueries(platform.database), clock=platform.clock
+        ),
+    )
+    # Decision 18: the status change only requests the close; the close (a Mercado Pago call)
+    # has its own outbox row, so an outage never retries orders' emails.
+    platform.subscriptions.subscribe(
+        "orders.order.status_changed",
+        RequestCheckoutClose(events=platform.events, transactions=platform.transactions),
+    )
+    platform.subscriptions.subscribe(
+        CheckoutCloseRequested.name,
+        CloseCheckout(
+            gateway=gateway,
+            checkouts=checkouts,
+            payments=payments,
+            transactions=platform.transactions,
+            clock=platform.clock,
+        ),
+    )
+    # Decision 20 for late notifications: a ticket that arrives for an order no longer pending
+    # is cancelled in its own outbox row (plan 003 review R2).
+    platform.subscriptions.subscribe(TicketCancelRequested.name, CancelTicket(gateway=gateway))
     # Identity registers before payments (MODULES order), so its facade is available.
     platform.subscriptions.subscribe(
         PaymentFlagged.name,

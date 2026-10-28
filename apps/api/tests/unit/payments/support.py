@@ -81,6 +81,7 @@ def make_request(**overrides: object) -> CheckoutRequest:
         ],
         "expires_at": datetime(2026, 10, 22, 18, 30, tzinfo=UTC),
         "back_url": BACK_URL,
+        "cash_expires_at": datetime(2026, 10, 24, 12, 0, tzinfo=UTC),
     }
     values.update(overrides)
     return CheckoutRequest(**values)  # type: ignore[arg-type]

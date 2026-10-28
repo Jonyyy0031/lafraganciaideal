@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from fragancia_api.modules.payments.contracts import PendingTicket
 from fragancia_api.modules.payments.domain.errors import PaymentGatewayUnavailable
 from fragancia_api.shared.kernel import DomainError, Result
 
@@ -57,6 +58,8 @@ class CheckoutRequest:
     items: list[CheckoutItem]
     expires_at: datetime
     back_url: str
+    # The latest expiry of a cash or transfer ticket issued from this link (decision 5).
+    cash_expires_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +70,9 @@ class CheckoutLink:
 
 @dataclass(frozen=True, slots=True)
 class GatewayPayment:
-    """A payment as Mercado Pago reports it; `external_reference` is the order id we sent."""
+    """A payment as Mercado Pago reports it; `external_reference` is the order id we sent.
+    `expires_at` (`date_of_expiration`) and `ticket_url` (the voucher or instructions page,
+    `transaction_details.external_resource_url`) matter for cash and transfer tickets."""
 
     payment_id: str
     status: str
@@ -77,6 +82,9 @@ class GatewayPayment:
     currency: str
     payment_type: str | None
     approved_at: datetime | None
+    payment_method: str | None = None
+    expires_at: datetime | None = None
+    ticket_url: str | None = None
 
 
 class PaymentGateway(Protocol):
@@ -92,11 +100,26 @@ class PaymentGateway(Protocol):
         """The payment's current state; None when Mercado Pago does not know it (404)."""
         ...
 
+    async def close_checkout(
+        self, preference_id: str, at: datetime
+    ) -> Result[bool, PaymentGatewayUnavailable]:
+        """Expire the preference at `at`, so its link takes no more payments (decision 18).
+        False when Mercado Pago does not know the preference (404) or refuses the change
+        for good (400, 409 or 422). Any other failure is an `Err`, so the caller retries."""
+        ...
+
+    async def cancel_payment(self, payment_id: str) -> Result[bool, PaymentGatewayUnavailable]:
+        """Cancel a pending cash or transfer ticket so it can no longer be paid (decision 20).
+        False when Mercado Pago refuses it for good (400, 404, 409 or 422: e.g. already paid or
+        already expired). Any other failure is an `Err`, so the caller retries."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class Confirmation:
-    """What applying an approved payment did to the order (payments' own copy). `outcome` is
-    `paid`, `not_pending`, `amount_mismatch`, `stock_gone` or `not_found`."""
+    """What applying a payment did to the order (payments' own copy). `outcome` is `paid`,
+    `not_pending`, `amount_mismatch`, `stock_gone` or `not_found` for `confirm`, and `held`,
+    `not_pending` or `not_found` for `hold`."""
 
     outcome: str
     number: int | None
@@ -107,6 +130,28 @@ class OrderConfirmations(Protocol):
         self, order_id: UUID, payment_id: str, amount_cents: int, currency: str
     ) -> Result[Confirmation, DomainError]:
         """Apply an approved payment to the order. Joins the caller's transaction."""
+        ...
+
+    async def hold(
+        self,
+        order_id: UUID,
+        until: datetime,
+        pay_by: datetime,
+        method: str,
+        instructions_url: str | None,
+    ) -> Result[Confirmation, DomainError]:
+        """Keep a pending order waiting for a cash or transfer ticket until `until` (never
+        earlier than its current deadline) and email the customer the instructions, with
+        `pay_by` (the ticket's own expiry) as the deadline. Joins the caller's transaction."""
+        ...
+
+
+class PaymentQueries(Protocol):
+    """Read side of the payments: returns response models directly (`Database.reader()`)."""
+
+    async def pending_for_order(self, order_id: UUID, now: datetime) -> list[PendingTicket]:
+        """The order's payments that are `pending`, of a cash type and expire after `now`,
+        newest first."""
         ...
 
 

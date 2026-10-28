@@ -6,7 +6,7 @@ transaction, an outcome is never set twice and the flag event carries the paymen
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -74,6 +74,17 @@ class FakeConfirmations:
         if self.error is not None:
             return Err(self.error)
         return Ok(Confirmation(outcome=self.outcome, number=self.number))
+
+    async def hold(
+        self,
+        order_id: UUID,
+        until: datetime,
+        pay_by: datetime,
+        method: str,
+        instructions_url: str | None,
+    ) -> Result[Confirmation, DomainError]:
+        """Plan 003's port member; these plan 002 tests never reach it (no pending tickets)."""
+        raise AssertionError("hold is not expected in these tests")
 
 
 class TrackingRunner(InMemoryTransactionRunner):

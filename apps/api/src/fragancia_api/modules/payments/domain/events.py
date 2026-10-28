@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import ClassVar
+from uuid import UUID
 
 from fragancia_api.shared.kernel import DomainEvent
 
@@ -9,6 +10,26 @@ class PaymentNotificationReceived(DomainEvent):
     """A verified Mercado Pago webhook named this payment; the worker fetches and applies it."""
 
     name: ClassVar[str] = "payments.notification.received"
+    payment_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class CheckoutCloseRequested(DomainEvent):
+    """The order left `pending_payment` (paid or cancelled): its Mercado Pago link must stop
+    taking payments (decision 18). Its own outbox row, so a Mercado Pago outage retries only
+    the close, never orders' emails."""
+
+    name: ClassVar[str] = "payments.checkout.close_requested"
+    order_id: UUID
+
+
+@dataclass(frozen=True, kw_only=True)
+class TicketCancelRequested(DomainEvent):
+    """A pending cash or transfer ticket arrived for an order that is no longer waiting for
+    payment: it must be cancelled in Mercado Pago (decision 20, late notifications). Its own
+    outbox row, so a Mercado Pago outage retries only the cancel."""
+
+    name: ClassVar[str] = "payments.ticket.cancel_requested"
     payment_id: str
 
 

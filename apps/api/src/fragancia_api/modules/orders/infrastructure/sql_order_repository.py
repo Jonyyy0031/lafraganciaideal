@@ -159,6 +159,7 @@ class SqlOrderRepository:
                 refund_status=order.refund_status.value if order.refund_status else None,
                 shipping_carrier=order.shipping_carrier,
                 tracking_number=order.tracking_number,
+                payment_due_at=order.payment_due_at,
                 updated_at=order.updated_at,
             )
         )

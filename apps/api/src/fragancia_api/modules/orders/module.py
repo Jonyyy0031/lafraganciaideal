@@ -32,6 +32,7 @@ from fragancia_api.modules.orders.application.handlers.order_emails import (
     SendOrderPlacedEmail,
     SendOrderStatusEmail,
     SendPaidOrderToOwners,
+    SendPaymentInstructionsEmail,
 )
 from fragancia_api.modules.orders.application.queries.cart import GetCart
 from fragancia_api.modules.orders.application.queries.customer_order import GetCustomerOrder
@@ -211,6 +212,15 @@ def register(platform: Platform, services: ServiceRegistry) -> None:
     platform.subscriptions.subscribe(
         "orders.order.status_changed",
         SendOrderStatusEmail(
+            queries=order_queries,
+            links=links,
+            email=platform.email,
+            storefront_url=storefront_url,
+        ),
+    )
+    platform.subscriptions.subscribe(
+        "orders.order.payment_pending",
+        SendPaymentInstructionsEmail(
             queries=order_queries,
             links=links,
             email=platform.email,

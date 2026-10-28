@@ -229,6 +229,23 @@ class OrderPaid(DomainEvent):
     number: int
 
 
+@dataclass(frozen=True, kw_only=True)
+class OrderPaymentPending(DomainEvent):
+    """A cash or transfer ticket was issued for a pending order (payments decisions 5 and 15):
+    `due_at` is the order's deadline after it (moved or unchanged), `pay_by` the ticket's own
+    expiry (what the customer is told; payments decision 22), `method` the label of how the
+    ticket is paid and `instructions_url` the page with the instructions, when there is one.
+    The customer's instructions email subscribes to it."""
+
+    name: ClassVar[str] = "orders.order.payment_pending"
+    order_id: UUID
+    number: int
+    due_at: datetime
+    pay_by: datetime
+    method: str
+    instructions_url: str | None
+
+
 @dataclass(frozen=True, slots=True)
 class OrderEvent:
     """One history row: who moved the order, when, and the data entered."""
@@ -357,6 +374,37 @@ class Order(AggregateRoot):
         self._move(OrderStatus.PAID, actor, now, note=clean)
         self.record(OrderPaid(order_id=self.id, number=self.number))
         return Ok(None)
+
+    def await_payment(
+        self,
+        until: datetime,
+        pay_by: datetime,
+        method: str,
+        instructions_url: str | None,
+        now: datetime,
+    ) -> Result[bool, DomainError]:
+        """Keep a pending order waiting for a cash or transfer ticket (payments decision 5):
+        the deadline moves to `until` when that is later, never earlier. `pay_by` is the
+        ticket's own expiry, which the customer is told (payments decision 22: `until` adds a
+        margin for the payment to be credited). Answers whether it moved. Always records
+        `OrderPaymentPending`; no history row, the status does not change."""
+        if self.status is not OrderStatus.PENDING_PAYMENT:
+            return Err(self._refused(OrderStatus.PENDING_PAYMENT))
+        moved = until > self.payment_due_at
+        if moved:
+            self.payment_due_at = until
+            self.updated_at = now
+        self.record(
+            OrderPaymentPending(
+                order_id=self.id,
+                number=self.number,
+                due_at=self.payment_due_at,
+                pay_by=pay_by,
+                method=method,
+                instructions_url=instructions_url,
+            )
+        )
+        return Ok(moved)
 
     def start_preparing(self, actor: str, now: datetime) -> Result[None, DomainError]:
         if not self._can_move_to(OrderStatus.PREPARING):

@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from fragancia_api.modules.payments.application.ports import (
     CheckoutItem,
     CheckoutRequest,
@@ -16,6 +18,10 @@ from fragancia_api.shared.application.transactions import TransactionRunner
 from fragancia_api.shared.kernel import DomainError, Err, Ok, Result
 
 PENDING_PAYMENT = "pending_payment"
+# A cash or transfer ticket issued from a new link expires 48 hours after the link was created
+# (decision 5). A ticket can only be issued while the link is valid, so it expires at most 48
+# hours after it is issued.
+CASH_TICKET_TTL = timedelta(hours=48)
 SHIPPING_ITEM_ID = "shipping"
 SHIPPING_TITLE = "Envío"
 
@@ -93,6 +99,7 @@ class StartCheckout:
                 items=checkout_items(order),
                 expires_at=order.payment_due_at,
                 back_url=self._back_url,
+                cash_expires_at=now + CASH_TICKET_TTL,
             )
         )
         match created:

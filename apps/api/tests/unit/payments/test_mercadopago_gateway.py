@@ -100,11 +100,12 @@ async def test_it_posts_the_exact_preference_body() -> None:
         "back_urls": {"success": BACK_URL, "pending": BACK_URL, "failure": BACK_URL},
         "auto_return": "approved",
         "payment_methods": {
-            "excluded_payment_types": [{"id": "ticket"}, {"id": "atm"}, {"id": "bank_transfer"}],
+            "excluded_payment_types": [{"id": "atm"}],
             "installments": 1,
         },
         "expires": True,
         "expiration_date_to": "2026-10-22T18:30:00.000+00:00",
+        "date_of_expiration": "2026-10-24T12:00:00.000+00:00",
     }
 
 
@@ -122,6 +123,7 @@ async def test_it_sends_no_notification_url_and_no_other_field() -> None:
         "payment_methods",
         "expires",
         "expiration_date_to",
+        "date_of_expiration",
     }
 
 
@@ -279,17 +281,13 @@ async def test_the_three_back_urls_are_the_given_back_url() -> None:
     assert set(body["back_urls"]) == {"success", "pending", "failure"}
 
 
-async def test_only_cards_in_one_installment() -> None:
+async def test_only_atm_is_excluded_in_one_installment() -> None:
     recorder = answering()
 
     await gateway_for(recorder).create_checkout(make_request())
 
     methods = body_of(recorder.sent)["payment_methods"]
-    assert [kind["id"] for kind in methods["excluded_payment_types"]] == [
-        "ticket",
-        "atm",
-        "bank_transfer",
-    ]
+    assert [kind["id"] for kind in methods["excluded_payment_types"]] == ["atm"]
     assert methods["installments"] == 1
 
 

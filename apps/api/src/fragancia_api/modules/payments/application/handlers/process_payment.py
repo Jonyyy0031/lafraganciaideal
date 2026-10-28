@@ -7,8 +7,14 @@ from fragancia_api.modules.payments.application.ports import (
     OrderConfirmations,
     PaymentGateway,
 )
-from fragancia_api.modules.payments.domain.events import PaymentFlagged
-from fragancia_api.modules.payments.domain.payment import APPROVED, Payment, PaymentOutcome
+from fragancia_api.modules.payments.domain.events import PaymentFlagged, TicketCancelRequested
+from fragancia_api.modules.payments.domain.payment import (
+    APPROVED,
+    METHOD_LABELS,
+    TICKET_GRACE,
+    Payment,
+    PaymentOutcome,
+)
 from fragancia_api.modules.payments.domain.repositories import PaymentRepository
 from fragancia_api.shared.application.clock import Clock
 from fragancia_api.shared.application.events import EventMessage, EventPublisher
@@ -22,6 +28,7 @@ _PAID = "paid"
 _NOT_PENDING = "not_pending"
 _AMOUNT_MISMATCH = "amount_mismatch"
 _STOCK_GONE = "stock_gone"
+_HELD = "held"
 
 
 class ProcessPaymentNotification:
@@ -30,8 +37,11 @@ class ProcessPaymentNotification:
 
     Idempotent by payment id: every delivery stores the payment's current state, and an
     approved payment is applied to its order only while its `outcome` is unset, so a duplicate
-    or replayed notification changes nothing. Mercado Pago down, or a refusal from orders,
-    raises: the relay rolls the whole transaction back and retries the event.
+    or replayed notification changes nothing. A pending cash or transfer ticket holds its order
+    until the ticket expires (never past the first ticket's expiry, decision 19), once per
+    payment (`held_at`), so the instructions email is sent once; a ticket already expired when
+    it arrives is marked held with no hold and no email. Mercado Pago down, or a refusal from
+    orders, raises: the relay rolls the whole transaction back and retries the event.
     """
 
     def __init__(
@@ -76,6 +86,17 @@ class ProcessPaymentNotification:
                         return Err(error)
                     case Ok(_):
                         pass
+            now = self._clock.now()
+            if payment.needs_hold(now):
+                match await self._hold(payment, order_id):
+                    case Err(error):
+                        return Err(error)
+                    case Ok(_):
+                        pass
+            elif payment.expired_on_arrival(now):
+                # Too late to pay: no hold and no instructions email (plan 003 review L1).
+                _log.info("payments.ticket_expired_on_arrival", payment_id=payment.payment_id)
+                payment.mark_held(now)
             await self._payments.save(payment)
             return Ok(None)
 
@@ -103,10 +124,59 @@ class ProcessPaymentNotification:
                 outcome=None,
                 created_at=now,
                 updated_at=now,
+                payment_method=fetched.payment_method,
+                expires_at=fetched.expires_at,
+                ticket_url=fetched.ticket_url,
             )
         )
         payment.refresh(fetched.status, fetched.status_detail, fetched.approved_at, now)
+        payment.describe(fetched.payment_method, fetched.expires_at, fetched.ticket_url)
         return payment
+
+    async def _hold(self, payment: Payment, order_id: UUID) -> Result[None, DomainError]:
+        """Keep the order waiting for a pending cash or transfer ticket (decision 5). Once per
+        payment: `held_at` is set whatever orders answers, except a refusal (retried).
+
+        The order waits until the ticket's expiry plus `TICKET_GRACE`, so a store payment still
+        being credited is not cancelled (decision 22). The 48 hours count from the first ticket
+        (decision 19): a later ticket never moves the deadline past the earliest-held ticket's
+        expiry plus `TICKET_GRACE`. The instructions email's deadline (`pay_by`) is that
+        deadline minus `TICKET_GRACE`: the earlier of this ticket's and the first ticket's
+        expiry, so the margin always follows it. A single ticket gets its own expiry."""
+        if payment.expires_at is None or payment.payment_type is None:
+            raise ValueError("only a pending ticket with an expiry is held")
+        until = payment.expires_at + TICKET_GRACE
+        first = await self._payments.first_hold_expiry(order_id)
+        if first is not None:
+            until = min(until, first + TICKET_GRACE)
+        held = await self._orders.hold(
+            order_id,
+            until=until,
+            # The earlier of this ticket's and the first ticket's expiry: the margin to credit
+            # the payment always follows the deadline the customer is told (plan 003 S1).
+            pay_by=until - TICKET_GRACE,
+            method=METHOD_LABELS[payment.payment_type],
+            instructions_url=payment.ticket_url,
+        )
+        match held:
+            case Err(error):
+                return Err(error)
+            case Ok(confirmation):
+                pass
+        if confirmation.outcome != _HELD:
+            # `not_pending` or `not_found`: a ticket for a paid or cancelled order (or for no
+            # order) is never held, and never retried.
+            _log.info(
+                "payments.ticket_not_held",
+                payment_id=payment.payment_id,
+                outcome=confirmation.outcome,
+            )
+        if confirmation.outcome == _NOT_PENDING:
+            # The order was paid or cancelled before this ticket's notification: cancel the
+            # ticket in Mercado Pago, in its own outbox row (decision 20, plan 003 review R2).
+            await self._events.publish([TicketCancelRequested(payment_id=payment.payment_id)])
+        payment.mark_held(self._clock.now())
+        return Ok(None)
 
     async def _apply(self, payment: Payment, order_id: UUID) -> Result[None, DomainError]:
         confirmed = await self._orders.confirm(

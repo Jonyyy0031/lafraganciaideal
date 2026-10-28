@@ -92,14 +92,51 @@ To receive webhooks in development:
 
 1. Expose the local API (port 8100) through a public https tunnel (e.g. `cloudflared tunnel
    --url http://127.0.0.1:8100` or `ngrok http 8100`).
-2. In the Mercado Pago panel of your test application, open "Webhooks", set the URL
-   `https://<tunnel>/api/v1/payments/webhooks/mercadopago` (test mode) and select the event
-   "Pagos".
-3. Copy the secret that page shows into `MERCADOPAGO_WEBHOOK_SECRET` in `apps/api/.env`, and
-   restart the API.
+2. Put the credentials of your Mercado Pago test seller account in
+   `MERCADOPAGO_ACCESS_TOKEN` (they start with `APP_USR-`, like production ones).
+3. In the Mercado Pago panel, open "Webhooks". It has two tabs, "Modo de prueba" and "Modo
+   productivo", each with its own URL and its own secret. Set the URL
+   `https://<tunnel>/api/v1/payments/webhooks/mercadopago` in both tabs and mark the event
+   "Pagos (legacy)" ("Order (Mercado Pago)" is the Orders API and does not apply).
+4. Copy into `MERCADOPAGO_WEBHOOK_SECRET` in `apps/api/.env` the secret of the tab that matches
+   the credentials: the "Modo de prueba" tab for a test seller account. With the other tab's
+   secret every real notification is refused with 401. "Simular notificación" signs with the
+   secret of the tab it is sent from, so a simulation can pass while real notifications fail.
+   Restart the API.
 
 With an http `STOREFRONT_URL` (as in development) the checkout is created without
 `auto_return`, so after paying the guest comes back with the "Volver al sitio" button.
+
+The checkout offers cards (one installment), cash in stores (OXXO and others, `ticket`) and
+SPEI (`bank_transfer`); only bank counters and ATMs (`atm`) are excluded. A cash or transfer
+ticket stays `pending` until the guest pays it and expires 48 hours after the link was
+created. For OXXO, Mercado Pago moves that expiry to the end of the day in Mexico City time (up
+to about 56 hours), and we use the expiry it reports. When its webhook arrives, the worker holds
+the order once: orders moves the order's `payment_due_at` and its reservation to the ticket's
+expiry plus 48 hours (never earlier), because a store payment can take one or two business days
+to be credited. It publishes `orders.order.payment_pending`, which emails the customer "Tu ficha
+de pago del pedido …" with the amount, the ticket's own expiry in Cancún time as the deadline,
+and Mercado Pago's ticket link. The 48 hours count from the first ticket: a later ticket never
+moves the deadline past the first ticket's expiry plus the 48-hour margin. It is still recorded,
+and its email shows the earlier of its own expiry and the first ticket's, so the 48-hour margin
+always follows the deadline the customer is told. A ticket that had already
+expired when its webhook is processed sends no email (`payments.ticket_expired_on_arrival`), and
+a ticket link longer than 500 characters is stored empty (`payments.ticket_url_too_long`). The
+order page reads the live tickets with `POST /api/v1/payments/pending` (the order's token in
+the body); each ticket's `expires_at` there is the last moment to pay so that the order still
+waits for the credit: the earlier of its own expiry and the order's `payment_due_at` minus 48
+hours. When an order is paid or cancelled, payments publishes
+`payments.checkout.close_requested` and, in that event's own outbox row, expires its Mercado
+Pago preference (`PUT /checkout/preferences/{id}`), closes the stored checkout, so the old link
+no longer takes payments, and cancels each of the order's `pending` cash and transfer tickets
+(`PUT /v1/payments/{id}` with `status: cancelled`). A 400, 404, 409 or 422 from Mercado Pago on
+either call is permanent and only logged (`payments.checkout_close_refused`,
+`payments.ticket_cancel_refused`); any other 4xx (401, 403, 408, 429…), a 5xx or a transport
+error retries the event, which ends in the failed-events panel if it never recovers. A
+pending ticket whose webhook is processed after its order was already paid or cancelled is
+cancelled too: the worker publishes `payments.ticket.cancel_requested`, whose own outbox row
+sends the same cancel with the same permanent and retried answers. A ticket paid before the
+cancel still arrives `approved` and is `refund_due`.
 
 ## Database changes
 

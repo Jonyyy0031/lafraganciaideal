@@ -1,6 +1,7 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from fragancia_api.modules.payments.domain.checkout import Checkout
@@ -41,4 +42,9 @@ class SqlCheckoutRepository:
             insert(checkouts)
             .values(order_id=checkout.order_id, **values)
             .on_conflict_do_update(index_elements=[checkouts.c.order_id], set_=values)
+        )
+
+    async def close(self, order_id: UUID, at: datetime) -> None:
+        await self._database.session.execute(
+            update(checkouts).where(checkouts.c.order_id == order_id).values(expires_at=at)
         )

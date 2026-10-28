@@ -6337,7 +6337,7 @@
           "payments"
         ],
         "summary": "Start Checkout",
-        "description": "The Mercado Pago URL that pays an order (decisions 2 and 4, ADR 0004). The order's\nprivate-link token is a secret and travels in the body, never in a URL. Only cards, in one\ninstallment. The link expires with the order's payment window, and a second request reuses\nit while it is valid. The browser's return from Mercado Pago never confirms a payment.\n404 `PAYMENTS_ORDER_NOT_FOUND`; 409 `PAYMENTS_ORDER_NOT_PAYABLE` (`details.status`: the\norder is not waiting for payment or its window passed); 503\n`PAYMENTS_GATEWAY_UNAVAILABLE` (Mercado Pago failed or is not configured).",
+        "description": "The Mercado Pago URL that pays an order (decisions 2, 4 and 14, ADR 0004). The order's\nprivate-link token is a secret and travels in the body, never in a URL. Cards in one\ninstallment, cash in stores and SPEI; a cash or transfer ticket issued from the link\nexpires 48 hours after the link was created. The link expires with the order's payment\nwindow, and a second request reuses it while it is valid. The browser's return from\nMercado Pago never confirms a payment.\n404 `PAYMENTS_ORDER_NOT_FOUND`; 409 `PAYMENTS_ORDER_NOT_PAYABLE` (`details.status`: the\norder is not waiting for payment or its window passed); 503\n`PAYMENTS_GATEWAY_UNAVAILABLE` (Mercado Pago failed or is not configured).",
         "operationId": "start_checkout",
         "requestBody": {
           "content": {
@@ -6382,6 +6382,58 @@
           },
           "503": {
             "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input or a broken business rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments/pending": {
+      "post": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "List Pending Tickets",
+        "description": "The order's cash and transfer tickets that can still be paid (decision 16): pending,\nnot expired, newest first, each with its method, amount, expiry and Mercado Pago's\ninstructions page. The order's private-link token travels in the body, never in a URL.\nAn order that is not waiting for payment answers no items. 404\n`PAYMENTS_ORDER_NOT_FOUND`.",
+        "operationId": "list_pending_tickets",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PendingTicketsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingTickets"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
             "content": {
               "application/json": {
                 "schema": {
@@ -9585,6 +9637,78 @@
           "email"
         ],
         "title": "PasswordResetRequest"
+      },
+      "PendingTicket": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "description": "How it is paid: \"efectivo en tienda\" or \"transferencia SPEI\"."
+          },
+          "amount_cents": {
+            "type": "integer",
+            "title": "Amount Cents"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At",
+            "description": "The last moment to pay the ticket so that the order still waits for the payment to be credited: the ticket's own expiry, or the order's payment deadline minus the 48-hour credit margin, whichever is earlier."
+          },
+          "ticket_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket Url",
+            "description": "Mercado Pago's page with the instructions."
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "amount_cents",
+          "expires_at",
+          "ticket_url"
+        ],
+        "title": "PendingTicket",
+        "description": "A cash or transfer ticket issued for the order and not paid yet (decision 16)."
+      },
+      "PendingTickets": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PendingTicket"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "PendingTickets",
+        "description": "The order's live tickets, newest first; empty when the order is not waiting for\npayment."
+      },
+      "PendingTicketsRequest": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Access Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token"
+        ],
+        "title": "PendingTicketsRequest",
+        "description": "The order's private-link token, in the body so it never travels in a URL."
       },
       "PerfumeBrandRef": {
         "properties": {

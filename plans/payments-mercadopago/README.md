@@ -20,7 +20,7 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
 | ---- | ----- | ---------- | ------- |
 | 001  | Payments module and checkout redirect | — | New `payments` module with the `PaymentGateway` port and its Mercado Pago adapter. From the order page, the guest gets a Checkout Pro link for a pending order (cards only, one installment), reused while it is valid |
 | 002  | Webhook and payment status | 001 | Fixes `auto_return` on http back URLs. A signed, idempotent webhook. The worker fetches the payment and moves the order to paid (approved), leaves it pending (rejected), or records it for review or refund |
-| 003  | OXXO and SPEI | 002 | Cash and transfer enabled. A pending ticket extends the reservation and the payment window to its 48-hour expiry, and the customer gets the payment instructions |
+| 003  | OXXO and SPEI | 002 | Cash and transfer enabled. A pending ticket extends the reservation and the payment window to its 48-hour expiry (counted from the first ticket), and the customer gets the payment instructions. A paid or cancelled order closes its link and cancels its pending tickets |
 | 004  | Automatic refunds | 002 | Cancelling a paid Mercado Pago order refunds it through the API. A payment approved for an order already cancelled is refunded, and the customer and owners are told |
 
 ## Dependency notes
@@ -88,6 +88,34 @@ A guest pays their order with Mercado Pago Checkout Pro (ADR 0004).
     so:** "Tu pedido … fue cancelado porque tu pago llegó cuando ya no había existencias. Te
     reembolsaremos el pago completo." (plan 002 review L2). The customer page still shows the
     cancellation as by the system.
+14. (2026-10-27) **Cash in stores and SPEI are enabled**: every `ticket` method Mercado Pago
+    offers (OXXO and other stores) and `bank_transfer` (SPEI). Bank counters and ATMs (`atm`)
+    stay excluded.
+15. (2026-10-27) **When a ticket is issued, we send our own instructions email**: amount,
+    method, the deadline in Cancún time and the link to Mercado Pago's ticket. It is in addition
+    to whatever Mercado Pago sends.
+16. (2026-10-27) **The order page can show the pending ticket**: method, deadline and link,
+    through a payments query that takes the order's token.
+17. (2026-10-27) **With a ticket pending, the guest may still pay by card or issue another
+    ticket.** The window extends to the ticket that expires latest (up to 48 hours), and a
+    second payment is `refund_due` (plan 002).
+18. (2026-10-27) **A paid or cancelled order no longer accepts payments from its old link.**
+    When the order leaves `pending_payment`, payments expires its Mercado Pago preference. A
+    payment that still gets through (the guest was already in the checkout) is only recorded,
+    with no hold and no email.
+19. (2026-10-27) **The 48 hours count from the first ticket** (plan 003 review M1). Later
+    tickets may be issued but never move the order's deadline past the first ticket's expiry;
+    then the order is cancelled and its units released.
+20. (2026-10-27) **When an order is paid or cancelled, its pending OXXO or SPEI tickets are
+    cancelled in Mercado Pago**, besides expiring the link. A ticket already paid at the store
+    is `refund_due` (plan 004).
+21. (2026-10-27) **The OXXO deadline is the one Mercado Pago gives the ticket.** Mercado Pago
+    moves the requested 48 hours to the end of that day in Mexico City time (up to about 56 h),
+    and it cannot be forced from the preference. SPEI kept the 48 hours.
+22. (2026-10-27) **An order with a pending ticket waits 48 more hours after the ticket expires**
+    before it is cancelled, with its units still reserved. A store payment can take one or two
+    business days to be credited ("se acreditará de 1 a 2 días hábiles"). The customer is still
+    told to pay before the ticket's own deadline.
 
 ## Delivered
 

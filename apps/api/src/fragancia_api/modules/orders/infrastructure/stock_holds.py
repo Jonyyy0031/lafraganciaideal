@@ -40,3 +40,6 @@ class StockHoldsAdapter:
 
     async def return_sold(self, reservation_id: UUID) -> Result[None, DomainError]:
         return await self._reservations.return_sold(reservation_id)
+
+    async def extend(self, reservation_id: UUID, expires_at: datetime) -> Result[None, DomainError]:
+        return await self._reservations.extend(reservation_id, expires_at)

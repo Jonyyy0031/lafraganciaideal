@@ -9,6 +9,7 @@ Customer emails never carry the shop's internal cancel reason (decision 40).
 """
 
 from collections.abc import Callable
+from datetime import datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -115,6 +116,25 @@ def placed_email(order: AdminOrderDetail, link: str) -> Template:
         f"{_lead_time(order)}"
     )
     return f"Recibimos tu pedido {order.number}", _wrap(order, link, text)
+
+
+def payment_instructions_email(
+    order: AdminOrderDetail,
+    link: str,
+    method: str,
+    pay_by: datetime,
+    instructions_url: str | None,
+) -> Template:
+    """A cash or transfer ticket was issued (payments decision 15). `pay_by` is the ticket's
+    own expiry, not the order's deadline, which adds a margin (payments decision 22)."""
+    due = pay_by.astimezone(SHOP_TIMEZONE).strftime("%d/%m/%Y a las %H:%M")
+    text = (
+        f"Para completar tu pedido {order.number}, paga {money(order.total_cents)} con {method} "
+        f"antes del {due}.\n"
+    )
+    if instructions_url:
+        text += f"Consulta la ficha con las instrucciones aquí:\n{instructions_url}\n"
+    return f"Tu ficha de pago del pedido {order.number}", _wrap(order, link, text)
 
 
 def paid_email(order: AdminOrderDetail, link: str) -> Template:
@@ -227,6 +247,42 @@ class SendOrderPlacedEmail:
             self._email,
             order.customer_email,
             placed_email(order, link),
+            "orders.email_rejected",
+        )
+
+
+class SendPaymentInstructionsEmail:
+    """`orders.order.payment_pending` to the customer's "ficha de pago" email (payments
+    decision 15)."""
+
+    def __init__(
+        self, *, queries: OrderQueries, links: OrderLinks, email: EmailSender, storefront_url: str
+    ) -> None:
+        self._queries = queries
+        self._links = links
+        self._email = email
+        self._storefront_url = storefront_url
+
+    async def __call__(self, message: EventMessage) -> None:
+        number = int(str(message.payload["number"]))
+        order = await self._queries.detail(number)
+        if order is None:
+            _log.warning("orders.email_order_missing", number=number)
+            return
+        link = order_link(
+            self._storefront_url, self._links.token(UUID(str(message.payload["order_id"])))
+        )
+        url = message.payload.get("instructions_url")
+        await _send(
+            self._email,
+            order.customer_email,
+            payment_instructions_email(
+                order,
+                link,
+                str(message.payload["method"]),
+                datetime.fromisoformat(str(message.payload["pay_by"])),
+                str(url) if url else None,
+            ),
             "orders.email_rejected",
         )
 

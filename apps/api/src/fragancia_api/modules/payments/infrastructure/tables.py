@@ -20,7 +20,8 @@ checkouts = Table(
 
 # One row per Mercado Pago payment, as last fetched. `order_id` is the payment's
 # `external_reference` (no foreign key, as above); `outcome` is set once, when an approved
-# payment is applied to its order.
+# payment is applied to its order. A cash or transfer ticket also keeps its method, its expiry,
+# its instructions page and when the order was held for it (`held_at`).
 payments = Table(
     "payments",
     metadata,
@@ -35,6 +36,10 @@ payments = Table(
     Column("outcome", String(20), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("payment_method", String(32), nullable=True),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+    Column("ticket_url", String(500), nullable=True),
+    Column("held_at", DateTime(timezone=True), nullable=True),
     Index("ix_payments_order_id", "order_id"),
     schema=SCHEMA,
 )

@@ -1,9 +1,18 @@
+from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from fragancia_api.modules.payments.domain.payment import Payment, PaymentOutcome
+from fragancia_api.modules.payments.contracts import PendingTicket
+from fragancia_api.modules.payments.domain.payment import (
+    CASH_TYPES,
+    METHOD_LABELS,
+    PENDING,
+    Payment,
+    PaymentOutcome,
+)
 from fragancia_api.modules.payments.infrastructure.tables import payments
 from fragancia_api.shared.infrastructure.database import Database
 
@@ -35,6 +44,49 @@ class SqlPaymentRepository:
                 .with_for_update()
             )
         ).one()
+        return self._payment(row)
+
+    async def save(self, payment: Payment) -> None:
+        values = self._values(payment)
+        await self._database.session.execute(
+            insert(payments)
+            .values(payment_id=payment.payment_id, created_at=payment.created_at, **values)
+            .on_conflict_do_update(index_elements=[payments.c.payment_id], set_=values)
+        )
+
+    async def first_hold_expiry(self, order_id: UUID) -> datetime | None:
+        row = (
+            await self._database.session.execute(
+                select(payments.c.expires_at)
+                .where(
+                    payments.c.order_id == order_id,
+                    payments.c.held_at.is_not(None),
+                    # Only a ticket still payable when it was held could move the order; an
+                    # expired-on-arrival one must not cap later holds.
+                    payments.c.expires_at > payments.c.held_at,
+                )
+                .order_by(payments.c.held_at, payments.c.payment_id)
+                .limit(1)
+            )
+        ).first()
+        return row.expires_at if row is not None else None
+
+    async def pending_cash(self, order_id: UUID) -> list[Payment]:
+        rows = (
+            await self._database.session.execute(
+                select(payments)
+                .where(
+                    payments.c.order_id == order_id,
+                    payments.c.status == PENDING,
+                    payments.c.payment_type.in_(CASH_TYPES),
+                )
+                .order_by(payments.c.created_at, payments.c.payment_id)
+            )
+        ).all()
+        return [self._payment(row) for row in rows]
+
+    @staticmethod
+    def _payment(row: Any) -> Payment:
         return Payment(
             payment_id=row.payment_id,
             order_id=row.order_id,
@@ -47,14 +99,10 @@ class SqlPaymentRepository:
             outcome=PaymentOutcome(row.outcome) if row.outcome is not None else None,
             created_at=row.created_at,
             updated_at=row.updated_at,
-        )
-
-    async def save(self, payment: Payment) -> None:
-        values = self._values(payment)
-        await self._database.session.execute(
-            insert(payments)
-            .values(payment_id=payment.payment_id, created_at=payment.created_at, **values)
-            .on_conflict_do_update(index_elements=[payments.c.payment_id], set_=values)
+            payment_method=row.payment_method,
+            expires_at=row.expires_at,
+            ticket_url=row.ticket_url,
+            held_at=row.held_at,
         )
 
     @staticmethod
@@ -70,4 +118,43 @@ class SqlPaymentRepository:
             "approved_at": payment.approved_at,
             "outcome": payment.outcome.value if payment.outcome is not None else None,
             "updated_at": payment.updated_at,
+            "payment_method": payment.payment_method,
+            "expires_at": payment.expires_at,
+            "ticket_url": payment.ticket_url,
+            "held_at": payment.held_at,
         }
+
+
+class SqlPaymentQueries:
+    """Read side of `payments.payments`, outside any transaction (`Database.reader()`)."""
+
+    def __init__(self, database: Database) -> None:
+        self._database = database
+
+    async def pending_for_order(self, order_id: UUID, now: datetime) -> list[PendingTicket]:
+        statement = (
+            select(
+                payments.c.payment_type,
+                payments.c.amount_cents,
+                payments.c.expires_at,
+                payments.c.ticket_url,
+            )
+            .where(
+                payments.c.order_id == order_id,
+                payments.c.status == PENDING,
+                payments.c.payment_type.in_(CASH_TYPES),
+                payments.c.expires_at > now,
+            )
+            .order_by(payments.c.created_at.desc(), payments.c.payment_id.desc())
+        )
+        async with self._database.reader() as session:
+            rows = (await session.execute(statement)).all()
+        return [
+            PendingTicket(
+                method=METHOD_LABELS[row.payment_type],
+                amount_cents=row.amount_cents,
+                expires_at=row.expires_at,
+                ticket_url=row.ticket_url,
+            )
+            for row in rows
+        ]

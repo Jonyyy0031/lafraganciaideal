@@ -62,12 +62,16 @@ class Settings(DatabaseSettings):
     # Secret behind the private order links (orders, decision 31). Never rotate it: rotating
     # breaks every link already sent.
     order_link_secret: SecretStr | None = None
-    # Mercado Pago (payments). Development uses the TEST- credentials of a test application;
-    # the API URL is overridable so tests and local QA can point at a fake.
+    # Mercado Pago (payments). Development uses the credentials of a test seller account (they
+    # start with APP_USR-); the API URL is overridable so tests and local QA can point at a fake.
     mercadopago_access_token: SecretStr | None = None
     mercadopago_api_url: str = "https://api.mercadopago.com"
     mercadopago_sandbox: bool = True
-    # The secret that signs the webhooks (the panel's "Webhooks" page).
+    # The secret that signs the webhooks. The panel's "Webhooks" page has a "Modo de prueba" tab
+    # and a "Modo productivo" tab, each with its own URL and secret: set the URL in both, mark
+    # the event "Pagos (legacy)", and use the secret of the tab that matches the credentials
+    # (the test tab for a test seller account). "Simular notificación" signs with the secret of
+    # the tab it is sent from.
     mercadopago_webhook_secret: SecretStr | None = None
     # Account emails (identity) and SMTP.
     invitation_ttl_hours: int = Field(default=72, ge=1)
