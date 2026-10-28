@@ -1255,3 +1255,44 @@ Suites at 7f81bb1:
 - **NOT VERIFIABLE in the sandbox:**
   - paying a ticket at the store (the approved path is covered by integration tests);
   - R4.
+
+**Second sandbox run (2026-10-28, main session, at 285a7c5, after steps 10 and 11).**
+
+Setup:
+- a new tunnel URL, set in both panel tabs;
+- the test-mode secret, confirmed: a "Simular notificación" from the test tab was processed,
+  and the worker logged `payments.payment_not_found` for `123456`;
+- the API and the worker on the current code;
+- QA orders `LFI-1038` and `LFI-1039`.
+
+Suites at 13ce544 and 285a7c5:
+- `uv run just check`: 4326 passed;
+- `uv run just test-integration`: 1209 passed (the reviewer's run).
+
+- [x] **V1 is fixed: a paid order's link closes.**
+  - `LFI-1039` was paid by card (`185482925881`, `applied`).
+  - Its `payments.checkout.close_requested` was published on the first attempt.
+  - Mercado Pago's preference then showed `expiration_date_to = 2026-10-28T16:43:28.494Z`, the
+    close time, and the stored checkout's `expires_at` equals it.
+- [x] **Decision 22: the 48-hour margin.** `LFI-1038`'s OXXO ticket `186530386822` expires at
+  `2026-10-31T05:59:59Z` (the end of the day in Mexico City again, decision 21). The order's
+  `payment_due_at` and the reservation's `expires_at` are both `2026-11-02T05:59:59Z`, the
+  expiry plus 48 h.
+- [x] **The email gives the ticket's own deadline.** Mailpit's "Tu ficha de pago del pedido
+  LFI-1038" says "antes del 31/10/2026 a las 00:59" (Cancún), not the margin.
+- [x] **A cancelled order's link closes.** The owner cancelled `LFI-1038`:
+  - the order is `cancelled` and its reservation `released`;
+  - Mercado Pago's preference showed `expiration_date_to = 2026-10-28T16:44:28.210Z`.
+- [ ] **V2 still stands: the ticket is not cancelled.** The same close event's ticket cancel got
+  `401 Unauthorized use of live credentials`.
+  - The ticket stays `pending_waiting_payment`.
+  - The event keeps retrying, so the stored checkout row (written after the cancels in that
+    transaction) keeps its old `expires_at`.
+  - That has no effect: the order is not pending, so the link is never reused.
+  - Tracked by `payments-ticket-cancel-refused-with-test-credentials`.
+- **NOT VERIFIED:**
+  - cancelling a ticket with production credentials (V2);
+  - paying a ticket at the store;
+  - R4;
+  - the overdue job firing at the end of the margin (covered by integration tests; the margin
+    is 48 h).
