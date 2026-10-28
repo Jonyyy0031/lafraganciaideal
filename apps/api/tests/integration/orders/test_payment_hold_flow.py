@@ -24,6 +24,7 @@ from fragancia_api.modules.orders.application.commands.lifecycle import (
     CancelUnpaidOrder,
 )
 from fragancia_api.modules.payments.application.ports import GatewayPayment
+from fragancia_api.modules.payments.domain.payment import TICKET_GRACE
 from fragancia_api.modules.payments.infrastructure.in_memory import FakeGateway
 from fragancia_api.shared.kernel import DomainError, Ok, Result
 from tests.integration.catalog.presentation_rows import CatalogRows
@@ -81,7 +82,9 @@ async def hold(
     order_id: UUID | None = None,
 ) -> PaymentConfirmation:
     facade = container.services.get(OrderPaymentConfirmations)
-    return unwrapped(await facade.hold_for_payment(order_id or placed.order_id, until, method, URL))
+    return unwrapped(
+        await facade.hold_for_payment(order_id or placed.order_id, until, until, method, URL)
+    )
 
 
 async def due_and_reservation(container: Container, placed: Placed) -> tuple[datetime, datetime]:
@@ -205,7 +208,7 @@ async def test_a_cancelled_order_is_not_pending_and_nothing_is_saved_or_publishe
 async def test_an_unknown_order_is_not_found(container: Container) -> None:
     result = unwrapped(
         await container.services.get(OrderPaymentConfirmations).hold_for_payment(
-            UUID(int=424242), in_hours(48), "efectivo en tienda", None
+            UUID(int=424242), in_hours(48), in_hours(48), "efectivo en tienda", None
         )
     )
 
@@ -273,7 +276,9 @@ async def test_a_pending_oxxo_payment_holds_the_order_and_stores_the_ticket_once
         URL,
     )
     assert stored["held_at"] is not None
-    assert await due_and_reservation(container, placed) == (expires, expires)
+    # Decision 22: the order and its reservation wait 48 h more than the ticket.
+    held_until = expires + TICKET_GRACE
+    assert await due_and_reservation(container, placed) == (held_until, held_until)
     assert len(pending_events(await outbox_rows(container))) == 1
     assert (await order_row(container, placed.number))["status"] == "pending_payment"
 

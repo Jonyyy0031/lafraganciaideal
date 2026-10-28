@@ -42,7 +42,12 @@ def pending_message(
     url: str | None = URL,
 ) -> EventMessage:
     e = OrderPaymentPending(
-        order_id=ORDER_ID, number=number, due_at=due_at, method=method, instructions_url=url
+        order_id=ORDER_ID,
+        number=number,
+        due_at=due_at,
+        pay_by=due_at,
+        method=method,
+        instructions_url=url,
     )
     return EventMessage(id=e.event_id, name=e.name, payload=e.payload(), occurred_at=e.occurred_at)
 
@@ -162,7 +167,12 @@ async def test_the_handler_builds_the_link_from_the_order_id_of_the_event() -> N
     email = RecordingEmailSender()
     other = UUID(int=555)
     e = OrderPaymentPending(
-        order_id=other, number=1001, due_at=DUE, method="efectivo en tienda", instructions_url=None
+        order_id=other,
+        number=1001,
+        due_at=DUE,
+        pay_by=DUE,
+        method="efectivo en tienda",
+        instructions_url=None,
     )
 
     await handler(FakeQueries(make_detail()), email)(

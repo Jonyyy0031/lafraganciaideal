@@ -54,9 +54,16 @@ class OrderPaymentsAdapter:
                 )
 
     async def hold(
-        self, order_id: UUID, until: datetime, method: str, instructions_url: str | None
+        self,
+        order_id: UUID,
+        until: datetime,
+        pay_by: datetime,
+        method: str,
+        instructions_url: str | None,
     ) -> Result[Confirmation, DomainError]:
-        held = await self._confirmations.hold_for_payment(order_id, until, method, instructions_url)
+        held = await self._confirmations.hold_for_payment(
+            order_id, until, pay_by, method, instructions_url
+        )
         match held:
             case Err(error):
                 return Err(error)

@@ -15,7 +15,9 @@ Events (published through the outbox; other modules subscribe by name, never by 
 - `orders.order.payment_pending`: a cash or transfer ticket was issued for a pending order
   (`OrderPaymentConfirmations.hold_for_payment`); the status does not change. Payload:
   `order_id` (UUID string), `number` (int), `due_at` (ISO 8601 string: the order's deadline
-  after the hold, moved or unchanged), `method` (the label of how the ticket is paid, e.g.
+  after the hold, moved or unchanged), `pay_by` (ISO 8601 string: the ticket's own expiry,
+  the deadline the customer's email shows; the order's deadline adds a margin for the payment
+  to be credited, payments decisions 21 and 22), `method` (the label of how the ticket is paid, e.g.
   "efectivo en tienda") and `instructions_url` (string or null).
 
 Orders itself consumes these events in the worker to send plain-text emails (decisions 44 to
@@ -50,9 +52,10 @@ Public API for other modules:
   order was cancelled by `payments` and its reservation released) or `not_found`. It joins the
   caller's transaction; the commit and the move happen together. Any other refusal comes back
   as `Err`.
-  `hold_for_payment(order_id, until, method, instructions_url)` keeps a `pending_payment` order
-  waiting for a cash or transfer ticket: its `payment_due_at` moves to `until` when that is
-  later (never earlier) and its reservation is extended to it, in one transaction; a refused
+  `hold_for_payment(order_id, until, pay_by, method, instructions_url)` keeps a
+  `pending_payment` order waiting for a cash or transfer ticket: its `payment_due_at` moves to
+  `until` when that is later (never earlier) and its reservation is extended to it, in one
+  transaction; `pay_by` is the ticket's own expiry, which the instructions email shows; a refused
   extension (an expired or released reservation) is logged as
   `orders.payment_hold_not_extended` and keeps the new deadline. It records
   `orders.order.payment_pending` and answers `held`, `not_pending` (with the order's

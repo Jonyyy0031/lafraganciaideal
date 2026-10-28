@@ -138,10 +138,10 @@ async def test_close_puts_the_expiry_to_the_preference_with_a_bearer_token() -> 
     assert str(sent.url) == f"{API}/checkout/preferences/pref-1"
     assert sent.headers["Authorization"] == f"Bearer {ACCESS_TOKEN}"
     assert sent.headers["Content-Type"] == "application/json"
+    # Plan 003 step 10 (V1): no `date_of_expiration`, Mercado Pago refuses it set to now.
     assert body_of(sent) == {
         "expires": True,
         "expiration_date_to": "2026-10-27T15:00:00.000+00:00",
-        "date_of_expiration": "2026-10-27T15:00:00.000+00:00",
     }
     assert sent.extensions["timeout"] == {
         "connect": TIMEOUT_SECONDS,

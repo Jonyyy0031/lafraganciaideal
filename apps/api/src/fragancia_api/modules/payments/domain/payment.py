@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from uuid import UUID
@@ -11,6 +11,10 @@ PENDING = "pending"
 CASH_TYPES = ("ticket", "bank_transfer")
 # How the instructions email names each cash type (decision 15).
 METHOD_LABELS = {"ticket": "efectivo en tienda", "bank_transfer": "transferencia SPEI"}
+# How long an order with a pending ticket keeps waiting after the ticket expires, with its
+# units reserved: a store payment can take one or two business days to be credited
+# (decision 22).
+TICKET_GRACE = timedelta(hours=48)
 
 
 class PaymentOutcome(StrEnum):

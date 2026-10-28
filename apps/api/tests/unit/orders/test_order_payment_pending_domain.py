@@ -19,7 +19,7 @@ def test_a_later_deadline_moves_the_payment_due_at_and_answers_true() -> None:
     order = make_order()
     until = order.payment_due_at + timedelta(hours=47)
 
-    result = order.await_payment(until, "efectivo en tienda", URL, LATER)
+    result = order.await_payment(until, until, "efectivo en tienda", URL, LATER)
 
     assert result == Ok(True)
     assert order.payment_due_at == until
@@ -34,7 +34,7 @@ def test_an_equal_or_earlier_deadline_does_not_move_it_and_answers_false(
     before = order.payment_due_at
     updated = order.updated_at
 
-    result = order.await_payment(before + delta, "efectivo en tienda", None, LATER)
+    result = order.await_payment(before + delta, before + delta, "efectivo en tienda", None, LATER)
 
     assert result == Ok(False)
     assert order.payment_due_at == before
@@ -44,9 +44,8 @@ def test_an_equal_or_earlier_deadline_does_not_move_it_and_answers_false(
 def test_one_second_later_is_enough_to_move() -> None:
     order = make_order()
 
-    result = order.await_payment(
-        order.payment_due_at + timedelta(seconds=1), "transferencia SPEI", None, LATER
-    )
+    later = order.payment_due_at + timedelta(seconds=1)
+    result = order.await_payment(later, later, "transferencia SPEI", None, LATER)
 
     assert result == Ok(True)
 
@@ -55,7 +54,7 @@ def test_it_always_records_the_event_with_the_new_deadline_the_method_and_the_pa
     order = make_order()
     until = order.payment_due_at + timedelta(hours=47)
 
-    order.await_payment(until, "efectivo en tienda", URL, LATER)
+    order.await_payment(until, until, "efectivo en tienda", URL, LATER)
 
     [event] = order.pull_events()
     assert isinstance(event, OrderPaymentPending)
@@ -72,7 +71,9 @@ def test_the_event_carries_the_unchanged_deadline_when_it_did_not_move() -> None
     order = make_order()
     before = order.payment_due_at
 
-    order.await_payment(before - timedelta(hours=1), "transferencia SPEI", None, LATER)
+    order.await_payment(
+        before - timedelta(hours=1), before - timedelta(hours=1), "transferencia SPEI", None, LATER
+    )
 
     [event] = order.pull_events()
     assert isinstance(event, OrderPaymentPending)
@@ -84,7 +85,7 @@ def test_the_event_carries_the_unchanged_deadline_when_it_did_not_move() -> None
 def test_the_event_payload_is_what_the_relay_hands_over() -> None:
     order = make_order()
     until = order.payment_due_at + timedelta(hours=2)
-    order.await_payment(until, "efectivo en tienda", URL, LATER)
+    order.await_payment(until, until, "efectivo en tienda", URL, LATER)
 
     [event] = order.pull_events()
 
@@ -92,6 +93,7 @@ def test_the_event_payload_is_what_the_relay_hands_over() -> None:
         "order_id": str(order.id),
         "number": order.number,
         "due_at": until.isoformat(),
+        "pay_by": until.isoformat(),
         "method": "efectivo en tienda",
         "instructions_url": URL,
     }
@@ -100,7 +102,13 @@ def test_the_event_payload_is_what_the_relay_hands_over() -> None:
 def test_it_changes_neither_the_status_nor_the_history() -> None:
     order = make_order()
 
-    order.await_payment(order.payment_due_at + timedelta(hours=2), "x", None, LATER)
+    order.await_payment(
+        order.payment_due_at + timedelta(hours=2),
+        order.payment_due_at + timedelta(hours=2),
+        "x",
+        None,
+        LATER,
+    )
 
     assert order.status is OrderStatus.PENDING_PAYMENT
     assert [e for e in order.pull_events() if e.name == "orders.order.status_changed"] == []
@@ -113,7 +121,9 @@ def test_an_order_that_is_not_pending_payment_is_refused_and_records_nothing(
     order = make_order(status=status)
     before = order.payment_due_at
 
-    result = order.await_payment(before + timedelta(hours=2), "x", None, LATER)
+    result = order.await_payment(
+        before + timedelta(hours=2), before + timedelta(hours=2), "x", None, LATER
+    )
 
     assert isinstance(result, Err)
     assert result.error.code == "ORDERS_TRANSITION_INVALID"
@@ -127,9 +137,9 @@ def test_two_tickets_move_the_deadline_to_the_latest_and_never_back() -> None:
     first = order.payment_due_at + timedelta(hours=40)
     second = order.payment_due_at + timedelta(hours=47)
 
-    order.await_payment(first, "efectivo en tienda", None, LATER)
-    order.await_payment(second, "transferencia SPEI", None, LATER)
-    order.await_payment(first, "efectivo en tienda", None, LATER)
+    order.await_payment(first, first, "efectivo en tienda", None, LATER)
+    order.await_payment(second, second, "transferencia SPEI", None, LATER)
+    order.await_payment(first, first, "efectivo en tienda", None, LATER)
 
     assert order.payment_due_at == second
     assert len(order.pull_events()) == 3

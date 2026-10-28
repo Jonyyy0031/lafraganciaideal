@@ -105,11 +105,18 @@ class OrderPaymentConfirmations(OrderMove):
         return await self._transactions.run(work)
 
     async def hold_for_payment(
-        self, order_id: UUID, until: datetime, method: str, instructions_url: str | None
+        self,
+        order_id: UUID,
+        until: datetime,
+        pay_by: datetime,
+        method: str,
+        instructions_url: str | None,
     ) -> Result[PaymentConfirmation, DomainError]:
         """A cash or transfer ticket was issued (payments decisions 5 and 15): a
         `pending_payment` order's deadline moves to `until` when that is later, and its
-        reservation is extended to it, in one transaction. A refused extension (the
+        reservation is extended to it, in one transaction. `pay_by` is the ticket's own expiry,
+        the deadline the customer's email shows (`until` adds a margin for the payment to be
+        credited, payments decision 22). A refused extension (the
         reservation expired or was released) is logged and keeps the new deadline: the ticket
         can still be paid, as a late payment. Records `orders.order.payment_pending`, which
         sends the customer the instructions email. Joins the caller's transaction."""
@@ -124,7 +131,7 @@ class OrderPaymentConfirmations(OrderMove):
                         PaymentConfirmationOutcome.NOT_PENDING, order.number, order.status.value
                     )
                 )
-            match order.await_payment(until, method, instructions_url, self._clock.now()):
+            match order.await_payment(until, pay_by, method, instructions_url, self._clock.now()):
                 case Err(error):
                     return Err(error)
                 case Ok(moved):

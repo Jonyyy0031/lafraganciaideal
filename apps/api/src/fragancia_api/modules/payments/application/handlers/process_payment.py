@@ -11,6 +11,7 @@ from fragancia_api.modules.payments.domain.events import PaymentFlagged, TicketC
 from fragancia_api.modules.payments.domain.payment import (
     APPROVED,
     METHOD_LABELS,
+    TICKET_GRACE,
     Payment,
     PaymentOutcome,
 )
@@ -136,18 +137,21 @@ class ProcessPaymentNotification:
         """Keep the order waiting for a pending cash or transfer ticket (decision 5). Once per
         payment: `held_at` is set whatever orders answers, except a refusal (retried).
 
-        The 48 hours count from the first ticket (decision 19): a later ticket never moves the
-        deadline past the expiry of the order's earliest-held ticket. It is still recorded and
-        its instructions email shows the order's actual deadline."""
+        The order waits until the ticket's expiry plus `TICKET_GRACE`, so a store payment still
+        being credited is not cancelled (decision 22). The 48 hours count from the first ticket
+        (decision 19): a later ticket never moves the deadline past the earliest-held ticket's
+        expiry plus `TICKET_GRACE`. The instructions email shows the ticket's own expiry,
+        never later than the order's deadline."""
         if payment.expires_at is None or payment.payment_type is None:
             raise ValueError("only a pending ticket with an expiry is held")
-        until = payment.expires_at
+        until = payment.expires_at + TICKET_GRACE
         first = await self._payments.first_hold_expiry(order_id)
         if first is not None:
-            until = min(until, first)
+            until = min(until, first + TICKET_GRACE)
         held = await self._orders.hold(
             order_id,
             until=until,
+            pay_by=min(payment.expires_at, until),
             method=METHOD_LABELS[payment.payment_type],
             instructions_url=payment.ticket_url,
         )

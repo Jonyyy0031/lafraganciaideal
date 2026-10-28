@@ -11,6 +11,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from fragancia_api.modules.payments.application.handlers.close_checkout import CloseCheckout
+from fragancia_api.modules.payments.domain.payment import TICKET_GRACE
 from fragancia_api.modules.payments.infrastructure.in_memory import (
     FakeGateway,
     InMemoryCheckouts,
@@ -166,7 +167,7 @@ async def test_the_first_ticket_holds_until_its_own_expiry() -> None:
 
     await world.handler(message())
 
-    assert [hold[1] for hold in confirmations.holds] == [EXPIRES]
+    assert [hold[1] for hold in confirmations.holds] == [EXPIRES + TICKET_GRACE]
 
 
 async def test_a_later_ticket_is_capped_at_the_first_tickets_expiry() -> None:
@@ -178,7 +179,10 @@ async def test_a_later_ticket_is_capped_at_the_first_tickets_expiry() -> None:
 
     await world.handler(message("999"))
 
-    assert [hold[1] for hold in confirmations.holds] == [EXPIRES, EXPIRES]
+    assert [hold[1] for hold in confirmations.holds] == [
+        EXPIRES + TICKET_GRACE,
+        EXPIRES + TICKET_GRACE,
+    ]
     assert world.payments.by_id["999"].held_at == NOW + timedelta(hours=40)
     assert world.payments.by_id["999"].expires_at == NOW + timedelta(hours=88)  # still recorded
 
@@ -192,7 +196,10 @@ async def test_a_second_ticket_expiring_earlier_is_not_raised_to_the_first() -> 
 
     await world.handler(message("999"))
 
-    assert [hold[1] for hold in confirmations.holds] == [EXPIRES, earlier]
+    assert [hold[1] for hold in confirmations.holds] == [
+        EXPIRES + TICKET_GRACE,
+        earlier + TICKET_GRACE,
+    ]
 
 
 async def test_a_third_ticket_is_capped_at_the_first_not_the_second() -> None:
@@ -207,7 +214,7 @@ async def test_a_third_ticket_is_capped_at_the_first_not_the_second() -> None:
 
     await world.handler(message("333"))
 
-    assert confirmations.holds[2][1] == EXPIRES
+    assert confirmations.holds[2][1] == EXPIRES + TICKET_GRACE
 
 
 async def test_a_ticket_of_another_order_does_not_cap_this_one() -> None:
@@ -227,7 +234,7 @@ async def test_a_ticket_of_another_order_does_not_cap_this_one() -> None:
 
     await world.handler(message())
 
-    assert [hold[1] for hold in confirmations.holds] == [EXPIRES]
+    assert [hold[1] for hold in confirmations.holds] == [EXPIRES + TICKET_GRACE]
 
 
 async def test_the_ticket_being_processed_is_never_its_own_first() -> None:
@@ -251,7 +258,7 @@ async def test_an_expired_on_arrival_ticket_never_caps_a_later_one() -> None:
 
     await world.handler(message())
 
-    assert [hold[1] for hold in confirmations.holds] == [EXPIRES]
+    assert [hold[1] for hold in confirmations.holds] == [EXPIRES + TICKET_GRACE]
 
 
 # --- L1: expired on arrival --------------------------------------------------------------------

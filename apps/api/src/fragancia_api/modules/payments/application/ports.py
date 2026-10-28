@@ -133,11 +133,16 @@ class OrderConfirmations(Protocol):
         ...
 
     async def hold(
-        self, order_id: UUID, until: datetime, method: str, instructions_url: str | None
+        self,
+        order_id: UUID,
+        until: datetime,
+        pay_by: datetime,
+        method: str,
+        instructions_url: str | None,
     ) -> Result[Confirmation, DomainError]:
         """Keep a pending order waiting for a cash or transfer ticket until `until` (never
-        earlier than its current deadline) and email the customer the instructions. Joins the
-        caller's transaction."""
+        earlier than its current deadline) and email the customer the instructions, with
+        `pay_by` (the ticket's own expiry) as the deadline. Joins the caller's transaction."""
         ...
 
 

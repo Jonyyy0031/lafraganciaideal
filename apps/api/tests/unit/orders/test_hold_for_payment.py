@@ -41,7 +41,7 @@ async def hold(
 ) -> Result[PaymentConfirmation, DomainError]:
     due = world.current().payment_due_at if world.orders.orders else NOW
     return await world.wire(OrderPaymentConfirmations).hold_for_payment(
-        order_id, due + until_after_due, method, url
+        order_id, due + until_after_due, due + until_after_due, method, url
     )
 
 
@@ -119,9 +119,9 @@ async def test_a_second_later_ticket_moves_it_again() -> None:
     second = world.current().payment_due_at + timedelta(hours=47)
 
     facade = world.wire(OrderPaymentConfirmations)
-    await facade.hold_for_payment(ORDER_ID, first, "efectivo en tienda", None)
-    await facade.hold_for_payment(ORDER_ID, second, "transferencia SPEI", None)
-    await facade.hold_for_payment(ORDER_ID, first, "efectivo en tienda", None)
+    await facade.hold_for_payment(ORDER_ID, first, first, "efectivo en tienda", None)
+    await facade.hold_for_payment(ORDER_ID, second, second, "transferencia SPEI", None)
+    await facade.hold_for_payment(ORDER_ID, first, first, "efectivo en tienda", None)
 
     assert world.current().payment_due_at == second
     # The third ticket expires earlier than the deadline: no shortening, no extension.

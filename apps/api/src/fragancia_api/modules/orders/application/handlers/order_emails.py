@@ -122,11 +122,12 @@ def payment_instructions_email(
     order: AdminOrderDetail,
     link: str,
     method: str,
-    due_at: datetime,
+    pay_by: datetime,
     instructions_url: str | None,
 ) -> Template:
-    """A cash or transfer ticket was issued (payments decision 15)."""
-    due = due_at.astimezone(SHOP_TIMEZONE).strftime("%d/%m/%Y a las %H:%M")
+    """A cash or transfer ticket was issued (payments decision 15). `pay_by` is the ticket's
+    own expiry, not the order's deadline, which adds a margin (payments decision 22)."""
+    due = pay_by.astimezone(SHOP_TIMEZONE).strftime("%d/%m/%Y a las %H:%M")
     text = (
         f"Para completar tu pedido {order.number}, paga {money(order.total_cents)} con {method} "
         f"antes del {due}.\n"
@@ -279,7 +280,7 @@ class SendPaymentInstructionsEmail:
                 order,
                 link,
                 str(message.payload["method"]),
-                datetime.fromisoformat(str(message.payload["due_at"])),
+                datetime.fromisoformat(str(message.payload["pay_by"])),
                 str(url) if url else None,
             ),
             "orders.email_rejected",

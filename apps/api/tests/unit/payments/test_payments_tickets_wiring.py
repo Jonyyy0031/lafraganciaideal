@@ -73,11 +73,13 @@ async def test_the_order_adapter_maps_the_hold_outcomes_to_payments_words() -> N
     adapter = OrderPaymentsAdapter(None, world.wire(OrderPaymentConfirmations))  # type: ignore[arg-type]
     until = world.current().payment_due_at + timedelta(hours=40)
 
-    held = await adapter.hold(UUID(int=901), until, "efectivo en tienda", "https://mp.test/t")
-    missing = await adapter.hold(UUID(int=4242), until, "efectivo en tienda", None)
+    held = await adapter.hold(
+        UUID(int=901), until, until, "efectivo en tienda", "https://mp.test/t"
+    )
+    missing = await adapter.hold(UUID(int=4242), until, until, "efectivo en tienda", None)
     await world.store(n=2)
     world.current(2).status = OrderStatus.PAID
-    not_pending = await adapter.hold(UUID(int=902), until, "transferencia SPEI", None)
+    not_pending = await adapter.hold(UUID(int=902), until, until, "transferencia SPEI", None)
 
     assert held == Ok(Confirmation(outcome="held", number=1001))
     assert missing == Ok(Confirmation(outcome="not_found", number=None))
@@ -95,7 +97,7 @@ async def test_the_order_adapter_answers_held_even_when_inventory_refuses_the_ex
     adapter = OrderPaymentsAdapter(None, world.wire(OrderPaymentConfirmations))  # type: ignore[arg-type]
     until = world.current().payment_due_at + timedelta(hours=40)
 
-    result = await adapter.hold(UUID(int=901), until, "efectivo en tienda", None)
+    result = await adapter.hold(UUID(int=901), until, until, "efectivo en tienda", None)
 
     assert not isinstance(result, Err)
     assert result == Ok(Confirmation(outcome="held", number=1001))

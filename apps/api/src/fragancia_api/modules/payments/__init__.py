@@ -6,7 +6,9 @@ frozen total: items for the lines plus "Envío", cards in one installment (decis
 stores (`ticket`) and SPEI (`bank_transfer`); only `atm` is excluded (decision 14).
 `external_reference` = the order id, the link expires with the order's `payment_due_at`, so a
 stale link cannot pay an order the overdue job cancelled, and a cash or transfer ticket issued
-from it expires 48 hours after the link was created (`date_of_expiration`, decision 5). The
+from it expires 48 hours after the link was created (`date_of_expiration`, decision 5). For
+OXXO, Mercado Pago moves that to the end of the day in Mexico City time (up to about 56 hours,
+decision 21), and payments uses the expiry Mercado Pago reports. The
 preference is stored in `payments.checkouts` and a second request reuses it while it is valid.
 `auto_return` is sent only when the back URL is https (decision 8). When the order leaves
 `pending_payment` (paid or cancelled), payments expires the preference in Mercado Pago and
@@ -31,15 +33,17 @@ order moves to paid (payment `applied`); an amount or currency that differs leav
 (`amount_mismatch`); units gone cancel it (`refund_due`); an order already paid or cancelled
 only records `refund_due`. A `pending` cash or transfer ticket (with its method, expiry and
 instructions page) holds its order once, through `OrderPaymentConfirmations.hold_for_payment`:
-the order's deadline and reservation move to the ticket's expiry and orders emails the
-customer the instructions (`held_at` keeps a re-delivery from doing it again). The 48 hours
-count from the first ticket (decision 19): a later ticket never moves the deadline past the
-expiry of the order's earliest-held ticket, though it is still recorded and its email shows
-the order's actual deadline. A ticket already expired when its notification is processed is
+the order's deadline and reservation move to the ticket's expiry plus `TICKET_GRACE` (48
+hours, decision 22: a store payment can take one or two business days to be credited), and
+orders emails the customer the instructions with the ticket's own expiry as the deadline
+(`held_at` keeps a re-delivery from doing it again). The 48 hours count from the first ticket
+(decision 19): a later ticket never moves the deadline past the earliest-held ticket's expiry
+plus `TICKET_GRACE`, though it is still recorded and its email shows its own expiry, never
+later than the order's deadline. A ticket already expired when its notification is processed is
 marked held with no hold and no email. A pending ticket whose order was already paid or
 cancelled is marked held and publishes `payments.ticket.cancel_requested` (decision 20). A
-ticket page longer than its column (500 characters)
-is stored as none. Other statuses are only stored.
+ticket page longer than its column (500 characters) is stored as none. Other statuses are only
+stored.
 
 Events (published through the outbox; other modules subscribe by name, never by import):
 

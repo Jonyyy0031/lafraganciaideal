@@ -88,11 +88,9 @@ class MercadoPagoGateway:
             ) as client:
                 response = await client.put(
                     f"{self._api_url}/checkout/preferences/{preference_id}",
-                    json={
-                        "expires": True,
-                        "expiration_date_to": stamp,
-                        "date_of_expiration": stamp,
-                    },
+                    # No `date_of_expiration`: Mercado Pago answers `400 invalid date of
+                    # expiration` when it is now (plan 003 verification V1).
+                    json={"expires": True, "expiration_date_to": stamp},
                     headers={"Authorization": f"Bearer {self._access_token}"},
                 )
         except httpx.HTTPError as error:

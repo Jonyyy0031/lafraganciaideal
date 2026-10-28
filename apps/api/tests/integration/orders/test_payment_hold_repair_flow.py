@@ -7,6 +7,7 @@ from datetime import datetime
 import pytest
 
 from fragancia_api.container import Container
+from fragancia_api.modules.payments.domain.payment import TICKET_GRACE
 from fragancia_api.modules.payments.infrastructure.in_memory import FakeGateway
 from tests.integration.catalog.presentation_rows import CatalogRows
 from tests.integration.inventory.test_stock_status_flow import outbox_rows
@@ -49,9 +50,10 @@ async def test_a_second_ticket_is_capped_at_the_first_tickets_expiry(
     await process(notification("first"))
     await process(notification("second"))
 
-    assert await due_and_reservation(container, placed) == (first, first)
+    capped = first + TICKET_GRACE  # decision 22
+    assert await due_and_reservation(container, placed) == (capped, capped)
     events = pending_events(await outbox_rows(container))
-    assert {datetime.fromisoformat(e["payload"]["due_at"]) for e in events} == {first}
+    assert {datetime.fromisoformat(e["payload"]["due_at"]) for e in events} == {capped}
     assert len(events) == 2
     [stored] = await rows(
         container, "SELECT expires_at, held_at FROM payments.payments WHERE payment_id = 'second'"
@@ -94,5 +96,6 @@ async def test_an_expired_on_arrival_ticket_does_not_cap_the_next_real_one(
     await process(notification("gone"))
     await process(notification("real"))
 
-    assert await due_and_reservation(container, placed) == (real, real)
+    held_until = real + TICKET_GRACE  # decision 22
+    assert await due_and_reservation(container, placed) == (held_until, held_until)
     assert len(pending_events(await outbox_rows(container))) == 1

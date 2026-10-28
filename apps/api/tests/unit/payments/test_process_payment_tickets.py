@@ -10,7 +10,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from fragancia_api.modules.payments.application.ports import Confirmation
-from fragancia_api.modules.payments.domain.payment import PaymentOutcome
+from fragancia_api.modules.payments.domain.payment import TICKET_GRACE, PaymentOutcome
 from fragancia_api.shared.kernel import ConflictError, DomainError, Err, Ok, Result
 from tests.unit.payments.support import NOW
 from tests.unit.payments.test_process_payment import (
@@ -40,7 +40,12 @@ class HoldingConfirmations(FakeConfirmations):
         self.holds: list[tuple[UUID, datetime, str, str | None]] = []
 
     async def hold(
-        self, order_id: UUID, until: datetime, method: str, instructions_url: str | None
+        self,
+        order_id: UUID,
+        until: datetime,
+        pay_by: datetime,
+        method: str,
+        instructions_url: str | None,
     ) -> Result[Confirmation, DomainError]:
         self.holds.append((order_id, until, method, instructions_url))
         if self.hold_error is not None:
@@ -74,7 +79,7 @@ async def test_a_pending_oxxo_ticket_holds_the_order_until_it_expires() -> None:
 
     await world.handler(message())
 
-    assert confirmations.holds == [(ORDER_ID, EXPIRES, "efectivo en tienda", URL)]
+    assert confirmations.holds == [(ORDER_ID, EXPIRES + TICKET_GRACE, "efectivo en tienda", URL)]
     assert confirmations.calls == []
     stored = world.row()
     assert stored.held_at == NOW
@@ -92,7 +97,7 @@ async def test_a_pending_spei_transfer_holds_the_order_with_its_own_label() -> N
 
     await world.handler(message())
 
-    assert confirmations.holds == [(ORDER_ID, EXPIRES, "transferencia SPEI", URL)]
+    assert confirmations.holds == [(ORDER_ID, EXPIRES + TICKET_GRACE, "transferencia SPEI", URL)]
     assert world.row().held_at == NOW
 
 
@@ -102,7 +107,7 @@ async def test_a_ticket_without_a_page_holds_with_no_instructions_url() -> None:
 
     await world.handler(message())
 
-    assert confirmations.holds == [(ORDER_ID, EXPIRES, "efectivo en tienda", None)]
+    assert confirmations.holds == [(ORDER_ID, EXPIRES + TICKET_GRACE, "efectivo en tienda", None)]
 
 
 async def test_a_redelivered_notification_holds_once() -> None:
@@ -127,7 +132,10 @@ async def test_each_payment_of_the_order_holds_it_once() -> None:
     await world.handler(message("999"))
 
     # Decision 19 (plan 003 step 8): the second hold never goes past the first ticket's expiry.
-    assert [hold[1] for hold in confirmations.holds] == [EXPIRES, EXPIRES]
+    assert [hold[1] for hold in confirmations.holds] == [
+        EXPIRES + TICKET_GRACE,
+        EXPIRES + TICKET_GRACE,
+    ]
 
 
 @pytest.mark.parametrize("outcome", ["not_pending", "not_found"])

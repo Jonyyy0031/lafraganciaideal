@@ -76,7 +76,12 @@ class FakeConfirmations:
         return Ok(Confirmation(outcome=self.outcome, number=self.number))
 
     async def hold(
-        self, order_id: UUID, until: datetime, method: str, instructions_url: str | None
+        self,
+        order_id: UUID,
+        until: datetime,
+        pay_by: datetime,
+        method: str,
+        instructions_url: str | None,
     ) -> Result[Confirmation, DomainError]:
         """Plan 003's port member; these plan 002 tests never reach it (no pending tickets)."""
         raise AssertionError("hold is not expected in these tests")

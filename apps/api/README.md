@@ -110,12 +110,15 @@ With an http `STOREFRONT_URL` (as in development) the checkout is created withou
 The checkout offers cards (one installment), cash in stores (OXXO and others, `ticket`) and
 SPEI (`bank_transfer`); only bank counters and ATMs (`atm`) are excluded. A cash or transfer
 ticket stays `pending` until the guest pays it and expires 48 hours after the link was
-created. When its webhook arrives, the worker holds the order once: orders moves the order's
-`payment_due_at` and its reservation to the ticket's expiry (never earlier) and publishes
-`orders.order.payment_pending`, which emails the customer "Tu ficha de pago del pedido …" with
-the amount, the deadline in Cancún time and Mercado Pago's ticket link. The 48 hours count from
-the first ticket: a later ticket never moves the deadline past the first ticket's expiry; it is
-still recorded and its email shows the order's actual deadline. A ticket that had already
+created. For OXXO, Mercado Pago moves that expiry to the end of the day in Mexico City time (up
+to about 56 hours), and we use the expiry it reports. When its webhook arrives, the worker holds
+the order once: orders moves the order's `payment_due_at` and its reservation to the ticket's
+expiry plus 48 hours (never earlier), because a store payment can take one or two business days
+to be credited. It publishes `orders.order.payment_pending`, which emails the customer "Tu ficha
+de pago del pedido …" with the amount, the ticket's own expiry in Cancún time as the deadline,
+and Mercado Pago's ticket link. The 48 hours count from the first ticket: a later ticket never
+moves the deadline past the first ticket's expiry plus the 48-hour margin. It is still recorded,
+and its email shows its own expiry, never later than the order's deadline. A ticket that had already
 expired when its webhook is processed sends no email (`payments.ticket_expired_on_arrival`), and
 a ticket link longer than 500 characters is stored empty (`payments.ticket_url_too_long`). The
 order page reads the live tickets with `POST /api/v1/payments/pending` (the order's token in
