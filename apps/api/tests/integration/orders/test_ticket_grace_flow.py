@@ -1,6 +1,6 @@
 """Payments plan 003 step 10 (decision 22) on PostgreSQL: the order and its reservation wait for
 the ticket's expiry plus `TICKET_GRACE`, the event tells the ticket's own `pay_by`, and a later
-capped ticket tells `min(its expiry, deadline)`."""
+capped ticket tells the deadline minus `TICKET_GRACE` (step 11, S1)."""
 
 from datetime import datetime
 
@@ -75,4 +75,5 @@ async def test_a_later_ticket_is_capped_and_tells_the_earlier_of_its_expiry_and_
     assert await due_and_reservation(container, placed) == (cap, cap)
     events = pending_events(await outbox_rows(container))
     pay_bys = sorted(datetime.fromisoformat(e["payload"]["pay_by"]) for e in events)
-    assert pay_bys == [first, cap]
+    # Step 11 (S1): the later ticket tells the first ticket's expiry, so the margin follows it.
+    assert pay_bys == [first, first]

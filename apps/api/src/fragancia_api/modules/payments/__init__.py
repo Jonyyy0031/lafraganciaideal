@@ -16,9 +16,10 @@ closes the stored checkout (decision 18).
 
 `POST /api/v1/payments/pending` takes the same token and answers the order's cash and transfer
 tickets that can still be paid (method, amount, expiry, instructions page), newest first
-(decision 16); each expiry is the earlier of the ticket's own and the order's
-`payment_due_at`, since the ticket stops paying the order at the order's deadline; none when
-the order is not waiting for payment; 404 `PAYMENTS_ORDER_NOT_FOUND`.
+(decision 16); each expiry is the last moment to pay so that the order still waits for the
+credit: the earlier of the ticket's own expiry and the order's `payment_due_at` minus
+`TICKET_GRACE`; none when the order is not waiting for payment; 404
+`PAYMENTS_ORDER_NOT_FOUND`.
 
 Errors: 404 `PAYMENTS_ORDER_NOT_FOUND`, 409 `PAYMENTS_ORDER_NOT_PAYABLE` and 503
 `PAYMENTS_GATEWAY_UNAVAILABLE` (Mercado Pago failed, timed out, refused or is not configured).
@@ -38,12 +39,13 @@ hours, decision 22: a store payment can take one or two business days to be cred
 orders emails the customer the instructions with the ticket's own expiry as the deadline
 (`held_at` keeps a re-delivery from doing it again). The 48 hours count from the first ticket
 (decision 19): a later ticket never moves the deadline past the earliest-held ticket's expiry
-plus `TICKET_GRACE`, though it is still recorded and its email shows its own expiry, never
-later than the order's deadline. A ticket already expired when its notification is processed is
-marked held with no hold and no email. A pending ticket whose order was already paid or
-cancelled is marked held and publishes `payments.ticket.cancel_requested` (decision 20). A
-ticket page longer than its column (500 characters) is stored as none. Other statuses are only
-stored.
+plus `TICKET_GRACE`, though it is still recorded. Its email shows the order's deadline minus
+`TICKET_GRACE`, the earlier of its own and the first ticket's expiry, so the credit margin
+always follows the deadline the customer is told. A ticket already expired when its
+notification is processed is marked held with no hold and no email. A pending ticket whose
+order was already paid or cancelled is marked held and publishes
+`payments.ticket.cancel_requested` (decision 20). A ticket page longer than its column (500
+characters) is stored as none. Other statuses are only stored.
 
 Events (published through the outbox; other modules subscribe by name, never by import):
 

@@ -140,8 +140,9 @@ class ProcessPaymentNotification:
         The order waits until the ticket's expiry plus `TICKET_GRACE`, so a store payment still
         being credited is not cancelled (decision 22). The 48 hours count from the first ticket
         (decision 19): a later ticket never moves the deadline past the earliest-held ticket's
-        expiry plus `TICKET_GRACE`. The instructions email shows the ticket's own expiry,
-        never later than the order's deadline."""
+        expiry plus `TICKET_GRACE`. The instructions email's deadline (`pay_by`) is that
+        deadline minus `TICKET_GRACE`: the earlier of this ticket's and the first ticket's
+        expiry, so the margin always follows it. A single ticket gets its own expiry."""
         if payment.expires_at is None or payment.payment_type is None:
             raise ValueError("only a pending ticket with an expiry is held")
         until = payment.expires_at + TICKET_GRACE
@@ -151,7 +152,9 @@ class ProcessPaymentNotification:
         held = await self._orders.hold(
             order_id,
             until=until,
-            pay_by=min(payment.expires_at, until),
+            # The earlier of this ticket's and the first ticket's expiry: the margin to credit
+            # the payment always follows the deadline the customer is told (plan 003 S1).
+            pay_by=until - TICKET_GRACE,
             method=METHOD_LABELS[payment.payment_type],
             instructions_url=payment.ticket_url,
         )

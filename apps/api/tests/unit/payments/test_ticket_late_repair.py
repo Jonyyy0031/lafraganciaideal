@@ -1,7 +1,8 @@
 """Plan 003 step 9 (re-review repair): R1, the pending query caps each ticket's `expires_at` at
-the order's `payment_due_at` (application and http); R2, the handler publishes
-`payments.ticket.cancel_requested` only when the hold answers `not_pending`, and `CancelTicket`
-cancels the ticket in Mercado Pago and raises on a gateway error."""
+the order's `payment_due_at`, less `TICKET_GRACE` since step 11 (application and http); R2,
+the handler publishes `payments.ticket.cancel_requested` only when the hold answers
+`not_pending`, and `CancelTicket` cancels the ticket in Mercado Pago and raises on a gateway
+error."""
 
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -13,7 +14,7 @@ from fragancia_api.main.http import build_app
 from fragancia_api.modules.payments.application.handlers.cancel_ticket import CancelTicket
 from fragancia_api.modules.payments.application.queries.pending_tickets import GetPendingTickets
 from fragancia_api.modules.payments.domain.events import TicketCancelRequested
-from fragancia_api.modules.payments.domain.payment import Payment
+from fragancia_api.modules.payments.domain.payment import TICKET_GRACE, Payment
 from fragancia_api.modules.payments.http.router import routers
 from fragancia_api.modules.payments.infrastructure.in_memory import (
     FakeGateway,
@@ -39,8 +40,10 @@ PENDING = "/api/v1/payments/pending"
 
 
 def query(due: timedelta, *payments: Payment) -> GetPendingTickets:
+    """`due` is the last moment to pay (step 11, S1): the order's deadline is `due` plus
+    `TICKET_GRACE`, and the query caps each expiry at the deadline minus the grace."""
     orders = InMemoryPayableOrders()
-    orders.by_token[TOKEN] = make_payable(due=due)
+    orders.by_token[TOKEN] = make_payable(due=due + TICKET_GRACE)
     return GetPendingTickets(
         orders=orders, queries=InMemoryPayments(*payments), clock=FixedClock(NOW)
     )

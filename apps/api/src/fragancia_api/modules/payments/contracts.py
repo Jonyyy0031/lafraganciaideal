@@ -30,8 +30,9 @@ class PendingTicket(BaseModel):
     amount_cents: int
     expires_at: datetime = Field(
         description=(
-            "When the ticket stops paying the order: its own expiry or the order's payment"
-            " deadline, whichever is earlier."
+            "The last moment to pay the ticket so that the order still waits for the payment"
+            " to be credited: the ticket's own expiry, or the order's payment deadline minus"
+            " the 48-hour credit margin, whichever is earlier."
         )
     )
     ticket_url: str | None = Field(description="Mercado Pago's page with the instructions.")

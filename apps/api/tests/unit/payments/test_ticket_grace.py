@@ -1,7 +1,8 @@
 """Plan 003 step 10 (verification repair), payments: V1 (the close body has no
 `date_of_expiration`) and decision 22 (the order waits for the ticket's expiry plus
-`TICKET_GRACE`; the decision 19 cap is the first expiry plus the grace; `pay_by` is
-`min(ticket expiry, until)`; the stored expiry and `/payments/pending` keep Mercado Pago's)."""
+`TICKET_GRACE`; the decision 19 cap is the first expiry plus the grace; the stored expiry
+keeps Mercado Pago's). Adjusted at step 11 (S1): `pay_by` is `until - TICKET_GRACE`, and
+`/payments/pending` caps at the order's deadline minus the grace."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -97,12 +98,12 @@ async def test_a_later_ticket_is_capped_at_the_first_expiry_plus_the_grace() -> 
     await world.handler(message("999"))
 
     assert confirmations.holds[1][1] == EXPIRES + TICKET_GRACE
-    # Its own expiry is after the order's deadline: the email shows the earlier one.
-    assert confirmations.pay_bys[1] == EXPIRES + TICKET_GRACE
+    # Step 11 (S1): the email shows the first ticket's expiry, so the margin follows it.
+    assert confirmations.pay_bys[1] == EXPIRES
     assert world.payments.by_id["999"].expires_at == far
 
 
-async def test_a_later_ticket_expiring_inside_the_margin_tells_its_own_expiry() -> None:
+async def test_a_later_ticket_expiring_inside_the_margin_tells_the_first_expiry() -> None:
     confirmations = PayByRecording()
     world = World(fetched=pending_ticket(), confirmations=confirmations)
     await world.handler(message())
@@ -112,7 +113,7 @@ async def test_a_later_ticket_expiring_inside_the_margin_tells_its_own_expiry() 
     await world.handler(message("999"))
 
     assert confirmations.holds[1][1] == EXPIRES + TICKET_GRACE  # capped: inside + grace is later
-    assert confirmations.pay_bys[1] == inside
+    assert confirmations.pay_bys[1] == EXPIRES  # step 11 (S1): never inside the margin
 
 
 async def test_a_second_ticket_expiring_earlier_holds_to_its_own_expiry_plus_the_grace() -> None:
@@ -149,16 +150,17 @@ async def test_a_ticket_inside_the_order_deadline_with_the_margin_shows_its_own_
     assert [i.expires_at for i in result.value.items] == [expires]
 
 
-async def test_a_ticket_after_the_order_deadline_is_still_capped_at_the_deadline() -> None:
+async def test_a_ticket_after_the_order_deadline_less_the_margin_is_capped_there() -> None:
     use_case = query(timedelta(hours=96), payment("1", expires_at=NOW + timedelta(hours=120)))
 
     result = await use_case.execute(TOKEN)
 
     assert isinstance(result, Ok)
-    assert [i.expires_at for i in result.value.items] == [NOW + timedelta(hours=96)]
+    # Step 11 (S1): the cap is the order's deadline minus `TICKET_GRACE`.
+    assert [i.expires_at for i in result.value.items] == [NOW + timedelta(hours=48)]
 
 
-@pytest.mark.parametrize(("ticket_hours", "shown_hours"), [(48, 48), (100, 96)])
+@pytest.mark.parametrize(("ticket_hours", "shown_hours"), [(48, 48), (100, 48)])
 async def test_the_http_answer_shows_the_earlier_of_the_ticket_and_the_deadline(
     ticket_hours: int, shown_hours: int
 ) -> None:

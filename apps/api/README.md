@@ -118,12 +118,14 @@ to be credited. It publishes `orders.order.payment_pending`, which emails the cu
 de pago del pedido …" with the amount, the ticket's own expiry in Cancún time as the deadline,
 and Mercado Pago's ticket link. The 48 hours count from the first ticket: a later ticket never
 moves the deadline past the first ticket's expiry plus the 48-hour margin. It is still recorded,
-and its email shows its own expiry, never later than the order's deadline. A ticket that had already
+and its email shows the earlier of its own expiry and the first ticket's, so the 48-hour margin
+always follows the deadline the customer is told. A ticket that had already
 expired when its webhook is processed sends no email (`payments.ticket_expired_on_arrival`), and
 a ticket link longer than 500 characters is stored empty (`payments.ticket_url_too_long`). The
 order page reads the live tickets with `POST /api/v1/payments/pending` (the order's token in
-the body); each ticket's `expires_at` there is the earlier of its own expiry and the order's
-`payment_due_at`. When an order is paid or cancelled, payments publishes
+the body); each ticket's `expires_at` there is the last moment to pay so that the order still
+waits for the credit: the earlier of its own expiry and the order's `payment_due_at` minus 48
+hours. When an order is paid or cancelled, payments publishes
 `payments.checkout.close_requested` and, in that event's own outbox row, expires its Mercado
 Pago preference (`PUT /checkout/preferences/{id}`), closes the stored checkout, so the old link
 no longer takes payments, and cancels each of the order's `pending` cash and transfer tickets
