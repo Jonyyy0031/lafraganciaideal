@@ -1,5 +1,5 @@
 ---
-status: review
+status: verify
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -867,6 +867,59 @@ V2 is tracked by its finding and needs a user decision; it does not block verify
 
 **Result:** S1 needs a code change, so the status stays `review`. No other regressions from
 step 10.
+
+### Review of step 11 (reviewer, 2026-10-28)
+
+Diff `09c635d..HEAD` (commits `baf0dbc`, `0f8ceeb`, `7cc00b0` and `13ce544`), read together
+with "Step 11: step 10 review repair (S1)" in the Repair log.
+
+**Checklist: 14 of 15 passed, 0 failed, 1 not applicable (PR body, no PR yet).**
+- `plans-scope`: "Every change is inside the plan" (43 declared, 71 changed).
+- `uv run just check` at `13ce544`, including the tester's new tests: green (4326 passed,
+  5 skipped, 1 xfailed; harness 685 passed).
+- `uv run just test-integration` at `13ce544`, run by the reviewer: green (1209 passed, 5 skipped).
+- Contract: only the description of `PendingTicket.expires_at` changed, through
+  `uv run just openapi`. There is no migration.
+- Docs: `payments/__init__.py` and the README describe the new rule. The architecture row has
+  no `pay_by` detail, so nothing there went stale.
+
+**S1: closed.**
+- Email: `pay_by = until - TICKET_GRACE` (`process_payment.py:157`). That is `min(E, F)`, with
+  E this ticket's expiry and F the first held ticket's expiry. A single ticket still gets its
+  own expiry. A later ticket is told the first ticket's expiry, so the full 48-hour credit
+  margin always follows the date in the email.
+- `/payments/pending` applies the same rule: `payment_due_at - TICKET_GRACE`
+  (`pending_tickets.py:29`).
+- The tests cover later tickets at 10, 47, 60 and 200 h, an earlier second ticket, the email
+  text and two-ticket PostgreSQL flows.
+- I found no regression: `until`, the reservation, the overdue job and the stored expiry are
+  unchanged.
+
+**Implementer's note 2: the scenario as described cannot happen. A nearby case can, and it is
+cosmetic.**
+- Why it cannot happen:
+  - `/payments/pending` lists only rows in `payments.payments`.
+  - A pending cash ticket's row is written in the same transaction as its hold.
+  - If the hold is refused, the whole transaction rolls back and no row is stored.
+  - If the hold answers `not_pending` or `not_found`, the order is no longer pending, and the
+    query answers `[]`.
+  - A ticket that expired on arrival is filtered out by its own expiry.
+- So no live listed ticket belongs to a pending order that was not held for it. The order's
+  deadline never stays at the 30-minute checkout value in that case.
+- The nearby case that can happen: an order with a first ticket expiring at F and a later
+  ticket expiring at E2 > F. Between F and F + 48 h, the later ticket is still listed, because
+  the filter uses its own expiry. Its shown `expires_at` is F, which is already past.
+  - This is consistent with the email, which also told the customer F.
+  - Nothing renders this field until phase 3.
+  - The storefront can treat a past `expires_at` as "too late to pay safely". Alternatively,
+    the query could later drop items whose capped expiry is `<= now`.
+  - Recorded as a note, not a finding.
+
+**Still for the verifier:** the V1 close and decision 22 timing in the sandbox, R4, and the NOT
+CONFIRMED sandbox rows. V2 is tracked by its open finding and waits on a user decision.
+
+**Result:** no findings need code changes, and the checklist has no failures. Status set to
+`verify`.
 
 ## Repair log
 
