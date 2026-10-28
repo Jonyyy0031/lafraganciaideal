@@ -1,5 +1,5 @@
 ---
-status: review
+status: implementing
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -326,6 +326,24 @@ order page can show the pending ticket (decision 16). It also folds in the open 
      - an OXXO ticket expiring at T holds the order and the reservation until T + 48 h;
      - the instructions email still says "antes del" T;
      - closing a link no longer gets 400.
+
+11. **Step 10 review repair (added 2026-10-28: S1)**
+   - Files: `apps/api/src/fragancia_api/modules/payments/application/handlers/process_payment.py` (modify), `apps/api/src/fragancia_api/modules/payments/application/queries/pending_tickets.py` (modify), `apps/api/src/fragancia_api/modules/payments/contracts.py` (modify), `apps/api/openapi.json` (modify), `apps/api/src/fragancia_api/modules/payments/__init__.py` (modify), `apps/api/README.md` (modify)
+   - Do:
+     - **The email's deadline leaves the margin to credit the payment.** In the hold path,
+       `pay_by = until - TICKET_GRACE`. That is the earlier of this ticket's expiry and the
+       first ticket's expiry. A single ticket still gets its own expiry. A second ticket is never
+       told a deadline inside the margin or at the cancel time.
+     - **`/payments/pending` uses the same rule.** Each item's `expires_at` is
+       `min(ticket.expires_at, order.payment_due_at - TICKET_GRACE)`. The ticket's own expiry
+       stays stored as Mercado Pago reports it.
+       - Update `PendingTicket.expires_at`'s description: the last moment to pay so that the
+         order still waits for the credit. Then run `uv run just openapi`.
+     - Describe the rule in `payments/__init__.py` and the README.
+   - Observable result:
+     - first ticket expiring at F, then a second expiring at F+30h: the second's email and
+       `/payments/pending` say F;
+     - a single ticket's email still says its own expiry.
 
 ## Acceptance criteria
 
