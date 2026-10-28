@@ -1,5 +1,5 @@
 ---
-status: verify
+status: done
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -1283,6 +1283,7 @@ Suites at 13ce544 and 285a7c5:
 - [x] **A cancelled order's link closes.** The owner cancelled `LFI-1038`:
   - the order is `cancelled` and its reservation `released`;
   - Mercado Pago's preference showed `expiration_date_to = 2026-10-28T16:44:28.210Z`.
+  - The developer opened the link afterwards and Mercado Pago no longer let it pay.
 - [ ] **V2 still stands: the ticket is not cancelled.** The same close event's ticket cancel got
   `401 Unauthorized use of live credentials`.
   - The ticket stays `pending_waiting_payment`.
