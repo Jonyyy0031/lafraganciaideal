@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -1086,6 +1086,69 @@ the code before this step. They are superseded for the behavior below and must b
 - `uv run just plans-scope plans/payments-mercadopago/003-oxxo-spei.md`: "Every change is inside
   the plan" (43 declared, 66 changed).
 - No contract change (`openapi.json` untouched). No migration.
+
+### Step 11: step 10 review repair (S1)
+
+Implementer, 2026-10-28. This supersedes step 10's deviation 1 (`pay_by = min(ticket expiry,
+until)`). The test coverage and reviews of step 10 are superseded for the behavior below and
+must be repeated (testing → review → verify).
+
+**What changed**
+- **The email's deadline leaves the credit margin.**
+  - `ProcessPaymentNotification._hold` now passes `pay_by = until - TICKET_GRACE`. That is the
+    earlier of this ticket's expiry and the first ticket's expiry.
+  - A single ticket still gets its own expiry. A later ticket is never told a deadline inside
+    the margin or at the cancel time.
+  - The `_hold` docstring states the rule.
+- **`/payments/pending` uses the same rule.**
+  - `GetPendingTickets` caps each item at `min(ticket.expires_at, order.payment_due_at -
+    TICKET_GRACE)`, importing `TICKET_GRACE` from `domain/payment.py`. The stored expiry is
+    unchanged.
+  - `PendingTicket.expires_at`'s description now reads: "The last moment to pay the ticket so
+    that the order still waits for the payment to be credited: the ticket's own expiry, or the
+    order's payment deadline minus the 48-hour credit margin, whichever is earlier."
+  - I ran `uv run just openapi`, which changed only that description.
+- **Docs.** The rule is described in `payments/__init__.py` (the hold paragraph and the
+  `/payments/pending` paragraph) and in the README's payments section.
+
+**Deviations of step 11**
+1. **Existing tests adjusted to the new rule, with no coverage added.** They are outside step
+   11's file list; step 7's list covers the test directories.
+   - `unit/payments/test_pending_tickets.py`: the `query` helper's order deadline is now 96 h
+     (the 48-hour ticket plus the margin) instead of 48 h, so the expected expiries are
+     unchanged.
+   - `unit/payments/test_ticket_late_repair.py`: the `query(due, …)` helper now builds the
+     order with `due + TICKET_GRACE`. Its `due` keeps meaning "the cap", so every expectation is
+     unchanged. The module docstring was rewrapped.
+   - `unit/payments/test_ticket_grace.py`:
+     - a later ticket's `pay_by` is now `EXPIRES` in both later-ticket tests. The second is
+       renamed `test_a_later_ticket_expiring_inside_the_margin_tells_the_first_expiry`.
+     - With a 96-hour deadline, the query caps at 48 h: one test is renamed
+       `test_a_ticket_after_the_order_deadline_less_the_margin_is_capped_there`, and the http
+       case `(100, 96)` became `(100, 48)`.
+     - The module docstring was updated.
+   - `integration/orders/test_ticket_grace_flow.py`: the later ticket's `pay_by` is `first`
+     (was `cap`), and the docstring was updated.
+2. **Note for the reviewer (literal plan).** `/payments/pending` now caps at
+   `payment_due_at - TICKET_GRACE` for every pending order, including one whose ticket
+   notification has not been processed yet. Such an order still has its checkout deadline (for
+   example 30 minutes), so the listed expiry would be in the past. This window is short: the
+   webhook normally arrives within seconds of issuing the ticket.
+
+**Commands**
+- `uv run just check`: green (4312 passed, 5 skipped, 1 xfailed; harness 685 passed).
+- `uv run just openapi`, then `fragancia_api.main.openapi --check`: up to date.
+- Integration tests, 158 passed in total:
+  - `tests/integration/payments/`, `orders/test_payment_hold_flow.py`,
+    `orders/test_payment_hold_repair_flow.py` and `orders/test_payment_confirmation_flow.py`:
+    156 passed;
+  - `orders/test_ticket_grace_flow.py`: 2 passed after the adjustment.
+
+  I did not re-run the full `test-integration`. There is no schema or persistence change, and
+  a grep found no other integration test using `pay_by`, `GetPendingTickets` or
+  `/payments/pending`.
+- `uv run just plans-scope plans/payments-mercadopago/003-oxxo-spei.md`: "Every change is inside
+  the plan".
 
 ## Verification
 
