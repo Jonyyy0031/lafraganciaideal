@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: testing
 module: payments
 min_implementer: high
 depends_on: ["002"]
@@ -918,6 +918,83 @@ verify). R4 needs no code; it is left to the verifier.
   `test-integration`; there is no schema change.
 - `uv run just plans-scope plans/payments-mercadopago/003-oxxo-spei.md`: "Every change is
   inside the plan" (42 declared, 63 changed).
+
+### Step 10: verification repair (V1, V2, decisions 21 and 22)
+
+Implementer, 2026-10-27. The test coverage, the reviews and the first sandbox run above describe
+the code before this step. They are superseded for the behavior below and must be repeated
+(testing → review → verify).
+
+**What changed**
+- **V1.** `MercadoPagoGateway.close_checkout` sends only
+  `{"expires": true, "expiration_date_to": at}`.
+- **Decision 22.**
+  - `TICKET_GRACE = timedelta(hours=48)` in `payments/domain/payment.py`.
+  - `ProcessPaymentNotification._hold` sets `until = expires_at + TICKET_GRACE`. The decision 19
+    cap is `first_hold_expiry + TICKET_GRACE`.
+  - Orders extends the reservation to the same `until` (unchanged facade code), so the overdue
+    job waits for the margin.
+  - `payments.payments.expires_at` and `/payments/pending` items keep Mercado Pago's expiry.
+    That query still caps each item at the order deadline, which now includes the margin.
+- **The email shows the ticket's deadline.**
+  - New `pay_by: datetime` parameter, after `until`, on:
+    - `Order.await_payment(until, pay_by, method, instructions_url, now)`;
+    - `OrderPaymentConfirmations.hold_for_payment(order_id, until, pay_by, method, instructions_url)`;
+    - payments' `OrderConfirmations.hold` port and its `OrderPaymentsAdapter`, which passes
+      both values.
+  - `OrderPaymentPending` gains `pay_by`. `payment_instructions_email` takes `pay_by` instead of
+    `due_at` and prints it, and `SendPaymentInstructionsEmail` reads `payload["pay_by"]`.
+- **Decision 21.** No code change. It is described in the docs.
+- **V2.** Finding `plans/findings/payments-ticket-cancel-refused-with-test-credentials.md`
+  (status `open`).
+- **Docs.** Both `__init__.py` files (orders: the facade signature and the event payload;
+  payments: decisions 21 and 22), the README's payments section, and the orders and payments
+  rows of `docs/architecture.md`.
+
+**Deviations of step 10**
+1. **`pay_by` is `min(ticket expiry, until)`, not always the ticket's own expiry.** For a capped
+   later ticket, the ticket's own expiry can fall after the order's deadline. Example: the
+   first ticket expires at F, so the order waits until F + 48 h. A link created after the hold
+   can issue a ticket expiring later than F + 48 h. Telling the customer to pay before a date
+   after the order is cancelled is the email form of R1, so the email shows the earlier of the
+   two. For a single ticket, `pay_by` is the ticket's expiry, as the plan says ("antes del" T).
+   The reviewer should confirm.
+2. **No fallback for queued events without `pay_by`.** `SendPaymentInstructionsEmail` reads
+   `payload["pay_by"]`. An `orders.order.payment_pending` row written before this change and
+   still in the outbox would raise `KeyError` and retry until it fails. This branch has not
+   been deployed, so only local development outboxes could hold such rows.
+3. **Tests outside step 10's file list, adjusted so `check` and `test-integration` stay green,
+   with no coverage added.** The step 7 file list covers the test directories.
+   - `pay_by` passed with the same value as `until`, so the existing assertions hold:
+     - `unit/orders/test_order_payment_pending_domain.py`, which also adds `pay_by` to the
+       expected payload;
+     - `unit/orders/test_hold_for_payment.py`;
+     - `integration/orders/test_payment_hold_flow.py` (two calls);
+     - `unit/payments/test_payments_tickets_wiring.py`;
+     - `unit/orders/test_payment_instructions_email.py` (`pay_by=due_at` in the two event
+       builders).
+   - The fakes' `hold` signatures gain `pay_by` in `unit/payments/test_process_payment.py` and
+     `test_process_payment_tickets.py`. The second still records `until`, and its expected
+     `until` values become `EXPIRES + TICKET_GRACE`.
+   - Expected `until` values or deadlines become `… + TICKET_GRACE` in
+     `unit/payments/test_ticket_hold_repair.py`, `integration/orders/test_payment_hold_flow.py`
+     (`test_a_pending_oxxo_payment_holds_the_order_and_stores_the_ticket_once`) and
+     `integration/orders/test_payment_hold_repair_flow.py` (two tests).
+   - `unit/payments/test_mercadopago_tickets.py`: the expected close body has no
+     `date_of_expiration`.
+   - Not tested yet: the email printing `pay_by` when it differs from `due_at`, the `min` of
+     deviation 1, and the reservation reaching the margin. These are for the tester.
+
+**Commands**
+- `uv run just typecheck`: green (524 files).
+- `uv run just check`: green (4297 passed, 5 skipped, 1 xfailed; harness 685 passed; plans OK,
+  including the new finding).
+- `uv run just test-integration`: the first run had 2 failures in
+  `test_payment_hold_repair_flow.py`, whose expectations needed the margin. After that fix,
+  the file gives 3 passed, and the full run's other 1203 passed (5 skipped).
+- `uv run just plans-scope plans/payments-mercadopago/003-oxxo-spei.md`: "Every change is inside
+  the plan" (43 declared, 66 changed).
+- No contract change (`openapi.json` untouched). No migration.
 
 ## Verification
 
